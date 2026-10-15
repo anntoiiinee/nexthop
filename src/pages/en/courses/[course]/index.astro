@@ -1,0 +1,7 @@
+---
+import CoursePage from '../../../../components/CoursePage.astro';
+import { getCoursePaths } from '../../../../lib/courses';
+
+export const getStaticPaths = () => getCoursePaths('en');
+---
+<CoursePage lang="en" {...Astro.props} />

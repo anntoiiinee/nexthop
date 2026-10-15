@@ -1,0 +1,169 @@
+---
+import type { Lang } from '../../i18n/ui';
+
+interface Props { lang?: Lang; }
+const { lang = 'fr' } = Astro.props;
+
+type T = { fr: string; en: string };
+type Group = 'app' | 'transport' | 'network' | 'link' | 'physical';
+
+const colors: Record<Group, { cell: string; text: string }> = {
+  app: {
+    cell: 'border-violet-300 bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/10',
+    text: 'text-violet-700 dark:text-violet-300',
+  },
+  transport: {
+    cell: 'border-sky-300 bg-sky-50 dark:border-sky-500/30 dark:bg-sky-500/10',
+    text: 'text-sky-700 dark:text-sky-300',
+  },
+  network: {
+    cell: 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10',
+    text: 'text-emerald-700 dark:text-emerald-300',
+  },
+  link: {
+    cell: 'border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10',
+    text: 'text-amber-700 dark:text-amber-300',
+  },
+  physical: {
+    cell: 'border-rose-300 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10',
+    text: 'text-rose-700 dark:text-rose-300',
+  },
+};
+
+const data: T = { fr: 'Données', en: 'Data' };
+
+const layers: { n: number; group: Group; name: T; role: T; pdu: T; examples: string; device?: T }[] = [
+  {
+    n: 7, group: 'app',
+    name: { fr: 'Application', en: 'Application' },
+    role: { fr: 'Services réseau offerts aux applications', en: 'Network services offered to applications' },
+    pdu: data, examples: 'HTTP · DNS · SSH · SNMP',
+    device: { fr: 'Firewall NGFW, proxy', en: 'NGFW, proxy' },
+  },
+  {
+    n: 6, group: 'app',
+    name: { fr: 'Présentation', en: 'Presentation' },
+    role: { fr: 'Format, encodage et chiffrement des données', en: 'Data format, encoding and encryption' },
+    pdu: data, examples: 'TLS · UTF-8 · JPEG',
+  },
+  {
+    n: 5, group: 'app',
+    name: { fr: 'Session', en: 'Session' },
+    role: { fr: 'Ouverture, maintien et fermeture du dialogue', en: 'Opening, maintaining and closing the dialogue' },
+    pdu: data, examples: 'RPC · NetBIOS',
+  },
+  {
+    n: 4, group: 'transport',
+    name: { fr: 'Transport', en: 'Transport' },
+    role: { fr: 'Communication de bout en bout, ports et fiabilité', en: 'End-to-end delivery, ports and reliability' },
+    pdu: { fr: 'Segment', en: 'Segment' }, examples: 'TCP · UDP',
+    device: { fr: 'Firewall stateful', en: 'Stateful firewall' },
+  },
+  {
+    n: 3, group: 'network',
+    name: { fr: 'Réseau', en: 'Network' },
+    role: { fr: 'Adressage logique (IP) et routage entre réseaux', en: 'Logical addressing (IP) and routing between networks' },
+    pdu: { fr: 'Paquet', en: 'Packet' }, examples: 'IPv4 · IPv6 · ICMP',
+    device: { fr: 'Routeur', en: 'Router' },
+  },
+  {
+    n: 2, group: 'link',
+    name: { fr: 'Liaison de données', en: 'Data link' },
+    role: { fr: 'Adressage physique (MAC) et accès au réseau local', en: 'Physical addressing (MAC) and local network access' },
+    pdu: { fr: 'Trame', en: 'Frame' }, examples: 'Ethernet · 802.1Q · STP',
+    device: { fr: 'Switch', en: 'Switch' },
+  },
+  {
+    n: 1, group: 'physical',
+    name: { fr: 'Physique', en: 'Physical' },
+    role: { fr: 'Transmission des bits sur le support', en: 'Transmitting bits over the medium' },
+    pdu: { fr: 'Bit', en: 'Bit' }, examples: 'RJ45 · SFP · 1000BASE-T',
+    device: { fr: 'Câbles, répéteurs', en: 'Cables, repeaters' },
+  },
+];
+
+// Correspondance TCP/IP : la ligne 1 est l'en-tête, les couches vont de la ligne 2 à 8
+const tcpip: { label: T; row: string; group: Group }[] = [
+  { label: { fr: 'Application', en: 'Application' }, row: '2 / span 3', group: 'app' },
+  { label: { fr: 'Transport', en: 'Transport' }, row: '5', group: 'transport' },
+  { label: { fr: 'Internet', en: 'Internet' }, row: '6', group: 'network' },
+  { label: { fr: 'Accès réseau', en: 'Network access' }, row: '7 / span 2', group: 'link' },
+];
+
+const copy = {
+  fr: {
+    osi: 'Modèle OSI', pdu: 'PDU', tcpip: 'Modèle TCP/IP',
+    caption: "À l'émission, les données descendent les couches et chacune ajoute son en-tête (encapsulation). À la réception, elles remontent et chaque couche retire le sien (désencapsulation).",
+  },
+  en: {
+    osi: 'OSI model', pdu: 'PDU', tcpip: 'TCP/IP model',
+    caption: 'When sending, data moves down the layers and each one adds its header (encapsulation). When receiving, it moves back up and each layer removes its own (decapsulation).',
+  },
+}[lang];
+
+const header = 'font-mono text-xs font-medium uppercase tracking-wide text-slate-500';
+---
+<figure class="not-prose my-10">
+  <div class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-1.5 sm:grid-cols-[2.5rem_minmax(0,1fr)_5.5rem_8.5rem]">
+
+    <!-- En-têtes -->
+    <div class:list={[header, 'pb-1']} style="grid-row: 1; grid-column: 1 / span 2">{copy.osi}</div>
+    <div class:list={[header, 'hidden pb-1 text-center sm:block']} style="grid-row: 1; grid-column: 3">{copy.pdu}</div>
+    <div class:list={[header, 'hidden pb-1 text-center sm:block']} style="grid-row: 1; grid-column: 4">{copy.tcpip}</div>
+
+    <!-- Couches OSI -->
+    {layers.map((layer, i) => {
+      const row = `grid-row: ${i + 2}`;
+      const c = colors[layer.group];
+      return (
+        <>
+          <div
+            style={`${row}; grid-column: 1`}
+            class:list={['flex items-center justify-center rounded-lg border font-mono text-lg font-bold', c.cell, c.text]}
+          >
+            {layer.n}
+          </div>
+
+          <div style={`${row}; grid-column: 2`} class:list={['rounded-lg border px-4 py-3', c.cell]}>
+            <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <p class="font-semibold text-slate-900 dark:text-white">
+                {layer.name[lang]}
+                <span class="ml-1 text-sm font-normal text-slate-500 sm:hidden">· {layer.pdu[lang]}</span>
+              </p>
+              {layer.device && (
+                <span class:list={['text-xs font-medium', c.text]}>{layer.device[lang]}</span>
+              )}
+            </div>
+            <p class="mt-0.5 text-sm text-slate-600 dark:text-slate-400">{layer.role[lang]}</p>
+            <p class="mt-1.5 font-mono text-xs text-slate-500">{layer.examples}</p>
+          </div>
+
+          <div
+            style={`${row}; grid-column: 3`}
+            class="hidden items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 sm:flex dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+          >
+            {layer.pdu[lang]}
+          </div>
+        </>
+      );
+    })}
+
+    <!-- Correspondance TCP/IP -->
+    {tcpip.map((block) => (
+      <div
+        style={`grid-row: ${block.row}; grid-column: 4`}
+        class:list={[
+          'hidden items-center justify-center rounded-lg border-2 border-dashed px-2 text-center text-sm font-semibold sm:flex',
+          colors[block.group].cell,
+          colors[block.group].text,
+        ]}
+      >
+        {block.label[lang]}
+      </div>
+    ))}
+  </div>
+
+  <figcaption class="mt-4 text-center text-sm text-slate-500">
+    {copy.caption}
+  </figcaption>
+</figure>

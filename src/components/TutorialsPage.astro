@@ -1,0 +1,63 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import TutorialCard from './TutorialCard.astro';
+import { routes, t, type Lang } from '../i18n/ui';
+import { getTutorials } from '../lib/content';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const posts = await getTutorials(lang);
+const levels = (['beginner', 'intermediate', 'advanced'] as const)
+  .filter((l) => posts.some((p) => p.data.level === l));
+
+const btn = 'rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium transition hover:border-sky-400 dark:border-slate-700 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white dark:aria-pressed:border-white dark:aria-pressed:bg-white dark:aria-pressed:text-slate-900';
+---
+<BaseLayout title={`${t(lang, 'tutorials.title')} | Next Hop`} lang={lang} alternates={routes.tutorials}>
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">
+      {t(lang, 'tutorials.title')}
+    </h1>
+    <p class="mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-400">{t(lang, 'tutorials.intro')}</p>
+
+    {posts.length > 0 ? (
+      <>
+        <div class="mt-10 flex flex-wrap gap-2">
+          <button type="button" data-filter="all" aria-pressed="true" class={btn}>
+            {t(lang, 'tutorials.all')} ({posts.length})
+          </button>
+          {levels.map((l) => (
+            <button type="button" data-filter={l} aria-pressed="false" class={btn}>
+              {t(lang, `level.${l}`)}
+            </button>
+          ))}
+        </div>
+
+        <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {posts.map((post) => (
+            <div data-level={post.data.level} class="grid">
+              <TutorialCard post={post} lang={lang} />
+            </div>
+          ))}
+        </div>
+      </>
+    ) : (
+      <p class="mt-10 text-slate-500">{t(lang, 'tutorials.empty')}</p>
+    )}
+  </section>
+</BaseLayout>
+
+<script>
+  const buttons = document.querySelectorAll<HTMLButtonElement>('[data-filter]');
+  const items = document.querySelectorAll<HTMLElement>('[data-level]');
+
+  buttons.forEach((button) =>
+    button.addEventListener('click', () => {
+      const level = button.dataset.filter;
+      buttons.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+      items.forEach((item) => {
+        item.hidden = level !== 'all' && item.dataset.level !== level;
+      });
+    })
+  );
+</script>

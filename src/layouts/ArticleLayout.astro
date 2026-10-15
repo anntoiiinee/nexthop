@@ -1,0 +1,71 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import type { CollectionEntry } from 'astro:content';
+import type { MarkdownHeading } from 'astro';
+import { t, formatDate, type Lang } from '../i18n/ui';
+import { levelColors } from '../lib/levels';
+
+interface Props {
+  post: CollectionEntry<'tutorials'> | CollectionEntry<'courses'>;
+  headings: MarkdownHeading[];
+  lang: Lang;
+  alternates: Partial<Record<Lang, string>>;
+}
+
+const { post, headings, lang, alternates } = Astro.props;
+const { title, description, pubDate, updatedDate, level, tags } = post.data;
+const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
+---
+<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates}>
+  <div class="mx-auto grid max-w-6xl gap-12 px-4 py-12 lg:grid-cols-[minmax(0,1fr)_14rem]">
+    <article>
+      <slot name="before"/>
+      <header class="mb-10 border-b border-slate-200 pb-8 dark:border-slate-800">
+        <div class="mb-4 flex flex-wrap items-center gap-2 text-xs font-medium">
+          <span class:list={['rounded-full px-2.5 py-1', levelColors[level]]}>
+            {t(lang, `level.${level}`)}
+          </span>
+          {tags.map((tag) => (
+            <span class="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              #{tag}
+            </span>
+          ))}
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
+        <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
+        <p class="mt-4 text-sm text-slate-500">
+          {t(lang, 'article.published')} <time datetime={pubDate.toISOString()}>{formatDate(pubDate, lang)}</time>
+          {updatedDate && <> · {t(lang, 'article.updated')} {formatDate(updatedDate, lang)}</>}
+        </p>
+      </header>
+
+      <div class="prose prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-a:text-sky-600 dark:prose-a:text-sky-400">
+        <slot />
+      </div>
+      <slot name="after" />
+    </article>
+
+    {toc.length > 0 && (
+      <aside class="hidden lg:block">
+        <nav class="sticky top-24 text-sm">
+          <p class="mb-3 font-semibold text-slate-900 dark:text-white">{t(lang, 'article.toc')}</p>
+          <ul class="space-y-2 border-l border-slate-200 dark:border-slate-800">
+            {toc.map((h) => (
+              <li>
+                <a
+                  href={`#${h.slug}`}
+                  class:list={[
+                    '-ml-px block border-l border-transparent text-slate-500 transition hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400',
+                    h.depth === 3 ? 'pl-8' : 'pl-4',
+                  ]}
+                >
+                  {h.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </aside>
+    )}
+  </div>
+</BaseLayout>

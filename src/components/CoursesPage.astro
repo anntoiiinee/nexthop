@@ -1,0 +1,56 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '../i18n/ui';
+import { levelColors } from '../lib/levels';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const entries = await getCollection('courses',
+  ({ id, data }) => id.startsWith(`${lang}/`) && !data.draft);
+
+const courses = entries
+  .filter((e) => e.data.order === 0)
+  .map((course) => {
+    const slug = course.id.split('/')[1];
+    const chapters = entries.filter(
+      (e) => e.id.split('/')[1] === slug && e.data.order > 0
+    ).length;
+    return { course, slug, chapters };
+  });
+---
+<BaseLayout title={`${t(lang, 'courses.title')} | Next Hop`} lang={lang} alternates={routes.courses}>
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">
+      {t(lang, 'courses.title')}
+    </h1>
+    <p class="mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-400">{t(lang, 'courses.intro')}</p>
+
+    {courses.length > 0 ? (
+      <div class="mt-10 grid gap-6 md:grid-cols-2">
+        {courses.map(({ course, slug, chapters }) => (
+          <a
+            href={`${routes.courses[lang]}/${slug}`}
+            class="group rounded-xl border border-slate-200 bg-white p-8 transition hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-lg dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-sky-500/60"
+          >
+            <div class="mb-4 flex items-center gap-3 text-xs font-medium">
+              <span class:list={['rounded-full px-2.5 py-1', levelColors[course.data.level]]}>
+                {t(lang, `level.${course.data.level}`)}
+              </span>
+              <span class="font-mono text-slate-500">{chapters} {t(lang, 'courses.chapters')}</span>
+            </div>
+            <h2 class="text-xl font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
+              {course.data.title}
+            </h2>
+            <p class="mt-2 text-slate-600 dark:text-slate-400">{course.data.description}</p>
+          </a>
+        ))}
+      </div>
+    ) : (
+      <div class="mt-10 rounded-xl border border-dashed border-slate-300 p-12 text-center text-slate-500 dark:border-slate-700">
+        {t(lang, 'courses.empty')}
+      </div>
+    )}
+  </section>
+</BaseLayout>

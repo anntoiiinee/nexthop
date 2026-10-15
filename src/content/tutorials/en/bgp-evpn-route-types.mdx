@@ -1,0 +1,18 @@
+---
+title: "EVPN route types explained"
+description: "Type 2, 3 and 5: what are they for in a VxLAN fabric?"
+pubDate: 2026-10-15
+level: intermediate
+tags: [bgp, evpn, vxlan]
+vendor: [arista]
+---
+
+## Checking EVPN sessions
+
+```text title="leaf1# show bgp evpn summary" {4-5}
+BGP summary information for VRF default
+Router identifier 10.255.0.3, local AS number 65101
+  Neighbor   V  AS     MsgRcvd MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
+  10.255.0.1 4  65001      142     138    0    0 01:12:04 Estab   24     24
+  10.255.0.2 4  65001      140     137    0    0 01:12:01 Estab   24     24
+```

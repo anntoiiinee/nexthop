@@ -1,0 +1,53 @@
+---
+import { render } from 'astro:content';
+import ArticleLayout from '../layouts/ArticleLayout.astro';
+import { routes, t, type Lang } from '../i18n/ui';
+import { courseUrl, chapterUrl, chapterSlugOf, type Course, type CourseEntry } from '../lib/courses';
+
+interface Props {
+  lang: Lang;
+  course: Course;
+  chapter: CourseEntry;
+  index: number;
+  alternates: Partial<Record<Lang, string>>;
+}
+
+const { lang, course, chapter, index, alternates } = Astro.props;
+const { Content, headings } = await render(chapter);
+
+const prev = course.chapters[index - 1];
+const next = course.chapters[index + 1];
+const card = 'group rounded-xl border border-slate-200 p-4 transition hover:border-sky-400 dark:border-slate-800 dark:hover:border-sky-500/60';
+---
+<ArticleLayout post={chapter} headings={headings} lang={lang} alternates={alternates}>
+  <nav slot="before" class="mb-6 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+    <a href={routes.courses[lang]} class="transition hover:text-sky-500">{t(lang, 'courses.title')}</a>
+    <span>/</span>
+    <a href={courseUrl(lang, course.slug)} class="transition hover:text-sky-500">{course.landing.data.title}</a>
+    <span>/</span>
+    <span class="font-mono">{t(lang, 'courses.chapter')} {index + 1}/{course.chapters.length}</span>
+  </nav>
+
+  <Content />
+
+  <nav slot="after" class="mt-16 grid gap-4 border-t border-slate-200 pt-8 sm:grid-cols-2 dark:border-slate-800">
+    {prev ? (
+      <a href={chapterUrl(lang, course.slug, chapterSlugOf(prev))} class={card}>
+        <p class="text-xs text-slate-500">← {t(lang, 'courses.prev')}</p>
+        <p class="mt-1 font-medium text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{prev.data.title}</p>
+      </a>
+    ) : <div />}
+
+    {next ? (
+      <a href={chapterUrl(lang, course.slug, chapterSlugOf(next))} class:list={[card, 'sm:text-right']}>
+        <p class="text-xs text-slate-500">{t(lang, 'courses.next')} →</p>
+        <p class="mt-1 font-medium text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{next.data.title}</p>
+      </a>
+    ) : (
+      <a href={courseUrl(lang, course.slug)} class:list={[card, 'sm:text-right']}>
+        <p class="text-xs text-slate-500">✓</p>
+        <p class="mt-1 font-medium text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{t(lang, 'courses.back')}</p>
+      </a>
+    )}
+  </nav>
+</ArticleLayout>

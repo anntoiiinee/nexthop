@@ -1,0 +1,244 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import TutorialCard from './TutorialCard.astro';
+import { routes, t, type Lang } from '../i18n/ui';
+import { roadmap } from '../data/roadmap';
+import { courseUrl, chapterUrl, getPublished } from '../lib/courses';
+import { getTutorials } from '../lib/content';
+import { profile } from '../data/profile';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const posts = await getTutorials(lang);
+const latest = posts.slice(0, 6);
+const published = await getPublished(lang);
+
+const copy = {
+  fr: {
+    title: 'Next Hop · Votre prochain saut vers le réseau',
+    badge: 'Réseau & sécurité · étudiants et reconversions',
+    h1: 'Votre prochain saut vers le',
+    h1Accent: 'réseau',
+    intro: "Des tutoriels clairs et concrets, écrits par un IT Network Specialist, pour passer des bases jusqu'aux fabrics EVPN-VxLAN et à l'automatisation.",
+    ctaTutorials: 'Voir les tutoriels',
+    ctaCourses: 'Les formations',
+    audienceTitle: 'Pour qui ?',
+    audience: [
+      { icon: '🎓', title: 'Étudiants', text: "BTS SIO, BUT R&T, licence pro ou école : pour aller au-delà du cours et comprendre ce qu'on attend en entreprise." },
+      { icon: '🔀', title: 'Reconversion', text: "Vous venez d'un autre métier et visez le réseau ? On part des bases, sans jargon inutile, avec un fil conducteur clair." },
+      { icon: '🛠️', title: 'Admins & techs', text: "Vous faites déjà de l'IT et voulez passer au niveau suivant : BGP, EVPN, automatisation, firewalls." },
+    ],
+    roadmapTitle: 'Le parcours, saut par saut',
+    roadmapIntro: "Un chemin progressif, des fondamentaux jusqu'aux sujets rencontrés dans les data centers et les grandes entreprises.",
+    methodTitle: 'Des tutoriels pensés pour la pratique',
+    method: [
+      { title: 'Des configs réelles', text: "Pas de pseudo-code : des configurations telles qu'on les déploie, sur des équipements du marché." },
+      { title: 'Des sorties CLI commentées', text: 'Chaque show command est expliquée : quoi regarder, et ce que ça signifie.' },
+      { title: 'Des labs à reproduire', text: 'Des topologies ContainerLab pour refaire chaque tutoriel chez soi, gratuitement.' },
+      { title: 'Des retours terrain', text: 'Les pièges et bonnes pratiques vus en production, que les cours ne mentionnent pas.' },
+    ],
+    latestTitle: 'Derniers tutoriels',
+    seeAll: 'Tout voir →',
+    empty: 'Les premiers tutoriels arrivent très bientôt.',
+    authorTitle: 'Qui écrit ?',
+    authorText: "Antoine, IT Network Specialist. Passé par un BTS SIO, une licence pro et un master, il travaille aujourd'hui sur des fabrics EVPN-VxLAN et l'automatisation réseau dans l'aéronautique.",
+    authorCta: 'En savoir plus',
+  },
+  en: {
+    title: 'Next Hop · Your next hop into networking',
+    badge: 'Networking & security · students and career changers',
+    h1: 'Your next hop into',
+    h1Accent: 'networking',
+    intro: 'Clear, hands-on tutorials written by an IT Network Specialist, taking you from the fundamentals to EVPN-VxLAN fabrics and automation.',
+    ctaTutorials: 'Browse tutorials',
+    ctaCourses: 'Courses',
+    audienceTitle: 'Who is it for?',
+    audience: [
+      { icon: '🎓', title: 'Students', text: 'Networking students who want to go beyond the classroom and understand what companies actually expect.' },
+      { icon: '🔀', title: 'Career changers', text: 'Coming from another field and aiming for networking? We start from the basics, without unnecessary jargon.' },
+      { icon: '🛠️', title: 'Sysadmins & techs', text: 'Already in IT and ready for the next level: BGP, EVPN, automation, firewalls.' },
+    ],
+    roadmapTitle: 'The path, hop by hop',
+    roadmapIntro: 'A progressive path, from the fundamentals to the topics you meet in data centers and large companies.',
+    methodTitle: 'Tutorials built for practice',
+    method: [
+      { title: 'Real configs', text: 'No pseudo-code: configurations as they are actually deployed, on real-world gear.' },
+      { title: 'Annotated CLI output', text: 'Every show command is explained: what to look at, and what it means.' },
+      { title: 'Reproducible labs', text: 'ContainerLab topologies so you can rebuild every tutorial at home, for free.' },
+      { title: 'Field experience', text: "Production pitfalls and best practices that courses don't mention." },
+    ],
+    latestTitle: 'Latest tutorials',
+    seeAll: 'See all →',
+    empty: 'The first tutorials are coming soon.',
+    authorTitle: 'Who writes this?',
+    authorText: "Antoine, IT Network Specialist. After a two-year IT degree, a professional bachelor's and a master's, he now works on EVPN-VxLAN fabrics and network automation in aerospace.",
+    authorCta: 'Learn more',
+  },
+}[lang];
+
+const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-white';
+---
+<BaseLayout title={copy.title} lang={lang} alternates={routes.home}>
+
+  <!-- Hero -->
+  <section class="relative overflow-hidden">
+    <div
+      class="pointer-events-none absolute inset-0 -z-10"
+      style="background: radial-gradient(ellipse at top, rgb(14 165 233 / 0.12), transparent 60%);"
+    ></div>
+    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 lg:grid-cols-2 lg:py-28">
+      <div>
+        <p class="mb-6 inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300">
+          {copy.badge}
+        </p>
+        <h1 class="text-4xl font-bold tracking-tight text-slate-900 sm:text-5xl dark:text-white">
+          {copy.h1} <span class="text-sky-500">{copy.h1Accent}</span>.
+        </h1>
+        <p class="mt-6 max-w-xl text-lg text-slate-600 dark:text-slate-400">{copy.intro}</p>
+        <div class="mt-8 flex flex-wrap gap-3">
+          <a href={routes.tutorials[lang]} class="rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-600">
+            {copy.ctaTutorials}
+          </a>
+          <a href={routes.courses[lang]} class="rounded-lg border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-sky-400">
+            {copy.ctaCourses}
+          </a>
+        </div>
+      </div>
+
+      <div class="hidden overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-2xl lg:block">
+        <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
+          <span class="size-3 rounded-full bg-rose-500/80"></span>
+          <span class="size-3 rounded-full bg-amber-500/80"></span>
+          <span class="size-3 rounded-full bg-emerald-500/80"></span>
+          <span class="ml-2 font-mono text-xs text-slate-500">~/career</span>
+        </div>
+        <pre class="p-6 font-mono text-sm leading-relaxed text-slate-300"><span class="text-sky-400">$</span> traceroute new-career
+ 1  curiosity         0.4 ms
+ 2  fundamentals      1.2 ms
+ 3  bgp-evpn          3.8 ms
+ 4  automation        5.1 ms
+ 5  <span class="text-emerald-400">next-hop ✓</span>       <span class="text-emerald-400">reached</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pour qui -->
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <h2 class={h2}>{copy.audienceTitle}</h2>
+    <div class="mt-8 grid gap-6 md:grid-cols-3">
+      {copy.audience.map((a) => (
+        <div class="rounded-xl border border-slate-200 p-6 dark:border-slate-800">
+          <p class="text-3xl">{a.icon}</p>
+          <h3 class="mt-4 font-semibold text-slate-900 dark:text-white">{a.title}</h3>
+          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{a.text}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <!-- Parcours -->
+  <section class="border-y border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40">
+    <div class="mx-auto max-w-6xl px-4 py-16">
+      <h2 class={h2}>{copy.roadmapTitle}</h2>
+      <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.roadmapIntro}</p>
+
+      <ol class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        {roadmap.map((step, i) => {
+          const courseReady = published.courses.has(step.course);
+          return (
+            <li class="flex flex-col rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+              <div class="flex items-center justify-between">
+                <span class="font-mono text-xs text-slate-400">hop {i + 1}</span>
+                <span class="font-mono text-xs font-medium text-sky-600 dark:text-sky-400">{step.label}</span>
+              </div>
+              <h3 class="mt-3 font-semibold text-slate-900 dark:text-white">
+                {courseReady ? (
+                  <a href={courseUrl(lang, step.course)} class="transition hover:text-sky-500">{step.title[lang]} →</a>
+                ) : step.title[lang]}
+              </h3>
+              <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{step.text[lang]}</p>
+
+              <ul class="mt-4 space-y-1.5 border-t border-slate-200 pt-4 text-sm dark:border-slate-800">
+                {step.chapters.map((chapter) =>
+                  published.chapters.has(`${step.course}/${chapter.slug}`) ? (
+                    <li>
+                      <a
+                        href={chapterUrl(lang, step.course, chapter.slug)}
+                        class="flex gap-1.5 text-slate-700 transition hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400"
+                      >
+                        <span class="text-sky-500">▸</span>{chapter.title[lang]}
+                      </a>
+                    </li>
+                  ) : (
+                    <li class="flex items-baseline justify-between gap-2 text-slate-400 dark:text-slate-600">
+                      <span>{chapter.title[lang]}</span>
+                      <span class="shrink-0 font-mono text-[10px] uppercase">{t(lang, 'courses.soon')}</span>
+                    </li>
+                  )
+                )}
+              </ul>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  </section>
+
+  <!-- Méthode -->
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <h2 class={h2}>{copy.methodTitle}</h2>
+    <div class="mt-8 grid gap-x-12 gap-y-8 sm:grid-cols-2">
+      {copy.method.map((m) => (
+        <div class="flex gap-4">
+          <span class="mt-0.5 font-mono text-sky-500">&gt;</span>
+          <div>
+            <h3 class="font-semibold text-slate-900 dark:text-white">{m.title}</h3>
+            <p class="mt-1 text-slate-600 dark:text-slate-400">{m.text}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <!-- Derniers tutoriels -->
+  <section class="border-t border-slate-200 dark:border-slate-800">
+    <div class="mx-auto max-w-6xl px-4 py-16">
+      <div class="flex items-end justify-between gap-4">
+        <h2 class={h2}>{copy.latestTitle}</h2>
+        {posts.length > 6 && (
+          <a href={routes.tutorials[lang]} class="text-sm font-medium text-sky-600 hover:underline dark:text-sky-400">
+            {copy.seeAll}
+          </a>
+        )}
+      </div>
+      {latest.length > 0 ? (
+        <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {latest.map((post) => <TutorialCard post={post} lang={lang} />)}
+        </div>
+      ) : (
+        <p class="mt-8 text-slate-500">{copy.empty}</p>
+      )}
+    </div>
+  </section>
+
+  <!-- Auteur -->
+  <section class="mx-auto max-w-6xl px-4 pb-20">
+    <div class="flex flex-col items-start gap-6 rounded-2xl border border-slate-200 bg-slate-50 p-8 sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-900/40">
+      <img src={profile.avatar} alt={profile.name} width="96" height="96" class="size-24 shrink-0 rounded-full ring-4 ring-sky-500/20" />
+      <div class="flex-1">
+        <p class="font-mono text-xs text-sky-600 dark:text-sky-400">{copy.authorTitle}</p>
+        <p class="mt-2 text-slate-700 dark:text-slate-300">{copy.authorText}</p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          {profile.certifications.map((c) => (
+            <span class="rounded-md border border-slate-300 px-2 py-0.5 font-mono text-xs dark:border-slate-700">{c}</span>
+          ))}
+        </div>
+      </div>
+      <a href={routes.whoami[lang]} class="shrink-0 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
+        {copy.authorCta}
+      </a>
+    </div>
+  </section>
+
+</BaseLayout>

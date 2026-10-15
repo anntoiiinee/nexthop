@@ -1,0 +1,67 @@
+---
+import { render } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '../i18n/ui';
+import { levelColors } from '../lib/levels';
+import { chapterUrl, chapterSlugOf, type Course } from '../lib/courses';
+
+interface Props {
+  lang: Lang;
+  course: Course;
+  alternates: Partial<Record<Lang, string>>;
+}
+
+const { lang, course, alternates } = Astro.props;
+const { Content } = await render(course.landing);
+const { title, description, level } = course.landing.data;
+const first = course.chapters[0];
+---
+<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates}>
+  <div class="mx-auto max-w-4xl px-4 py-16">
+    <a href={routes.courses[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
+      ← {t(lang, 'courses.title')}
+    </a>
+
+    <div class="mt-6 flex items-center gap-3 text-xs font-medium">
+      <span class:list={['rounded-full px-2.5 py-1', levelColors[level]]}>{t(lang, `level.${level}`)}</span>
+      <span class="font-mono text-slate-500">{course.chapters.length} {t(lang, 'courses.chapters')}</span>
+    </div>
+    <h1 class="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
+    <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
+
+    <div class="prose prose-slate mt-8 max-w-none dark:prose-invert prose-a:text-sky-600 dark:prose-a:text-sky-400">
+      <Content />
+    </div>
+
+    {course.chapters.length > 0 && (
+      <>
+        <h2 class="mt-12 text-xl font-bold text-slate-900 dark:text-white">{t(lang, 'courses.program')}</h2>
+        <ol class="mt-6 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+          {course.chapters.map((chapter, i) => (
+            <li>
+              <a
+                href={chapterUrl(lang, course.slug, chapterSlugOf(chapter))}
+                class="group flex items-center gap-4 p-4 transition hover:bg-slate-50 dark:hover:bg-slate-900"
+              >
+                <span class="font-mono text-sm text-sky-500">{String(i + 1).padStart(2, '0')}</span>
+                <div class="flex-1">
+                  <p class="font-medium text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
+                    {chapter.data.title}
+                  </p>
+                  <p class="text-sm text-slate-500">{chapter.data.description}</p>
+                </div>
+                <span class="text-slate-400 transition group-hover:translate-x-1">→</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+        <a
+          href={chapterUrl(lang, course.slug, chapterSlugOf(first))}
+          class="mt-8 inline-block rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600"
+        >
+          {t(lang, 'courses.start')} →
+        </a>
+      </>
+    )}
+  </div>
+</BaseLayout>
