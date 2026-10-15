@@ -1,0 +1,191 @@
+---
+import type { Lang } from '../i18n/ui';
+
+interface Props {
+  lang?: Lang;
+  value?: string;
+}
+
+const { lang = 'fr', value = '192.168.10.37/26' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Calculateur de sous-réseau',
+    hint: 'Format : 192.168.10.37/26 ou 10.0.0.1 255.255.255.0',
+    network: 'Adresse réseau',
+    mask: 'Masque',
+    wildcard: 'Wildcard',
+    broadcast: 'Broadcast',
+    first: 'Première adresse',
+    last: 'Dernière adresse',
+    hosts: 'Adresses utilisables',
+    type: 'Type',
+    binary: 'Vue binaire',
+    netbits: 'bits réseau',
+    hostbits: 'bits hôte',
+    error: 'Format invalide : saisissez une adresse IPv4 suivie de /préfixe ou d’un masque.',
+    private: 'Privée (RFC 1918)',
+    public: 'Publique',
+    loopback: 'Loopback',
+    cgnat: 'CGNAT (RFC 6598)',
+    linklocal: 'Link-local',
+    p2p: 'point à point (RFC 3021)',
+    single: 'hôte unique',
+  },
+  en: {
+    title: 'Subnet calculator',
+    hint: 'Format: 192.168.10.37/26 or 10.0.0.1 255.255.255.0',
+    network: 'Network address',
+    mask: 'Mask',
+    wildcard: 'Wildcard',
+    broadcast: 'Broadcast',
+    first: 'First address',
+    last: 'Last address',
+    hosts: 'Usable addresses',
+    type: 'Type',
+    binary: 'Binary view',
+    netbits: 'network bits',
+    hostbits: 'host bits',
+    error: 'Invalid format: enter an IPv4 address followed by /prefix or a mask.',
+    private: 'Private (RFC 1918)',
+    public: 'Public',
+    loopback: 'Loopback',
+    cgnat: 'CGNAT (RFC 6598)',
+    linklocal: 'Link-local',
+    p2p: 'point-to-point (RFC 3021)',
+    single: 'single host',
+  },
+}[lang];
+
+const fields = ['network', 'mask', 'wildcard', 'broadcast', 'first', 'last', 'hosts', 'type'] as const;
+---
+<div
+  data-subnet-calc
+  data-i18n={JSON.stringify(copy)}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <label class="block">
+    <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">
+      {copy.title}
+    </span>
+    <input
+      type="text"
+      value={value}
+      spellcheck="false"
+      autocomplete="off"
+      data-input
+      class="mt-2 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+    />
+  </label>
+  <p class="mt-2 text-xs text-slate-500">{copy.hint}</p>
+  <p data-error hidden class="mt-2 text-sm text-rose-600 dark:text-rose-400">{copy.error}</p>
+
+  <div data-results class="transition-opacity">
+    <dl class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {fields.map((f) => (
+        <div>
+          <dt class="text-xs text-slate-500">{copy[f]}</dt>
+          <dd data-field={f} class="mt-1 font-mono text-sm font-medium text-slate-900 dark:text-white">—</dd>
+        </div>
+      ))}
+    </dl>
+
+    <div class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+      <p class="text-xs text-slate-500">{copy.binary}</p>
+      <p data-binary class="mt-1 break-all font-mono text-sm tracking-wider"></p>
+      <p class="mt-2 flex gap-4 text-xs text-slate-500">
+        <span><span class="font-semibold text-sky-600 dark:text-sky-400">■</span> {copy.netbits}</span>
+        <span><span class="text-slate-400">■</span> {copy.hostbits}</span>
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const toInt = (ip: string): number | null => {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+  };
+  const toIp = (n: number) => [24, 16, 8, 0].map((s) => (n >>> s) & 255).join('.');
+  const prefixToMask = (p: number) => (p === 0 ? 0 : (0xffffffff << (32 - p)) >>> 0);
+  const maskToPrefix = (m: number): number | null => {
+    const inv = ~m >>> 0;
+    if ((inv & (inv + 1)) !== 0) return null; // masque non contigu
+    return 32 - Math.log2(inv + 1);
+  };
+  const inRange = (ip: number, base: string, p: number) =>
+    ((ip & prefixToMask(p)) >>> 0) === toInt(base);
+
+  function parse(input: string) {
+    const m = input.trim().match(/^(\d{1,3}(?:\.\d{1,3}){3})\s*(?:\/\s*(\d{1,2})|\s+(\d{1,3}(?:\.\d{1,3}){3}))$/);
+    if (!m) return null;
+    const ip = toInt(m[1]);
+    if (ip === null) return null;
+    let prefix: number | null;
+    if (m[2] !== undefined) {
+      prefix = Number(m[2]);
+      if (prefix > 32) return null;
+    } else {
+      const mask = toInt(m[3]);
+      prefix = mask === null ? null : maskToPrefix(mask);
+    }
+    return prefix === null ? null : { ip, prefix };
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-subnet-calc]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const input = root.querySelector<HTMLInputElement>('[data-input]')!;
+    const error = root.querySelector<HTMLElement>('[data-error]')!;
+    const results = root.querySelector<HTMLElement>('[data-results]')!;
+    const binary = root.querySelector<HTMLElement>('[data-binary]')!;
+    const set = (field: string, value: string) => {
+      root.querySelector<HTMLElement>(`[data-field="${field}"]`)!.textContent = value;
+    };
+
+    const update = () => {
+      const parsed = parse(input.value);
+      error.hidden = parsed !== null;
+      results.classList.toggle('opacity-40', parsed === null);
+      if (!parsed) return;
+
+      const { ip, prefix } = parsed;
+      const mask = prefixToMask(prefix);
+      const network = (ip & mask) >>> 0;
+      const broadcast = (network | ~mask) >>> 0;
+
+      let first = network + 1;
+      let last = broadcast - 1;
+      let hosts = (2 ** (32 - prefix) - 2).toLocaleString();
+      if (prefix === 31) { first = network; last = broadcast; hosts = `2 · ${t.p2p}`; }
+      if (prefix === 32) { first = network; last = network; hosts = `1 · ${t.single}`; }
+
+      let type = t.public;
+      if (inRange(ip, '10.0.0.0', 8) || inRange(ip, '172.16.0.0', 12) || inRange(ip, '192.168.0.0', 16)) type = t.private;
+      else if (inRange(ip, '127.0.0.0', 8)) type = t.loopback;
+      else if (inRange(ip, '100.64.0.0', 10)) type = t.cgnat;
+      else if (inRange(ip, '169.254.0.0', 16)) type = t.linklocal;
+
+      set('network', `${toIp(network)}/${prefix}`);
+      set('mask', toIp(mask));
+      set('wildcard', toIp(~mask >>> 0));
+      set('broadcast', prefix >= 31 ? '—' : toIp(broadcast));
+      set('first', toIp(first));
+      set('last', toIp(last));
+      set('hosts', hosts);
+      set('type', type);
+
+      const bits = ip.toString(2).padStart(32, '0');
+      let html = '';
+      for (let i = 0; i < 32; i++) {
+        if (i > 0 && i % 8 === 0) html += '<span class="text-slate-400">.</span>';
+        const cls = i < prefix ? 'font-semibold text-sky-600 dark:text-sky-400' : 'text-slate-400';
+        html += `<span class="${cls}">${bits[i]}</span>`;
+      }
+      binary.innerHTML = html;
+    };
+
+    input.addEventListener('input', update);
+    update();
+  });
+</script>

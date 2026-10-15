@@ -1,0 +1,119 @@
+---
+import fs from 'node:fs';
+import path from 'node:path';
+import { Code } from 'astro-expressive-code/components';
+import type { Lang } from '../i18n/ui';
+import ClabDiagram from './ClabDiagram.astro';
+
+interface Props {
+  name: string;
+  lang?: Lang;
+}
+
+const { name, lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Lab',
+    requirements: 'Prérequis',
+    req: [
+      'Linux (ou WSL2) avec Docker et ContainerLab installés',
+      "L'image cEOS-lab, téléchargeable gratuitement sur arista.com (compte requis)",
+    ],
+    importImage: "Importer l'image cEOS",
+    download: 'Récupérer le lab',
+    files: 'Fichiers',
+    topology: 'Topologie',
+    run: 'Lancer et arrêter le lab',
+    diagram: 'Schéma',
+  },
+  en: {
+    title: 'Lab',
+    requirements: 'Requirements',
+    req: [
+      'Linux (or WSL2) with Docker and ContainerLab installed',
+      'The cEOS-lab image, free to download from arista.com (account required)',
+    ],
+    importImage: 'Import the cEOS image',
+    download: 'Get the lab',
+    files: 'Files',
+    topology: 'Topology',
+    run: 'Start and stop the lab',
+    diagram: 'Diagram',
+  },
+}[lang];
+
+const dir = path.join(process.cwd(), 'public', 'labs', name);
+
+const walk = (d: string, base = ''): string[] =>
+  fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(d, e.name), `${base}${e.name}/`) : [`${base}${e.name}`]
+  );
+
+const files = walk(dir).sort();
+const topologyFile = files.find((f) => f.endsWith('.clab.yml'));
+const topology = topologyFile ? fs.readFileSync(path.join(dir, topologyFile), 'utf-8') : '';
+
+const baseUrl = new URL(`/labs/${name}/`, Astro.site);
+const downloadScript = [
+  `mkdir ${name} && cd ${name}`,
+  ...files.map((f) => `curl -fsSL --create-dirs -o ${f} ${new URL(f, baseUrl)}`),
+].join('\n');
+
+const runScript = [
+  `sudo containerlab deploy -t ${topologyFile}`,
+  `docker exec -it clab-${name}-leaf1 Cli`,
+  `sudo containerlab destroy -t ${topologyFile}`,
+].join('\n');
+
+const h3 = 'mt-6 text-sm font-semibold text-slate-900 dark:text-white';
+---
+<section class="not-prose my-10 overflow-hidden rounded-xl border border-emerald-300 dark:border-emerald-500/30">
+  <header class="flex items-center gap-3 border-b border-emerald-300 bg-emerald-50 px-6 py-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+    <span class="font-mono text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+      {copy.title}
+    </span>
+    <span class="font-mono text-sm font-medium text-slate-900 dark:text-white">{name}</span>
+  </header>
+
+  <div class="px-6 pb-6">
+    <h3 class={h3}>{copy.requirements}</h3>
+    <ul class="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-400">
+      {copy.req.map((r) => <li class="flex gap-2"><span class="text-emerald-500">▸</span>{r}</li>)}
+    </ul>
+
+    <h3 class={h3}>{copy.importImage}</h3>
+    <Code code={'docker import cEOS64-lab-<version>.tar.xz ceos:latest'} lang="bash" />
+
+    <h3 class={h3}>{copy.download}</h3>
+    <Code code={downloadScript} lang="bash" />
+
+    <h3 class={h3}>{copy.files}</h3>
+    <ul class="mt-2 flex flex-wrap gap-2">
+      {files.map((f) => (
+        <li>
+          <a
+            href={`/labs/${name}/${f}`}
+            download
+            class="inline-block rounded-md border border-slate-300 px-2.5 py-1 font-mono text-xs transition hover:border-emerald-500 hover:text-emerald-600 dark:border-slate-700 dark:hover:text-emerald-400"
+          >
+            ↓ {f}
+          </a>
+        </li>
+      ))}
+    </ul>
+
+    {topologyFile && (
+      <>
+        <h3 class={h3}>{copy.diagram}</h3>
+        <ClabDiagram name={name} file={topologyFile} />
+
+        <h3 class={h3}>{copy.topology}</h3>
+        <Code code={topology} lang="yaml" title={topologyFile} />
+      </>
+    )}
+
+    <h3 class={h3}>{copy.run}</h3>
+    <Code code={runScript} lang="bash" />
+  </div>
+</section>

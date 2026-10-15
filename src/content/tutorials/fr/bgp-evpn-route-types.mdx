@@ -1,18 +1,38 @@
 ---
-title: "Les routes types EVPN expliquées"
-description: "Type 2, 3 et 5 : à quoi servent-ils dans une fabrix VxLAN ?"
+title: "Les route types EVPN expliqués"
+description: "Type 2, 3 et 5 : à quoi servent-ils dans une fabric VxLAN ?"
 pubDate: 2026-10-15
+level: intermediate
 tags: [bgp, evpn, vxlan]
 vendor: [arista]
-level: intermediate
 ---
+
+import Lab from '../../../components/Lab.astro';
 
 ## Vérifier les sessions EVPN
 
-```text title="leaf1# show bgp evpn summary" {4-5}
+Avant de regarder les routes, on vérifie que la session EVPN entre le leaf et le spine est bien établie.
+
+```text title="leaf1# show bgp evpn summary" {4}
 BGP summary information for VRF default
-Router identifier 10.255.0.3, local AS number 65101
+Router identifier 10.255.0.11, local AS number 65001
   Neighbor   V  AS     MsgRcvd MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.255.0.1 4  65001      142     138    0    0 01:12:04 Estab   24     24
-  10.255.0.2 4  65001      140     137    0    0 01:12:01 Estab   24     24
+  10.255.0.1 4  65000       42      40    0    0 00:12:04 Estab   3      3
+```
+
+L'état `Estab` confirme que la session est établie, et `PfxRcd` indique le nombre de routes EVPN reçues du spine.
+
+## Reproduire chez soi
+
+<Lab name="evpn-basic" lang="fr" />
+
+Une fois le lab démarré, testez la connectivité entre les deux hôtes, situés dans le même VLAN mais derrière deux leafs différents :
+
+```bash
+docker exec -it clab-evpn-basic-host1 ping -c 3 10.10.10.12
+```
+
+Si le ping passe, le trafic traverse bien la fabric dans un tunnel VxLAN. Vous pouvez alors observer les routes de type 2 (MAC/IP) apprises par chaque leaf :
+
+```text title="leaf1# show bgp evpn route-type mac-ip"
 ```

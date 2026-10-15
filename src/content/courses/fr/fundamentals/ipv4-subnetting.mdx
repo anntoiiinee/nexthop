@@ -1,0 +1,19 @@
+---
+title: "Adressage IPv4 et subnetting"
+description: "Masques, préfixes CIDR et découpage en sous-réseaux, avec un calculateur pour s'entraîner."
+pubDate: 2026-10-15
+level: beginner
+tags: [ipv4, subnetting]
+order: 5
+---
+
+import SubnetCalculator from '../../../../components/SubnetCalculator.astro';
+
+## À vous de jouer
+
+Modifiez l'adresse ou le préfixe et observez comment évoluent l'adresse réseau,
+le broadcast et la frontière entre bits réseau et bits hôte.
+
+<SubnetCalculator lang="fr" />
+
+Essayez par exemple `10.0.1.0/31`, le préfixe utilisé pour les liens entre spines et leafs.

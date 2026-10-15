@@ -1,0 +1,13 @@
+---
+import { render } from 'astro:content';
+import ArticleLayout from '../../../layouts/ArticleLayout.astro';
+import { getTutorialPaths } from '../../../lib/content';
+
+export const getStaticPaths = () => getTutorialPaths('en');
+
+const { post, alternates } = Astro.props;
+const { Content, headings } = await render(post);
+---
+<ArticleLayout post={post} headings={headings} lang="en" alternates={alternates}>
+  <Content />
+</ArticleLayout>

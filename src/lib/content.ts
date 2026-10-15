@@ -17,10 +17,12 @@ export async function getTutorialPaths(lang: Lang) {
   const posts = await getTutorials(lang);
   const translated = new Set((await getTutorials(otherLang)).map((p) => slugOf(p.id)));
 
-  return posts.map((post) => {
+  const paths = posts.map((post) => {
     const slug = slugOf(post.id);
     const alternates: Partial<Record<Lang, string>> = { [lang]: tutorialUrl(lang, slug) };
     if (translated.has(slug)) alternates[otherLang] = tutorialUrl(otherLang, slug);
     return { params: { slug }, props: { post, alternates } };
   });
+
+  return paths;
 }

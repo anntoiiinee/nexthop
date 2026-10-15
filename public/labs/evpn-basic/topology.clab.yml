@@ -1,0 +1,32 @@
+name: evpn-basic
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+  nodes:
+    spine1:
+      kind: arista_ceos
+      startup-config: configs/spine1.cfg
+    leaf1:
+      kind: arista_ceos
+      startup-config: configs/leaf1.cfg
+    leaf2:
+      kind: arista_ceos
+      startup-config: configs/leaf2.cfg
+    host1:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 10.10.10.11/24 dev eth1
+    host2:
+      kind: linux
+      image: alpine:latest
+      exec:
+        - ip addr add 10.10.10.12/24 dev eth1
+
+  links:
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["leaf1:eth2", "host1:eth1"]
+    - endpoints: ["leaf2:eth2", "host2:eth1"]
