@@ -1,0 +1,220 @@
+---
+title: "BGP attributes and best path"
+description: "BGP attributes, the best path selection algorithm, and how to prefer one ISP: LOCAL_PREF for outbound traffic, AS-path prepending and MED for inbound traffic."
+pubDate: 2026-10-17
+level: intermediate
+tags: [bgp, local-preference, as-path, med]
+vendor: [arista, cisco]
+order: 4
+---
+
+In the previous chapter, CE1 received the route to the Internet from **both** ISPs and picked one.
+Based on what? And above all, how do you **impose** your choice, for example sending all traffic
+through ISP A, which is faster, and keeping B as a backup? That is the whole art of BGP: each route
+carries **attributes**, and you act on them.
+
+## A route's attributes
+
+A BGP route isn't just a prefix and a next hop: it is a prefix accompanied by a set of **attributes**
+describing its origin, its path and everyone's preferences.
+
+| Attribute | Category | Role | Scope |
+|---|---|---|---|
+| **NEXT_HOP** | mandatory | address to send the traffic to | — |
+| **AS_PATH** | mandatory | list of ASes crossed | passed everywhere |
+| **ORIGIN** | mandatory | how the route was born: `i` (network), `?` (redistribution) | passed everywhere |
+| **LOCAL_PREF** | discretionary | **outbound** preference within my AS, higher = better | **within my AS only** (iBGP) |
+| **MED** (<Term id="med" />) | optional | **inbound** preference suggested to a neighbor AS, lower = better | towards the neighbor AS |
+| **COMMUNITY** | optional | tags used to apply policies | depends on configuration |
+| Weight | Cisco-specific | preference local to **a single router** | never passed on |
+
+## How BGP chooses
+
+When several paths lead to the same prefix, BGP compares them **criterion by criterion, in a fixed
+order**. As soon as one criterion decides, the comparison stops.
+
+<PacketFormat
+  cols={8}
+  rows={[
+    { fields: [
+      { label: '1. Next hop reachable', sub: 'otherwise ignored', tone: 'slate' },
+      { label: '2. LOCAL_PREF', sub: 'highest', tone: 'emerald' },
+      { label: '3. Locally originated', sub: 'network on this router', tone: 'slate' },
+      { label: '4. AS_PATH', sub: 'shortest', tone: 'sky' },
+      { label: '5. ORIGIN', sub: 'i < e < ?', tone: 'slate' },
+      { label: '6. MED', sub: 'lowest', tone: 'amber' },
+      { label: '7. eBGP > iBGP', sub: 'external first', tone: 'slate' },
+      { label: '8. IGP cost', sub: 'to the next hop', tone: 'slate' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="BGP's decision order (simplified version, common to Cisco and Arista). Cisco adds Weight at the very top."
+/>
+
+If a tie remains after these steps: depending on the vendor, the **oldest** path, then the neighbor's
+**lowest router ID** wins. That is what happened in the previous chapter: both AS_PATHs were 2 ASes
+long, everything was equal, and ISP-A won the final tie-breaker.
+
+<Callout type="tip">
+A way to remember the first steps, which are the ones you actually work with: **local preference
+before short paths**. LOCAL_PREF first, shortest AS_PATH next.
+</Callout>
+
+## Choosing the way out: LOCAL_PREF
+
+**Outbound** traffic (from the company to the Internet) is decided by CE1. To send everything through
+ISP-A, raise the **LOCAL_PREF** of the routes received from ISP-A (100 by default):
+
+```text title="CE1 · Arista EOS"
+route-map RM-ISP-A-IN permit 10
+   set local-preference 200
+!
+router bgp 65010
+   neighbor 192.0.2.0 route-map RM-ISP-A-IN in
+```
+
+<Topology
+  width={760}
+  height={280}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 160, y: 140, label: 'CE1', sub: 'AS 65010', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 420, y: 60, label: 'ISP-A', sub: 'LOCAL_PREF 200', tone: 'emerald' },
+    { id: 'ispb', type: 'router', x: 420, y: 220, label: 'ISP-B', sub: 'LOCAL_PREF 100', tone: 'slate' },
+    { id: 'inet', type: 'cloud', x: 650, y: 140, label: 'Internet', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ispa', tone: 'emerald' }, { from: 'ce1', to: 'ispb', style: 'dashed' },
+    { from: 'ispa', to: 'inet', tone: 'emerald' }, { from: 'ispb', to: 'inet' },
+  ]}
+  flows={[
+    { from: 'ce1', to: 'ispa', label: 'outbound traffic', tone: 'emerald', offset: -16 },
+    { from: 'ispa', to: 'inet', tone: 'emerald', offset: -16 },
+  ]}
+  caption="Every route received from ISP-A has a LOCAL_PREF of 200: it beats ISP-B's routes at step 2. ISP-B stays as a backup."
+/>
+
+LOCAL_PREF is the go-to tool for outbound traffic, because it is compared **before** the AS_PATH: it
+wins even if ISP-B offers a shorter path. And it is shared over iBGP with every router in the AS: with
+two edge routers, they all prefer the same exit.
+
+```text title="CE1#show ip bgp 203.0.113.0/24"
+BGP routing table entry for 203.0.113.0/24
+ Paths: 2 available
+  65100 65300
+    192.0.2.0 from 192.0.2.0 (10.100.255.1)
+      Origin IGP, metric 0, localpref 200, valid, external, best
+  65200 65300
+    192.0.2.2 from 192.0.2.2 (10.200.255.1)
+      Origin IGP, metric 0, localpref 100, valid, external
+      Not best: Local preference
+```
+
+The last line says it clearly: the path through ISP-B lost **because of LOCAL_PREF**.
+
+## Choosing the way in: AS-path prepending
+
+**Inbound** traffic (from the Internet to the company) is trickier: it is **the other ASes** that choose
+how to reach us. We can only **influence** them. The most common tool: artificially lengthen the AS_PATH
+of the announcements sent to the backup ISP, by repeating your own number.
+
+```text title="CE1 · Arista EOS"
+route-map RM-ISP-B-OUT permit 10
+   set as-path prepend 65010 65010
+!
+router bgp 65010
+   neighbor 192.0.2.2 route-map RM-ISP-B-OUT out
+```
+
+<Topology
+  width={760}
+  height={280}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 160, y: 140, label: 'CE1', sub: '198.51.100.0/24', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 420, y: 60, label: 'ISP-A', tone: 'violet' },
+    { id: 'ispb', type: 'router', x: 420, y: 220, label: 'ISP-B', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 650, y: 140, label: 'Internet', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ispa', tone: 'emerald' }, { from: 'ce1', to: 'ispb', style: 'dashed' },
+    { from: 'ispa', to: 'inet', tone: 'emerald' }, { from: 'ispb', to: 'inet', style: 'dashed' },
+  ]}
+  flows={[
+    { from: 'inet', to: 'ispa', label: 'inbound traffic', tone: 'emerald', offset: -16 },
+    { from: 'ispa', to: 'ce1', tone: 'emerald', offset: -16 },
+  ]}
+  notes={[
+    { x: 600, y: 40, text: 'via A: 65100 65010', tone: 'emerald', mono: true },
+    { x: 600, y: 250, text: 'via B: 65200 65010 65010 65010', tone: 'slate', mono: true },
+  ]}
+  caption="Seen from the Internet, the path through ISP-B crosses “4 ASes” instead of 2: it prefers ISP-A. If ISP-A goes down, the path through B is still available."
+/>
+
+<Callout type="note">
+Prepending is a **suggestion**, not an order: an AS that set a higher LOCAL_PREF on the route learned
+through ISP-B (because it is its customer, for example) will still use it. Beyond 3 or 4 repetitions, the
+effect stops increasing and you just pollute the Internet's table.
+</Callout>
+
+## MED: when you have several links to the same neighbor
+
+**MED** tells **one neighbor AS**, connected through several links, which one to use to reach us: the
+lowest MED wins. By default, it is only compared between routes coming **from the same neighbor AS**. It
+is therefore useless between ISP-A and ISP-B, but helpful with two links to the same ISP (a 10 Gb/s
+primary, a 1 Gb/s backup):
+
+```text title="CE1 · Arista EOS: backup link to the same ISP"
+route-map RM-ISP-A-BACKUP-OUT permit 10
+   set metric 200
+```
+
+## next-hop-self in iBGP
+
+In iBGP, the next hop of a route learned over eBGP is **kept**. With two edge routers, CE2 receives from
+CE1 a route whose next hop is ISP-A's address… which it can't reach. The route is then invalid (no `*`
+asterisk), and ignored.
+
+<Topology
+  width={760}
+  height={220}
+  groups={[{ x: 16, y: 30, w: 400, h: 175, label: 'AS 65010', tone: 'emerald' }]}
+  nodes={[
+    { id: 'ce2', type: 'router', x: 100, y: 115, label: 'CE2', tone: 'emerald' },
+    { id: 'ce1', type: 'router', x: 330, y: 115, label: 'CE1', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 620, y: 115, label: 'ISP-A', sub: '192.0.2.0', tone: 'violet' },
+  ]}
+  links={[{ from: 'ce2', to: 'ce1', label: 'iBGP', style: 'dashed', tone: 'emerald' }, { from: 'ce1', to: 'ispa', label: 'eBGP' }]}
+  flows={[
+    { from: 'ispa', to: 'ce1', label: 'next hop 192.0.2.0', tone: 'violet', offset: 18 },
+    { from: 'ce1', to: 'ce2', label: 'without next-hop-self: 192.0.2.0 ✗', tone: 'rose', offset: 18 },
+  ]}
+  caption="Without next-hop-self, CE2 receives a route to a next hop it doesn't know. With it, CE1 sets itself as the next hop."
+/>
+
+The fix: `neighbor <CE2> next-hop-self` on CE1 (and vice versa), or advertise the links to the ISPs in
+the IGP.
+
+## The lab
+
+We reuse the `bgp-basic` lab from the previous chapter, with the sessions and the announcement in place:
+
+1. On CE1, `show ip bgp 203.0.113.0/24`: which path is selected, and why (`Not best: …`)?
+2. Set a LOCAL_PREF of 200 on ISP-B (yes, B) and check that the choice flips. Run
+   `traceroute 203.0.113.1` from `host1` to confirm.
+3. Move the preference back to ISP-A, then add a prepend of `65010` twice towards ISP-B. On `inet`,
+   `show ip bgp 198.51.100.0/24`: which AS_PATHs do you see, and which one is selected?
+4. Shut down the session to ISP-A (`neighbor 192.0.2.0 shutdown`) while a ping keeps running: does
+   traffic fail over to ISP-B in both directions?
+
+<Lab name="bgp-basic" lang="en" />
+
+## Key takeaways
+
+- Every BGP route carries **attributes**: NEXT_HOP, AS_PATH, ORIGIN, LOCAL_PREF, MED, communities…
+- BGP compares paths **in a fixed order**: reachable next hop, **LOCAL_PREF** (highest), **AS_PATH**
+  (shortest), ORIGIN, **MED** (lowest), eBGP before iBGP, IGP cost.
+- **Outbound**: you decide with **LOCAL_PREF**, shared across the whole AS.
+- **Inbound**: you influence with **AS-path prepending** (and MED towards a single neighbor).
+- In iBGP, remember **next-hop-self**.
+
+Last chapter: securing all of this with **routing policies**, so you never advertise what you shouldn't,
+nor accept just anything.

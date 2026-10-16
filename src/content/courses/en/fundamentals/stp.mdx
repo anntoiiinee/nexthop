@@ -1,0 +1,288 @@
+---
+title: "Spanning Tree (STP)"
+description: "Why a loop can cripple a network within seconds, and how Spanning Tree prevents it: election, port roles, RSTP and best practices."
+pubDate: 2026-10-17
+level: beginner
+tags: [stp, rstp, mstp, switching]
+vendor: [arista, cisco]
+order: 4
+---
+
+In an enterprise network, switches are connected through **several paths**: if a cable or a switch
+fails, traffic must go another way. But at layer 2, this redundancy creates a **loop**, and an
+Ethernet loop can bring an entire network to its knees within seconds. <Term id="stp" /> exists to
+get redundancy **without** the loop.
+
+## The problem: the broadcast storm
+
+Take three switches connected in a triangle. A sends a broadcast (an <Term id="arp" /> request, for
+example):
+
+<Topology
+  width={640}
+  height={310}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 180, y: 200, label: 'SW2' },
+    { id: 'sw3', type: 'switch', x: 480, y: 200, label: 'SW3' },
+    { id: 'a', type: 'host', x: 60, y: 250, label: 'A' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2' }, { from: 'sw1', to: 'sw3' }, { from: 'sw2', to: 'sw3' }, { from: 'a', to: 'sw2' },
+  ]}
+  flows={[
+    { from: 'a', to: 'sw2', label: 'broadcast', tone: 'amber' },
+    { from: 'sw2', to: 'sw1', tone: 'rose' },
+    { from: 'sw1', to: 'sw3', tone: 'rose' },
+    { from: 'sw3', to: 'sw2', label: '…and it starts again', tone: 'rose' },
+    { from: 'sw2', to: 'sw3', tone: 'rose' },
+    { from: 'sw3', to: 'sw1', tone: 'rose' },
+    { from: 'sw1', to: 'sw2', tone: 'rose' },
+  ]}
+  caption="Each switch floods the broadcast out of its other ports: two copies loop around the triangle, in both directions, forever."
+/>
+
+1. SW2 floods the broadcast to SW1 and SW3.
+2. SW1 sends it on to SW3, SW3 sends it on to SW1, and each one sends it back to SW2…
+3. The copies loop **forever** and multiply with each flood.
+
+Unlike an IP packet, an Ethernet frame has **no lifetime counter** (no <Term id="ttl" />): nothing
+stops it. Within seconds, links saturate, switches see A's address arriving on several ports at once
+(their MAC table becomes unstable) and their CPUs go haywire. Nothing gets through anymore.
+
+<Callout type="field">
+A loop rarely comes from the design, almost always from an accident: a user plugging both wall jacks
+of their office into a small switch, or a test cable forgotten between two ports. A good Spanning
+Tree setup turns this major incident into a simple disabled port.
+</Callout>
+
+## The principle: a loop-free tree
+
+Spanning Tree makes sure there is **only one active path** between two switches. It elects a central
+switch, the **root bridge**, then computes from each switch the best path to it. Extra links are
+**blocked**: they stay plugged in, but forward no user frames. If an active link fails, a blocked
+link is re-enabled.
+
+To coordinate, switches exchange messages called <Term id="bpdu" />s, every **2 seconds**.
+
+## The Bridge ID
+
+Each switch has an 8-byte **Bridge ID**, used to elect the root:
+
+<PacketFormat
+  cols={16}
+  rows={[
+    { fields: [
+      { label: 'Priority', sub: '4 bits', span: 2, tone: 'violet' },
+      { label: 'Extended System ID', sub: '12 bits · VLAN or instance number', span: 4, tone: 'sky' },
+      { label: 'Switch MAC address', sub: '48 bits', span: 10, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="The priority (32768 by default, adjustable in steps of 4096) is compared first, then the MAC address breaks ties."
+/>
+
+**The lowest Bridge ID wins.** With default values, every priority is 32768: so the switch with **the
+lowest MAC address** becomes root… often the oldest and least powerful one in the network. Hence the
+first best practice: **pick the root yourself** by lowering its priority.
+
+## The election, step by step
+
+Back to the triangle, with 10 Gb/s links. SW1 has been configured with a priority of 4096; SW2 and
+SW3 were left at 32768.
+
+| Switch | Priority | MAC address | Bridge ID |
+|---|---|---|---|
+| SW1 | 4096 | `0200.0000.0001` | **4096**.0200.0000.0001 |
+| SW2 | 32768 | `0200.0000.0002` | 32768.0200.0000.0002 |
+| SW3 | 32768 | `0200.0000.0003` | 32768.0200.0000.0003 |
+
+Each link has a **cost** that depends on its speed: the faster it is, the less it costs.
+
+| Speed | Cost (short method, 802.1D) | Cost (long method, 802.1t) |
+|---|---|---|
+| 100 Mb/s | 19 | 200,000 |
+| 1 Gb/s | 4 | 20,000 |
+| 10 Gb/s | 2 | 2,000 |
+| 100 Gb/s | — | 200 |
+
+We use the long method here: each 10G link costs **2000**.
+
+**Step 1: elect the root.** The lowest Bridge ID belongs to SW1. All its ports are **designated**
+(DP): the root always forwards on all its links.
+
+**Step 2: pick a root port (RP) on every other switch**, the one with the **lowest cost** to the
+root. For SW2: directly to SW1, the cost is 2000; through SW3, it would be 4000. Its root port is
+therefore the direct link. Same reasoning for SW3.
+
+**Step 3: elect a designated port on each remaining link.** On the SW2-SW3 link, SW2 and SW3 are both
+2000 away from the root: a tie. We then compare their Bridge IDs, and SW2 wins (same priority, lower
+MAC). SW2's port becomes designated, **SW3's port is blocked**.
+
+<Topology
+  width={640}
+  height={290}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1', sub: 'root · 4096', tone: 'emerald' },
+    { id: 'sw2', type: 'switch', x: 150, y: 220, label: 'SW2', sub: '32768 · …0002' },
+    { id: 'sw3', type: 'switch', x: 490, y: 220, label: 'SW3', sub: '32768 · …0003' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', fromLabel: 'DP', toLabel: 'RP', label: 'cost 2000', tone: 'emerald' },
+    { from: 'sw1', to: 'sw3', fromLabel: 'DP', toLabel: 'RP', label: 'cost 2000', tone: 'emerald' },
+    { from: 'sw2', to: 'sw3', fromLabel: 'DP', toLabel: 'ALT', style: 'blocked' },
+  ]}
+  caption="Result: SW1 is the root, each switch has a root port (RP) towards it, and SW3's port towards SW2 is blocked. No more loop."
+/>
+
+The tie-breaking rules, in order, if a tie remains:
+
+1. the lowest **cost** to the root;
+2. the lowest **Bridge ID** of the sender;
+3. the lowest **port priority**, then the lowest port number.
+
+## When a link fails
+
+If the link between SW1 and SW3 breaks, SW3 no longer receives the root's BPDUs on its root port. Its
+blocked port towards SW2 then becomes its **new root port**: traffic goes through SW2.
+
+<Topology
+  width={640}
+  height={290}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1', sub: 'root', tone: 'emerald' },
+    { id: 'sw2', type: 'switch', x: 150, y: 220, label: 'SW2' },
+    { id: 'sw3', type: 'switch', x: 490, y: 220, label: 'SW3' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', fromLabel: 'DP', toLabel: 'RP', tone: 'emerald' },
+    { from: 'sw1', to: 'sw3', label: 'failure', style: 'dashed', tone: 'rose' },
+    { from: 'sw2', to: 'sw3', fromLabel: 'DP', toLabel: 'RP', tone: 'emerald' },
+  ]}
+  flows={[
+    { from: 'sw3', to: 'sw2', label: 'new path', tone: 'emerald', offset: 16 },
+    { from: 'sw2', to: 'sw1', tone: 'emerald', offset: 16 },
+  ]}
+  caption="The SW1-SW3 link is down: SW3's formerly blocked port becomes its root port. Redundancy did its job."
+/>
+
+How long this failover takes depends on the Spanning Tree version.
+
+## STP, RSTP, MSTP: the versions
+
+The original Spanning Tree (**802.1D**) takes a port through several states before forwarding, with
+cautious timers:
+
+| STP 802.1D | RSTP 802.1w | What does the port do? |
+|---|---|---|
+| Blocking | Discarding | Forwards nothing, listens to BPDUs |
+| Listening | Discarding | Takes part in the election |
+| Learning | Learning | Learns MAC addresses, doesn't forward yet |
+| Forwarding | Forwarding | Forwards normally |
+
+With 802.1D, a failover takes **30 to 50 seconds**, an eternity for an application. **Rapid Spanning
+Tree** (RSTP, 802.1w) negotiates directly with its neighbors and fails over in **under a second** to a
+few seconds. It also introduces the **alternate** role (a backup path to the root, like SW3's ALT
+port) and the **backup** role.
+
+| Version | Standard | Characteristic | Where you find it |
+|---|---|---|---|
+| STP | 802.1D | One tree, slow convergence | Legacy, avoid |
+| RSTP | 802.1w | One tree, fast convergence | Everywhere |
+| PVST+ / Rapid PVST+ | Cisco | One tree **per VLAN** | Default mode on Cisco switches |
+| MSTP | 802.1s | Several VLANs grouped per **instance** | Default mode on Arista EOS |
+
+<Callout type="note">
+In a modern data center (spine/leaf fabric), Spanning Tree is avoided as much as possible: links
+between switches are routed (layer 3) and redundancy is handled by routing. It is still kept enabled
+towards servers and users, as a safety net.
+</Callout>
+
+## Ports facing machines: PortFast and BPDU Guard
+
+A port connecting a PC or a server can't create a loop: no point making it wait through the listening
+and learning states. It is declared as an **edge port**:
+
+- **PortFast** (edge port): the port goes straight to forwarding. Without it, a PC can wait 30 seconds
+  for its DHCP address at boot;
+- **BPDU Guard**: if a BPDU arrives on this port anyway (someone plugged a switch into it), the port
+  is **disabled** (err-disabled state). This is the protection against accidental loops.
+
+<Topology
+  width={640}
+  height={230}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 60, label: 'Access-SW' },
+    { id: 'pc', type: 'host', x: 170, y: 175, label: 'PC', sub: 'edge · OK', tone: 'emerald' },
+    { id: 'rogue', type: 'switch', x: 470, y: 175, label: 'Rogue switch', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'sw', to: 'pc', label: 'PortFast', tone: 'emerald' },
+    { from: 'sw', to: 'rogue', label: 'err-disabled', style: 'blocked' },
+  ]}
+  flows={[{ from: 'rogue', to: 'sw', label: 'BPDU', tone: 'rose', offset: 16 }]}
+  caption="The PC boots without waiting. The switch plugged in by mistake sends a BPDU: BPDU Guard shuts the port immediately."
+/>
+
+## Configuration
+
+Set the root, tune edge ports, and protect access ports.
+
+```text title="Arista EOS"
+spanning-tree mode mstp
+spanning-tree mst 0 priority 4096        ! on the switch that must be root
+!
+interface Ethernet1
+   description PC-accounting
+   switchport access vlan 10
+   spanning-tree portfast
+   spanning-tree bpduguard enable
+```
+
+```text title="Cisco IOS"
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,30 priority 4096   ! on the switch that must be root
+!
+interface GigabitEthernet1/0/1
+ description PC-accounting
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+```
+
+## Verifying
+
+On SW3, we find exactly the result of the election:
+
+```text title="SW3#show spanning-tree"
+MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    4096
+             Address     0200.0000.0001
+             Cost        2000 (Ext) 0 (Int)
+             Port        1 (Ethernet1)
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     0200.0000.0003
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et1              root       forwarding 2000      128.1    P2p
+Et2              alternate  discarding 2000      128.2    P2p
+```
+
+- **Root ID**: the root is indeed SW1 (priority 4096, MAC `…0001`), at a cost of 2000.
+- **Et1** is the root port, **Et2** is the alternate port, discarding: it is the one breaking the loop.
+
+## Key takeaways
+
+- A layer 2 loop causes a **broadcast storm**: frames have no TTL.
+- Spanning Tree elects a **root** (the lowest Bridge ID), then keeps **a single active path** to it
+  and **blocks** the others.
+- Roles to know: **root port** (RP), **designated port** (DP), **blocked / alternate port**.
+- Use **RSTP or MSTP**, set the root by hand, and enable **PortFast + BPDU Guard** on access ports.
+
+Before leaving layer 2, one last everyday tool: **LLDP and CDP**, to know what is plugged into each
+port.

@@ -1,0 +1,160 @@
+---
+title: "The OSI model"
+description: "The 7 layers, encapsulation, and why we still talk about them every day when troubleshooting a network."
+pubDate: 2026-10-15
+updatedDate: 2026-10-17
+level: beginner
+tags: [osi, tcp-ip]
+order: 1
+---
+
+When a colleague says "it's a layer 2 problem" or a firewall is sold as "layer 7", they are
+referring to the **OSI model**. It is not a protocol: it is a frame of reference that splits a
+network communication into 7 steps, from electrical signals all the way up to the application.
+
+## Why a layered model?
+
+Sending an e-mail involves dozens of things: a cable or Wi-Fi, addresses, routers, a reliable
+connection, a message format… Putting all of them into a single block would be unmanageable. The
+layered model **separates responsibilities**:
+
+- each layer provides **a service** to the layer above and relies on the layer below;
+- each layer only talks to **the same layer** on the other machine;
+- you can change one layer without touching the others: replacing copper with fiber changes
+  nothing for your web browser.
+
+It works like the postal service: you write a letter (the content), put it in an envelope with an
+address, and the post office sorts it and carries it by truck. The mail carrier doesn't read your
+letter, and you don't pick the truck.
+
+## The 7 layers
+
+<OsiModel lang="en" />
+
+The layers are often grouped into two families:
+
+- **the lower layers (1 to 4)** carry the data: this is the network engineer's territory;
+- **the upper layers (5 to 7)** deal with the application and its data. In practice, they are
+  merged into a single "application" layer, as the TCP/IP model does.
+
+| Layer | It answers the question… | Address used |
+|---|---|---|
+| 1. Physical | How do I transmit 0s and 1s over this medium? | none |
+| 2. Data link | Which machine **on the local network** do I deliver this frame to? | <Term id="mac" /> address |
+| 3. Network | Which way do I go to reach **another network**? | IP address |
+| 4. Transport | Which **application** do I hand the data to, and did it all arrive? | port (80, 443, 22…) |
+| 7. Application | What does the data contain and how should it be interpreted? | name (URL, e-mail…) |
+
+## Encapsulation
+
+When sending, data moves **down** the layers. Each layer adds its own header in front of the data
+received from the layer above, without modifying it: this is **encapsulation**. The data unit
+changes name at each level: it is the <Term id="pdu" />.
+
+<PacketFormat
+  cols={14}
+  rows={[
+    { label: '7 · Data', fields: [
+      { label: 'HTTP data', sub: 'GET /index.html', span: 6, start: 8, tone: 'violet' },
+    ] },
+    { label: '4 · Segment', fields: [
+      { label: 'TCP header', sub: 'ports', span: 2, start: 6, tone: 'sky' },
+      { label: 'Data', span: 6, start: 8, tone: 'violet', dashed: true },
+    ] },
+    { label: '3 · Packet', fields: [
+      { label: 'IP header', sub: 'IP addresses', span: 2, start: 4, tone: 'emerald' },
+      { label: 'TCP', span: 2, start: 6, tone: 'sky', dashed: true },
+      { label: 'Data', span: 6, start: 8, tone: 'violet', dashed: true },
+    ] },
+    { label: '2 · Frame', fields: [
+      { label: 'Ethernet header', sub: 'MAC addresses', span: 3, start: 1, tone: 'amber' },
+      { label: 'IP', span: 2, start: 4, tone: 'emerald', dashed: true },
+      { label: 'TCP', span: 2, start: 6, tone: 'sky', dashed: true },
+      { label: 'Data', span: 5, start: 8, tone: 'violet', dashed: true },
+      { label: 'FCS', sub: 'check', span: 2, start: 13, tone: 'amber' },
+    ] },
+    { label: '1 · Bits', fields: [
+      { label: '0101 1100 0010 1110 1010 0111 0001 …', span: 14, start: 1, tone: 'rose', mono: true },
+    ] },
+  ]}
+  caption="Each layer adds its header in front of the data received from above. Ethernet also adds a check field (FCS) at the end."
+/>
+
+On reception, the reverse happens: each layer reads **its own** header, removes it, and passes the
+rest to the layer above. This is **decapsulation**.
+
+<Callout type="tip">
+Remember this vocabulary above all: we say **frame** at layer 2, **packet** at layer 3 and
+**segment** at layer 4. Saying "the switch received a packet" is understood by everyone, but
+"a frame" is more accurate.
+</Callout>
+
+## Who works at which layer?
+
+A network device doesn't need to go all the way up to layer 7 to do its job. It only reads what it
+needs to decide where to send the data:
+
+<Topology
+  width={720}
+  height={230}
+  nodes={[
+    { id: 'a', type: 'host', x: 70, y: 90, label: 'PC A', sub: 'layers 1 to 7' },
+    { id: 'sw', type: 'switch', x: 270, y: 90, label: 'Switch', sub: 'layers 1 and 2', tone: 'amber' },
+    { id: 'r', type: 'router', x: 450, y: 90, label: 'Router', sub: 'layers 1 to 3', tone: 'emerald' },
+    { id: 'b', type: 'server', x: 650, y: 90, label: 'Web server', sub: 'layers 1 to 7' },
+  ]}
+  links={[{ from: 'a', to: 'sw' }, { from: 'sw', to: 'r' }, { from: 'r', to: 'b' }]}
+  notes={[
+    { x: 270, y: 185, text: 'reads the MAC address', tone: 'amber' },
+    { x: 450, y: 185, text: 'reads the IP address', tone: 'emerald' },
+    { x: 360, y: 215, text: 'Only the endpoints read the application data.', tone: 'slate' },
+  ]}
+  caption="A switch decides based on the MAC address (layer 2), a router based on the IP address (layer 3)."
+/>
+
+- a **switch** reads the Ethernet header and forwards the frame based on the destination MAC address;
+- a **router** removes the Ethernet header, reads the IP address, picks the exit, then **builds a
+  new frame** for the next link;
+- a **stateful firewall** looks up to layer 4 (ports, connection state), a **next-generation
+  firewall** all the way to layer 7 (application, URL, content).
+
+## OSI or TCP/IP?
+
+The Internet doesn't run on "the OSI protocols" but on the **TCP/IP** stack, which only has
+4 layers (the diagram above shows how they map). Yet everyone keeps talking in OSI layers, because
+the numbering has become a common language:
+
+- "layer 2" = Ethernet, switches, VLANs, MAC addresses;
+- "layer 3" = IP, routing;
+- "layer 4" = <Term id="tcp" /> and <Term id="udp" />, ports;
+- "layer 7" = the application (HTTP, DNS…).
+
+## Troubleshooting layer by layer
+
+Above all, the OSI model is used to **troubleshoot methodically**. Faced with "it doesn't work",
+you check the layers **from the bottom up**: there's no point hunting for a DNS error if the cable
+is unplugged.
+
+| Layer | Questions to ask | Useful commands |
+|---|---|---|
+| 1. Physical | Is the link up? CRC errors, optical power too low? | `show interfaces status`, `show interfaces counters errors` |
+| 2. Data link | Right VLAN? Is the MAC address learned? | `show vlan`, `show mac address-table` |
+| 3. Network | Right IP, mask and gateway? Is there a route? | `ping`, `show ip route`, `traceroute` |
+| 4. Transport | Is the port open? Is a firewall blocking? | `nc -zv server 443`, firewall logs |
+| 7. Application | Does the service respond correctly? | `curl -v`, `dig`, application logs |
+
+<Callout type="field">
+In production, a large share of "network" incidents are solved at layer 1 or 2: a damaged cable, a
+dirty optic, a port in the wrong VLAN. Starting from the bottom saves a huge amount of time, and
+avoids blaming the network when the problem is in the application.
+</Callout>
+
+## Key takeaways
+
+- The OSI model splits a communication into **7 layers**, each with its own role.
+- When sending, each layer **adds its header** (encapsulation); when receiving, it removes it.
+- The names to know: **bit, frame, packet, segment**.
+- A switch works at **layer 2** (MAC), a router at **layer 3** (IP).
+- To troubleshoot, go up the layers **from the bottom up**.
+
+In the next chapter, we zoom in on layer 2: **Ethernet**, MAC addresses and how a switch works.

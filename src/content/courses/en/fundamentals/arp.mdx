@@ -1,0 +1,269 @@
+---
+title: "ARP: from IP address to MAC address"
+description: "How a machine finds the MAC address matching an IP: ARP request and reply, cache, gratuitous ARP, ARP spoofing and troubleshooting."
+pubDate: 2026-10-17
+level: beginner
+tags: [arp, ipv4, ethernet, security]
+vendor: [arista, cisco]
+order: 7
+---
+
+We now have two kinds of addresses: the **IP** address to know **where** to go (layer 3), and the
+**MAC** address to deliver the frame on the local network (layer 2). But when PC1 wants to reach
+`192.168.10.20`, it only knows its IP. To build the Ethernet frame, it needs its MAC. The protocol
+that links the two is <Term id="arp" /> (RFC 826).
+
+## The problem
+
+<Topology
+  width={640}
+  height={240}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 60, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 120, y: 180, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'pc2', type: 'host', x: 320, y: 180, label: 'PC2', sub: '192.168.10.20' },
+    { id: 'srv', type: 'server', x: 520, y: 175, label: 'Server', sub: '192.168.10.30' },
+  ]}
+  links={[{ from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' }, { from: 'sw', to: 'srv' }]}
+  notes={[{ x: 120, y: 30, text: 'MAC of 192.168.10.20? ? ?', tone: 'rose', mono: true }]}
+  caption="PC1 knows PC2's IP address but not its MAC address: it can't fill in the Ethernet frame."
+/>
+
+Without a destination MAC address, there is no frame, and therefore no communication, even within the
+same network. ARP exists to answer exactly one question: "**which MAC owns this IP?**"
+
+## The ARP exchange
+
+ARP works in two steps:
+
+1. **The request**, sent as a **broadcast** (`ff:ff:ff:ff:ff:ff`): every machine in the VLAN receives
+   it. It says: "Who has 192.168.10.20? Tell 192.168.10.10".
+2. **The reply**, sent as **unicast** by the only machine concerned: "192.168.10.20 is me, my MAC is
+   `02:00:00:00:00:20`".
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 350, y: 60, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 100, y: 220, label: 'PC1', sub: '.10' },
+    { id: 'pc2', type: 'host', x: 350, y: 220, label: 'PC2', sub: '.20', tone: 'emerald' },
+    { id: 'srv', type: 'server', x: 600, y: 215, label: 'Server', sub: '.30', tone: 'slate' },
+  ]}
+  links={[{ from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' }, { from: 'sw', to: 'srv' }]}
+  flows={[
+    { from: 'pc1', to: 'sw', label: '① request', tone: 'amber' },
+    { from: 'sw', to: 'pc2', tone: 'amber', offset: -14 },
+    { from: 'sw', to: 'srv', label: 'ignored', tone: 'amber' },
+    { from: 'pc2', to: 'sw', label: '② reply', tone: 'emerald', offset: -14 },
+    { from: 'sw', to: 'pc1', tone: 'emerald', offset: 14 },
+  ]}
+  caption="The request is flooded throughout the VLAN; only PC2 replies, directly to PC1. The server sees that the requested IP isn't its own and ignores the request."
+/>
+
+Along the way, everyone learns something:
+
+- **PC1** stores PC2's MAC in its **ARP cache**;
+- **PC2** also stores PC1's MAC (it is in the request): it will need it to reply;
+- **the switch** learns PC1's location from the request, and PC2's from the reply.
+
+## The ARP packet
+
+An ARP message is carried directly inside an Ethernet frame, with EtherType `0x0806`. There is no IP
+header: ARP works **only inside a local network**.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Ethernet', fields: [
+      { label: 'ff:ff:ff:ff:ff:ff', sub: 'Destination MAC', span: 4, tone: 'amber', mono: true },
+      { label: '02:00:00:00:00:10', sub: 'Source MAC', span: 4, tone: 'amber', mono: true },
+      { label: '0x0806', sub: 'EtherType: ARP', span: 4, tone: 'violet', mono: true },
+    ] },
+    { label: 'ARP', fields: [
+      { label: 'Hardware type', sub: '1 = Ethernet', span: 3 },
+      { label: 'Protocol type', sub: '0x0800 = IPv4', span: 3 },
+      { label: 'Sizes', sub: '6 (MAC) · 4 (IP)', span: 3 },
+      { label: 'Operation', sub: '1 = request · 2 = reply', span: 3, tone: 'rose' },
+    ] },
+    { label: '', fields: [
+      { label: '02:00:00:00:00:10', sub: 'Sender MAC', span: 3, tone: 'sky', mono: true },
+      { label: '192.168.10.10', sub: 'Sender IP', span: 3, tone: 'emerald', mono: true },
+      { label: '00:00:00:00:00:00', sub: 'Target MAC (unknown)', span: 3, tone: 'sky', mono: true, dashed: true },
+      { label: '192.168.10.20', sub: 'Target IP', span: 3, tone: 'emerald', mono: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="PC1's request: the target MAC is zero, which is precisely what we are looking for. The ARP message is 28 bytes long."
+/>
+
+| Field | PC1's request | PC2's reply |
+|---|---|---|
+| Destination MAC (Ethernet) | `ff:ff:ff:ff:ff:ff` (broadcast) | `02:00:00:00:00:10` (PC1) |
+| Operation | 1 (request) | 2 (reply) |
+| Sender MAC | `02:00:00:00:00:10` | `02:00:00:00:00:20` |
+| Sender IP | `192.168.10.10` | `192.168.10.20` |
+| Target MAC | `00:00:00:00:00:00` | `02:00:00:00:00:10` |
+| Target IP | `192.168.10.20` | `192.168.10.10` |
+
+## The ARP cache
+
+Sending a request before every packet would be very slow. Every machine therefore keeps the replies
+in an **ARP cache** (or neighbor table), with a limited lifetime:
+
+```text title="Linux: ip neigh"
+192.168.10.1 dev eth1 lladdr 00:1c:73:aa:bb:01 REACHABLE
+192.168.10.20 dev eth1 lladdr 02:00:00:00:00:20 STALE
+192.168.10.99 dev eth1 FAILED
+```
+
+```text title="Windows: arp -a"
+Interface: 192.168.10.10 --- 0x7
+  Internet Address      Physical Address      Type
+  192.168.10.1          00-1c-73-aa-bb-01     dynamic
+  192.168.10.20         02-00-00-00-00-20     dynamic
+```
+
+```text title="R1#show ip arp"
+Address         Age (sec)  Hardware Addr   Interface
+192.168.10.10     0:01:12  0200.0000.0010  Ethernet1
+192.168.10.20     0:00:45  0200.0000.0020  Ethernet1
+192.168.10.121    0:03:02  001c.73cc.dd02  Ethernet2
+```
+
+Lifetimes vary a lot: from a few seconds to a few minutes on Linux and Windows (which regularly
+re-check their entries), **4 hours** by default on Cisco and Arista routers and switches. A `FAILED`
+(Linux) or `Incomplete` (Cisco) entry means a request was sent but **nobody answered**.
+
+<Callout type="tip">
+`ip neigh flush all` (Linux) or `arp -d *` (Windows, as administrator) clear the cache. Useful after
+replacing a network card or moving an IP address from one machine to another.
+</Callout>
+
+## What if the destination is in another network?
+
+This is the point that trips up the most beginners: **a machine never ARPs for an address that is not
+in its own network.** An ARP request is a broadcast; it doesn't cross routers. To reach
+`172.16.20.10` at headquarters, PC1 sends an ARP request for its **gateway**:
+
+<Topology
+  width={720}
+  height={220}
+  groups={[{ x: 16, y: 20, w: 410, h: 185, label: 'Branch · 192.168.10.0/26', tone: 'sky' }]}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 90, y: 115, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 340, y: 115, label: 'R1', sub: '192.168.10.1' },
+    { id: 'app', type: 'server', x: 630, y: 109, label: 'App', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc1', to: 'r1' }, { from: 'r1', to: 'app', style: 'dashed', label: 'several routers' }]}
+  flows={[
+    { from: 'pc1', to: 'r1', label: 'ARP: "Who has 192.168.10.1?"', tone: 'amber', offset: -20 },
+  ]}
+  caption="The final destination isn't in PC1's network: it looks up its gateway's MAC, not the application's."
+/>
+
+The frame sent will therefore have **R1's MAC** as its destination, and `172.16.20.10` as its
+destination IP. We cover this in detail in the next chapter on routing, where each router does the
+same thing again with the next hop.
+
+## Gratuitous ARP
+
+A **gratuitous ARP** is an announcement nobody asked for: a machine broadcasts "192.168.10.1 is me, my
+MAC is …". It is used:
+
+- **at boot or when an address changes**: to check that nobody else already uses this IP (conflict
+  detection);
+- **during a redundant gateway failover** (<Term id="vrrp" />, HSRP): the router becoming active
+  announces the gateway IP address with its own MAC. Every machine updates its cache, and every switch
+  its MAC table, without waiting for entries to expire.
+
+<Topology
+  width={640}
+  height={300}
+  nodes={[
+    { id: 'ra', type: 'router', x: 160, y: 70, label: 'R-A', sub: 'failed', tone: 'rose' },
+    { id: 'rb', type: 'router', x: 480, y: 70, label: 'R-B', sub: 'becomes active', tone: 'emerald' },
+    { id: 'sw', type: 'switch', x: 320, y: 165, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 160, y: 250, label: 'PC1' },
+    { id: 'pc2', type: 'host', x: 480, y: 250, label: 'PC2' },
+  ]}
+  links={[
+    { from: 'ra', to: 'sw', style: 'dashed', tone: 'rose' }, { from: 'rb', to: 'sw' },
+    { from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' },
+  ]}
+  flows={[
+    { from: 'rb', to: 'sw', tone: 'emerald', offset: 16 },
+    { from: 'sw', to: 'pc1', tone: 'emerald', offset: 14 },
+    { from: 'sw', to: 'pc2', tone: 'emerald', offset: -14 },
+  ]}
+  notes={[{ x: 320, y: 28, text: 'Gratuitous ARP: "192.168.10.1 = R-B\'s MAC"', tone: 'emerald' }]}
+  caption="R-A fails: R-B takes over the 192.168.10.1 gateway address and announces it with a gratuitous ARP. The PCs switch over without noticing anything."
+/>
+
+## ARP's weakness: spoofing
+
+ARP dates back to 1982 and has **no authentication**: a machine accepts an ARP reply without checking
+who sent it, even if it never asked. An attacker inside the VLAN can therefore send fake replies:
+this is **ARP spoofing** (or poisoning):
+
+<Topology
+  width={640}
+  height={260}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 110, y: 190, label: 'PC1', sub: '.10' },
+    { id: 'gw', type: 'router', x: 530, y: 190, label: 'Gateway', sub: '.1' },
+    { id: 'evil', type: 'host', x: 320, y: 70, label: 'Attacker', sub: '.66', tone: 'rose' },
+  ]}
+  links={[{ from: 'pc1', to: 'gw', style: 'dashed', label: 'normal path' }, { from: 'evil', to: 'pc1' }, { from: 'evil', to: 'gw' }]}
+  flows={[
+    { from: 'evil', to: 'pc1', label: '".1 is me"', tone: 'rose', offset: 16 },
+    { from: 'evil', to: 'gw', label: '".10 is me"', tone: 'rose', offset: -16 },
+  ]}
+  caption="The attacker makes PC1 believe it is the gateway, and the gateway believe it is PC1: all traffic goes through it (man-in-the-middle attack)."
+/>
+
+The protections, on access switches:
+
+- **DHCP Snooping**: the switch watches <Term id="dhcp" /> exchanges and remembers which IP was handed
+  to which MAC, on which port;
+- **Dynamic ARP Inspection (DAI)**: the switch checks every ARP message against this table and
+  **drops** those that don't match;
+- **static ARP entries** for critical devices, and VLAN segmentation that limits the number of exposed
+  machines.
+
+<Callout type="field">
+A classic symptom of an **IP address conflict**: a machine that "works, then stops working", at
+random. Two devices answer ARP for the same IP, and the other machines' caches flip between their two
+MACs. On a switch, `show mac address-table` and `show ip arp` let you track down both culprits.
+</Callout>
+
+## Troubleshooting
+
+| Symptom | What the ARP cache shows | Lead |
+|---|---|---|
+| No communication with a machine in the same network | `FAILED` / `Incomplete` entry | machine off, wrong VLAN, cable, local firewall blocking |
+| Nothing works beyond the local network | gateway shows `FAILED` | wrong gateway address, router interface down |
+| Random outages | the MAC for a given IP keeps changing | IP address conflict, or ARP spoofing |
+| It works after flushing the cache | old MAC still cached | hardware replaced, IP moved without a gratuitous ARP |
+
+To watch ARP live, capture with the `arp` filter in Wireshark, or from the command line:
+
+```bash
+sudo tcpdump -i eth1 -n arp
+```
+
+<Callout type="note">
+In IPv6, ARP no longer exists: it is replaced by **NDP** (Neighbor Discovery Protocol), which uses
+ICMPv6 messages (*Neighbor Solicitation* and *Neighbor Advertisement*) sent as multicast rather than
+broadcast. The principle stays the same.
+</Callout>
+
+## Key takeaways
+
+- ARP finds **the MAC that matches an IP**, inside a local network.
+- Request as **broadcast**, reply as **unicast**; the result is kept in the **ARP cache**.
+- For a destination outside the network, you ARP for the **gateway**, never for the destination.
+- **Gratuitous ARP** announces an address (conflict detection, gateway failover).
+- ARP isn't authenticated: **DHCP Snooping + DAI** protect against spoofing.
+
+Next chapter: **static routing**, where ARP comes into play at every hop.
