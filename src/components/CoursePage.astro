@@ -6,6 +6,8 @@ import { routes, t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import { chapterUrl, chapterSlugOf, type Course } from '@/lib/courses';
 import { absoluteUrl, authorSchema, breadcrumbSchema } from '@/lib/seo';
+import ContentDates from './ContentDates.astro';
+import { courseDates } from '@/lib/dates';
 
 interface Props {
   lang: Lang;
@@ -17,6 +19,7 @@ const { lang, course, alternates } = Astro.props;
 const { Content } = await render(course.landing);
 const { title, description, level } = course.landing.data;
 const first = course.chapters[0];
+const dates = courseDates(course);
 
 const jsonLd = [
   {
@@ -27,6 +30,8 @@ const jsonLd = [
     url: absoluteUrl(Astro.url.pathname),
     provider: authorSchema(lang),
     isAccessibleForFree: true,
+    datePublished: dates.created.toISOString(),
+    dateModified: (dates.updated ?? dates.created).toISOString(),
     educationalLevel: t(lang, `level.${level}`),
     hasPart: course.chapters.map((ch) => ({
       '@type': 'LearningResource',
@@ -53,6 +58,7 @@ const jsonLd = [
     </div>
     <h1 class="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
     <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
+    <ContentDates created={dates.created} updated={dates.updated} lang={lang} class="mt-4 text-sm" />
 
     <div class="prose prose-slate mt-8 max-w-none dark:prose-invert prose-a:text-sky-600 dark:prose-a:text-sky-400">
       <Content components={mdxComponents} />
