@@ -32,12 +32,28 @@ export const glossary = {
       en: "Message exchanged between switches by Spanning Tree to elect the root bridge and detect loops.",
     },
   },
+  cdp: {
+    term: 'CDP',
+    expansion: 'Cisco Discovery Protocol',
+    definition: {
+      fr: "Protocole propriétaire Cisco par lequel un équipement annonce son identité (nom, modèle, port, adresse) à ses voisins directs.",
+      en: "Cisco proprietary protocol through which a device advertises its identity (name, model, port, address) to its directly connected neighbors.",
+    },
+  },
   cidr: {
     term: 'CIDR',
     expansion: 'Classless Inter-Domain Routing',
     definition: {
       fr: "Notation qui indique la taille d'un réseau par le nombre de bits du préfixe, par exemple /24, au lieu des anciennes classes A, B et C.",
       en: 'Notation that gives the size of a network as the number of prefix bits, for example /24, instead of the old A, B and C classes.',
+    },
+  },
+  dhcp: {
+    term: 'DHCP',
+    expansion: 'Dynamic Host Configuration Protocol',
+    definition: {
+      fr: "Protocole qui attribue automatiquement aux machines leur adresse IP, leur masque, leur passerelle et leurs serveurs DNS.",
+      en: "Protocol that automatically assigns hosts their IP address, mask, gateway and DNS servers.",
     },
   },
   evpn: {
@@ -70,6 +86,14 @@ export const glossary = {
     definition: {
       fr: "Réseau local : les machines d'un même site (bureau, étage, salle serveur) reliées par des switches, en général en Ethernet.",
       en: "Local network: the machines of a single site (office, floor, server room) connected by switches, usually over Ethernet.",
+    },
+  },
+  lldp: {
+    term: 'LLDP',
+    expansion: 'Link Layer Discovery Protocol',
+    definition: {
+      fr: "Protocole standard (IEEE 802.1AB) par lequel un équipement annonce son identité à ses voisins directs : qui est branché sur quel port.",
+      en: "Standard protocol (IEEE 802.1AB) through which a device advertises its identity to its direct neighbors: what is plugged into which port.",
     },
   },
   mac: {
@@ -158,6 +182,14 @@ export const glossary = {
     definition: {
       fr: 'Réseau local virtuel : découpe un switch en plusieurs domaines de broadcast isolés, identifiés par un numéro de 1 à 4094.',
       en: 'Virtual local network: splits a switch into several isolated broadcast domains, identified by a number from 1 to 4094.',
+    },
+  },
+  vrrp: {
+    term: 'VRRP',
+    expansion: 'Virtual Router Redundancy Protocol',
+    definition: {
+      fr: "Protocole de passerelle redondante : plusieurs routeurs partagent une même adresse IP de passerelle, et l'un reprend si l'autre tombe.",
+      en: "Redundant gateway protocol: several routers share the same gateway IP address, and one takes over if the other fails.",
     },
   },
   vxlan: {

@@ -1,0 +1,225 @@
+---
+title: "LLDP et CDP : découvrir ses voisins"
+description: "Savoir ce qui est branché sur chaque port sans se déplacer : fonctionnement de LLDP et CDP, TLV, différences, configuration et usages en production."
+pubDate: 2026-10-17
+level: beginner
+tags: [lldp, cdp, switching, documentation]
+vendor: [arista, cisco]
+order: 5
+---
+
+Un switch de 48 ports, des câbles dans tous les sens, et une question simple : **qu'est-ce qui est
+branché sur le port 23 ?** Plutôt que de suivre le câble à la main dans la baie, on interroge le
+switch. Il le sait, grâce à <Term id="lldp" /> ou à son équivalent Cisco, <Term id="cdp" />.
+
+## Le principe
+
+Chaque équipement envoie régulièrement, sur chacun de ses ports, une petite trame qui dit
+**qui il est** : son nom, le port par lequel il envoie, son modèle, son adresse de gestion…
+Son voisin direct la reçoit et range ces informations dans une **table des voisins**.
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 380, y: 60, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 90, y: 250, label: 'SW2', sub: 'Ethernet48' },
+    { id: 'r1', type: 'router', x: 290, y: 255, label: 'R1', sub: 'Ethernet3' },
+    { id: 'ap', type: 'host', x: 470, y: 255, label: 'Borne Wi-Fi', sub: 'eth0' },
+    { id: 'srv', type: 'server', x: 670, y: 250, label: 'Serveur', sub: 'ens1f0' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', fromLabel: 'Et1' },
+    { from: 'sw1', to: 'r1', fromLabel: 'Et48' },
+    { from: 'sw1', to: 'ap', fromLabel: 'Et12' },
+    { from: 'sw1', to: 'srv', fromLabel: 'Et20' },
+  ]}
+  flows={[
+    { from: 'sw2', to: 'sw1', label: '« SW2, port Et48 »', tone: 'sky', offset: 14 },
+    { from: 'srv', to: 'sw1', label: '« srv-01, port ens1f0 »', tone: 'sky', offset: -14 },
+  ]}
+  caption="Chaque voisin s'annonce sur le lien qui le relie à SW1. SW1 sait alors exactement qui est branché sur chacun de ses ports, et sur quel port de l'autre côté."
+/>
+
+Deux propriétés importantes :
+
+- les annonces sont envoyées vers une **adresse multicast spéciale** que les switches ne
+  retransmettent jamais : on ne découvre que ses **voisins directs**, à un seul saut ;
+- elles sont **indépendantes de l'IP** : elles fonctionnent même sur un port sans adresse, dans
+  n'importe quel VLAN. C'est ce qui en fait un excellent outil de diagnostic de couche 2.
+
+<Topology
+  width={700}
+  height={170}
+  nodes={[
+    { id: 'a', type: 'switch', x: 100, y: 70, label: 'SW-A' },
+    { id: 'b', type: 'switch', x: 350, y: 70, label: 'SW-B' },
+    { id: 'c', type: 'switch', x: 600, y: 70, label: 'SW-C' },
+  ]}
+  links={[{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]}
+  flows={[
+    { from: 'a', to: 'b', label: 'annonce de SW-A', tone: 'sky', offset: -18 },
+  ]}
+  notes={[{ x: 475, y: 40, text: 'jamais retransmise vers SW-C', tone: 'rose' }]}
+  caption="SW-B reçoit l'annonce de SW-A mais ne la relaie pas : SW-C ne connaît que SW-B."
+/>
+
+## LLDP : le standard
+
+**LLDP** (Link Layer Discovery Protocol) est défini par la norme **IEEE 802.1AB**. Tous les
+constructeurs le supportent : Arista, Cisco, Juniper, mais aussi les serveurs Linux (démon `lldpd`),
+les hyperviseurs, les téléphones IP et les bornes Wi-Fi.
+
+| Paramètre | Valeur par défaut |
+|---|---|
+| Adresse de destination | `01:80:c2:00:00:0e` (multicast, jamais retransmise) |
+| EtherType | `0x88cc` |
+| Envoi | toutes les **30 secondes** |
+| Durée de validité (TTL) | **120 secondes** : sans nouvelle annonce, le voisin disparaît de la table |
+
+### Une trame faite de TLV
+
+Les informations d'une trame LLDP sont rangées en **TLV** (Type, Longueur, Valeur) : chaque
+information a un type, une taille et un contenu. Les trois premiers TLV sont obligatoires.
+
+<PacketFormat
+  cols={16}
+  rows={[
+    { label: 'Trame LLDP', fields: [
+      { label: 'Chassis ID', sub: 'obligatoire', span: 2, tone: 'sky' },
+      { label: 'Port ID', sub: 'obligatoire', span: 2, tone: 'sky' },
+      { label: 'TTL', sub: 'obligatoire', span: 2, tone: 'sky' },
+      { label: 'Nom', sub: 'System Name', span: 2, tone: 'emerald' },
+      { label: 'Description', sub: 'modèle, version', span: 2, tone: 'emerald' },
+      { label: 'Capacités', sub: 'switch, routeur…', span: 2, tone: 'emerald' },
+      { label: 'IP de gestion', sub: 'Mgmt Address', span: 2, tone: 'emerald' },
+      { label: 'Fin', sub: 'End', span: 2, dashed: true },
+    ] },
+    { label: 'Un TLV', fields: [
+      { label: 'Type', sub: '7 bits', span: 2, start: 7, tone: 'violet' },
+      { label: 'Longueur', sub: '9 bits', span: 2, start: 9, tone: 'violet' },
+      { label: 'Valeur', sub: '0 à 511 octets', span: 4, start: 11, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="Une trame LLDP : trois TLV obligatoires (qui je suis, par quel port, pendant combien de temps), puis des TLV optionnels."
+/>
+
+Une extension, **LLDP-MED** (Media Endpoint Discovery), ajoute des TLV pour la téléphonie : le
+switch annonce au téléphone IP **le VLAN voix** à utiliser, et le téléphone annonce sa consommation
+électrique (PoE).
+
+## CDP : la version Cisco
+
+**CDP** (Cisco Discovery Protocol) est l'ancêtre propriétaire de LLDP, présent sur tous les
+équipements Cisco. Le principe est identique.
+
+| | LLDP | CDP |
+|---|---|---|
+| Norme | IEEE 802.1AB, multi-constructeur | propriétaire Cisco |
+| Adresse de destination | `01:80:c2:00:00:0e` | `01:00:0c:cc:cc:cc` |
+| Intervalle / validité | 30 s / 120 s | 60 s / 180 s |
+| Activé par défaut | Arista EOS : oui · Cisco IOS : non | Cisco IOS : oui |
+| Téléphonie | LLDP-MED | natif (VLAN voix, PoE) |
+
+Alors, **LLDP ou CDP ?** Dans un réseau multi-constructeur, **LLDP**, puisque c'est le seul que
+tout le monde parle. Dans un réseau 100 % Cisco, CDP fonctionne très bien, mais activer LLDP en
+plus ne coûte rien et prépare l'arrivée d'autres équipements. Les deux peuvent tourner en même temps.
+
+<Callout type="note">
+Arista EOS ne parle pas CDP en natif : face à un switch Cisco, activez LLDP côté Cisco
+(`lldp run`) et les deux se verront.
+</Callout>
+
+## Configuration
+
+```text title="Arista EOS"
+lldp run                          ! activé par défaut
+lldp timer 30
+lldp hold-time 120
+!
+interface Ethernet1
+   description vers-internet
+   no lldp transmit               ! ne pas s'annoncer vers l'extérieur
+   no lldp receive
+```
+
+```text title="Cisco IOS"
+cdp run                           ! activé par défaut
+lldp run                          ! désactivé par défaut : à activer
+!
+interface GigabitEthernet1/0/1
+ description vers-internet
+ no cdp enable
+ no lldp transmit
+ no lldp receive
+```
+
+## Lire la table des voisins
+
+```text title="SW1#show lldp neighbors"
+Last table change time   : 0:04:12 ago
+Number of table inserts  : 4
+Number of table deletes  : 0
+Number of table drops    : 0
+Number of table age-outs : 0
+
+Port          Neighbor Device ID       Neighbor Port ID           TTL
+---------- ------------------------ ---------------------- ---
+Et1           SW2                      Ethernet48                 120
+Et12          ap-etage2                eth0                       120
+Et20          srv-01                   ens1f0                     120
+Et48          R1                       Ethernet3                  120
+```
+
+Pour tout savoir sur un voisin (modèle, version logicielle, adresse de gestion, VLAN natif) :
+`show lldp neighbors Ethernet1 detail`.
+
+```text title="SW-CISCO#show cdp neighbors"
+Capability Codes: R - Router, T - Trans Bridge, B - Source Route Bridge
+                  S - Switch, H - Host, I - IGMP, r - Repeater, P - Phone
+
+Device ID        Local Intrfce     Holdtme    Capability  Platform    Port ID
+SW-CORE          Gig 1/0/48        162             R S I  C9500-24Y4C Twe 1/0/1
+SEP0011223344    Gig 1/0/5         139             H P    IP Phone    Port 1
+```
+
+## À quoi ça sert en production
+
+- **Retrouver un équipement** : « le serveur srv-01 est branché sur SW1, port Et20 », sans
+  descendre en salle serveur.
+- **Vérifier le câblage** : on compare les voisins LLDP réels au plan de câblage prévu. Les outils
+  d'automatisation le font en masse : un câble inversé entre deux ports saute immédiatement aux yeux.
+- **Documenter automatiquement** : des scripts ou des outils comme NetBox reconstruisent la
+  topologie complète à partir des tables LLDP de tous les switches.
+- **Configurer les téléphones IP** : LLDP-MED ou CDP leur donnent le VLAN voix sans configuration manuelle.
+
+<Callout type="field">
+Lors d'une migration ou d'un déploiement de fabric, la validation des voisins LLDP fait partie des
+premiers contrôles automatisés : si chaque lien relie bien le port attendu au port attendu, une
+grande partie des problèmes de « ça ne monte pas » disparaît avant même de regarder le routage.
+</Callout>
+
+## Et la sécurité ?
+
+LLDP et CDP diffusent des informations utiles… y compris à un attaquant : nom de l'équipement,
+modèle exact, version logicielle (et donc ses failles connues), adresse IP de gestion. D'où une
+règle simple : **désactiver LLDP et CDP sur les ports qui ne sont pas de confiance** (liens vers
+Internet ou vers un opérateur, ports dans les espaces publics), et les garder sur les liens
+internes, où ils rendent de grands services.
+
+## Dans le lab
+
+Le lab du chapitre sur le routage statique s'y prête bien : une fois déployé, tapez
+`show lldp neighbors` sur `r2`. Vous verrez `r1` et `r3`, avec le port de chacun, alors qu'aucune
+route n'est encore configurée : LLDP ne dépend pas de l'IP.
+
+## À retenir
+
+- LLDP et CDP annoncent l'**identité d'un équipement à ses voisins directs**, à un seul saut.
+- **LLDP** (IEEE 802.1AB) est le standard multi-constructeur ; **CDP** est l'équivalent Cisco.
+- Une annonce LLDP est composée de **TLV** : Chassis ID, Port ID et TTL sont obligatoires.
+- `show lldp neighbors` (ou `show cdp neighbors`) : qui est branché sur quel port.
+- Désactivez-les sur les ports **non fiables** : ils révèlent modèle et version.
+
+On remonte maintenant en couche 3 avec l'**adressage IPv4**.

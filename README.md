@@ -195,7 +195,7 @@ Mise en route (une seule fois) :
 - [x] Logos Arista, NetBox, Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
-- [x] Formation Fondamentaux complète en FR (6 chapitres illustrés + lab `static-routing`)
+- [x] Formation Fondamentaux complète en FR (8 chapitres illustrés, dont ARP et LLDP/CDP, + lab `static-routing`)
 - [ ] Composant `<CliOutput>` (sortie CLI annotée)
 - [ ] Images Open Graph propres à chaque article (générées au build)
 - [ ] Traduction anglaise de la formation Fondamentaux

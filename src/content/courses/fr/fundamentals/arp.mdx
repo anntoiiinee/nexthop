@@ -1,0 +1,272 @@
+---
+title: "ARP : de l'adresse IP à l'adresse MAC"
+description: "Comment une machine trouve l'adresse MAC qui correspond à une IP : requête et réponse ARP, cache, ARP gratuit, usurpation ARP et dépannage."
+pubDate: 2026-10-17
+level: beginner
+tags: [arp, ipv4, ethernet, security]
+vendor: [arista, cisco]
+order: 7
+---
+
+On a maintenant deux types d'adresses : l'adresse **IP** pour savoir **où** aller (couche 3), et
+l'adresse **MAC** pour livrer la trame sur le réseau local (couche 2). Mais quand PC1 veut joindre
+`192.168.10.20`, il ne connaît que son IP. Pour construire la trame Ethernet, il lui faut sa MAC.
+Le protocole qui fait le lien entre les deux, c'est <Term id="arp" /> (RFC 826).
+
+## Le problème
+
+<Topology
+  width={640}
+  height={240}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 60, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 120, y: 180, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'pc2', type: 'host', x: 320, y: 180, label: 'PC2', sub: '192.168.10.20' },
+    { id: 'srv', type: 'server', x: 520, y: 175, label: 'Serveur', sub: '192.168.10.30' },
+  ]}
+  links={[{ from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' }, { from: 'sw', to: 'srv' }]}
+  notes={[{ x: 120, y: 30, text: 'MAC de 192.168.10.20 ? ? ?', tone: 'rose', mono: true }]}
+  caption="PC1 connaît l'adresse IP de PC2, mais pas son adresse MAC : impossible de remplir la trame Ethernet."
+/>
+
+Sans adresse MAC de destination, pas de trame, donc pas de communication, même dans le même
+réseau. ARP sert exactement à répondre à la question : « **quelle MAC possède cette IP ?** »
+
+## L'échange ARP
+
+ARP fonctionne en deux temps :
+
+1. **La requête**, envoyée en **broadcast** (`ff:ff:ff:ff:ff:ff`) : toutes les machines du VLAN la
+   reçoivent. Elle dit : « Qui a 192.168.10.20 ? Répondez à 192.168.10.10 ».
+2. **La réponse**, envoyée en **unicast** par la seule machine concernée : « 192.168.10.20, c'est
+   moi, ma MAC est `02:00:00:00:00:20` ».
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 350, y: 60, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 100, y: 220, label: 'PC1', sub: '.10' },
+    { id: 'pc2', type: 'host', x: 350, y: 220, label: 'PC2', sub: '.20', tone: 'emerald' },
+    { id: 'srv', type: 'server', x: 600, y: 215, label: 'Serveur', sub: '.30', tone: 'slate' },
+  ]}
+  links={[{ from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' }, { from: 'sw', to: 'srv' }]}
+  flows={[
+    { from: 'pc1', to: 'sw', label: '① requête', tone: 'amber' },
+    { from: 'sw', to: 'pc2', tone: 'amber', offset: -14 },
+    { from: 'sw', to: 'srv', label: 'ignorée', tone: 'amber' },
+    { from: 'pc2', to: 'sw', label: '② réponse', tone: 'emerald', offset: -14 },
+    { from: 'sw', to: 'pc1', tone: 'emerald', offset: 14 },
+  ]}
+  caption="La requête est inondée dans tout le VLAN ; seul PC2 répond, directement à PC1. Le serveur voit que l'IP demandée n'est pas la sienne et ignore la requête."
+/>
+
+Au passage, chacun apprend quelque chose :
+
+- **PC1** note la MAC de PC2 dans son **cache ARP** ;
+- **PC2** note aussi la MAC de PC1 (elle figure dans la requête) : il en aura besoin pour répondre ;
+- **le switch** apprend la position de PC1 grâce à la requête, et celle de PC2 grâce à la réponse.
+
+## Le paquet ARP
+
+Un message ARP est transporté directement dans une trame Ethernet, avec l'EtherType `0x0806`.
+Il n'y a pas d'en-tête IP : ARP fonctionne **uniquement à l'intérieur d'un réseau local**.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Ethernet', fields: [
+      { label: 'ff:ff:ff:ff:ff:ff', sub: 'MAC destination', span: 4, tone: 'amber', mono: true },
+      { label: '02:00:00:00:00:10', sub: 'MAC source', span: 4, tone: 'amber', mono: true },
+      { label: '0x0806', sub: 'EtherType : ARP', span: 4, tone: 'violet', mono: true },
+    ] },
+    { label: 'ARP', fields: [
+      { label: 'Type matériel', sub: '1 = Ethernet', span: 3 },
+      { label: 'Type protocole', sub: '0x0800 = IPv4', span: 3 },
+      { label: 'Tailles', sub: '6 (MAC) · 4 (IP)', span: 3 },
+      { label: 'Opération', sub: '1 = requête · 2 = réponse', span: 3, tone: 'rose' },
+    ] },
+    { label: '', fields: [
+      { label: '02:00:00:00:00:10', sub: 'MAC émetteur', span: 3, tone: 'sky', mono: true },
+      { label: '192.168.10.10', sub: 'IP émetteur', span: 3, tone: 'emerald', mono: true },
+      { label: '00:00:00:00:00:00', sub: 'MAC cible (inconnue)', span: 3, tone: 'sky', mono: true, dashed: true },
+      { label: '192.168.10.20', sub: 'IP cible', span: 3, tone: 'emerald', mono: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="La requête de PC1 : la MAC cible est à zéro, c'est justement ce qu'on cherche. Le message ARP fait 28 octets."
+/>
+
+| Champ | Requête de PC1 | Réponse de PC2 |
+|---|---|---|
+| MAC destination (Ethernet) | `ff:ff:ff:ff:ff:ff` (broadcast) | `02:00:00:00:00:10` (PC1) |
+| Opération | 1 (request) | 2 (reply) |
+| MAC émetteur | `02:00:00:00:00:10` | `02:00:00:00:00:20` |
+| IP émetteur | `192.168.10.10` | `192.168.10.20` |
+| MAC cible | `00:00:00:00:00:00` | `02:00:00:00:00:10` |
+| IP cible | `192.168.10.20` | `192.168.10.10` |
+
+## Le cache ARP
+
+Faire une requête avant chaque paquet serait très lent. Chaque machine garde donc les réponses
+dans un **cache ARP** (ou table de voisinage), avec une durée de vie limitée :
+
+```text title="Linux : ip neigh"
+192.168.10.1 dev eth1 lladdr 00:1c:73:aa:bb:01 REACHABLE
+192.168.10.20 dev eth1 lladdr 02:00:00:00:00:20 STALE
+192.168.10.99 dev eth1 FAILED
+```
+
+```text title="Windows : arp -a"
+Interface : 192.168.10.10 --- 0x7
+  Adresse Internet      Adresse physique      Type
+  192.168.10.1          00-1c-73-aa-bb-01     dynamique
+  192.168.10.20         02-00-00-00-00-20     dynamique
+```
+
+```text title="R1#show ip arp"
+Address         Age (sec)  Hardware Addr   Interface
+192.168.10.10     0:01:12  0200.0000.0010  Ethernet1
+192.168.10.20     0:00:45  0200.0000.0020  Ethernet1
+192.168.10.121    0:03:02  001c.73cc.dd02  Ethernet2
+```
+
+Les durées varient beaucoup : de quelques secondes à quelques minutes sur Linux et Windows (qui
+revérifient régulièrement leurs entrées), **4 heures** par défaut sur les routeurs et switches
+Cisco et Arista. Une entrée `FAILED` (Linux) ou `Incomplete` (Cisco)
+signifie qu'une requête est partie mais que **personne n'a répondu**.
+
+<Callout type="tip">
+`ip neigh flush all` (Linux) ou `arp -d *` (Windows, en administrateur) vident le cache. Utile
+après avoir changé une carte réseau ou déplacé une adresse IP d'une machine à une autre.
+</Callout>
+
+## Et si la destination est dans un autre réseau ?
+
+C'est le point qui piège le plus de débutants : **une machine ne fait jamais d'ARP pour une
+adresse qui n'est pas dans son réseau.** Une requête ARP est un broadcast ; elle ne traverse pas
+les routeurs. Pour joindre `172.16.20.10` au siège, PC1 fait une requête ARP pour sa
+**passerelle** :
+
+<Topology
+  width={720}
+  height={220}
+  groups={[{ x: 16, y: 20, w: 410, h: 185, label: 'Agence · 192.168.10.0/26', tone: 'sky' }]}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 90, y: 115, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 340, y: 115, label: 'R1', sub: '192.168.10.1' },
+    { id: 'app', type: 'server', x: 630, y: 109, label: 'Appli', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc1', to: 'r1' }, { from: 'r1', to: 'app', style: 'dashed', label: 'plusieurs routeurs' }]}
+  flows={[
+    { from: 'pc1', to: 'r1', label: 'ARP : « Qui a 192.168.10.1 ? »', tone: 'amber', offset: -20 },
+  ]}
+  caption="La destination finale n'est pas dans le réseau de PC1 : il cherche la MAC de sa passerelle, pas celle de l'application."
+/>
+
+La trame envoyée aura donc pour destination la **MAC de R1**, et pour IP de destination
+`172.16.20.10`. C'est ce qu'on détaille au chapitre suivant sur le routage, où chaque routeur
+refait la même chose avec le prochain saut.
+
+## L'ARP gratuit
+
+Un **ARP gratuit** (gratuitous ARP) est une annonce que personne n'a demandée : une machine
+diffuse « 192.168.10.1, c'est moi, ma MAC est … ». On l'utilise :
+
+- **au démarrage ou au changement d'adresse** : pour vérifier que personne d'autre n'utilise
+  déjà cette IP (détection de conflit) ;
+- **lors d'une bascule de passerelle redondante** (<Term id="vrrp" />, HSRP) : le routeur qui
+  devient actif annonce l'adresse IP de la passerelle avec sa MAC. Toutes les machines mettent
+  leur cache à jour, et les switches leur table MAC, sans attendre l'expiration des entrées.
+
+<Topology
+  width={640}
+  height={300}
+  nodes={[
+    { id: 'ra', type: 'router', x: 160, y: 70, label: 'R-A', sub: 'en panne', tone: 'rose' },
+    { id: 'rb', type: 'router', x: 480, y: 70, label: 'R-B', sub: 'devient actif', tone: 'emerald' },
+    { id: 'sw', type: 'switch', x: 320, y: 165, label: 'SW1' },
+    { id: 'pc1', type: 'host', x: 160, y: 250, label: 'PC1' },
+    { id: 'pc2', type: 'host', x: 480, y: 250, label: 'PC2' },
+  ]}
+  links={[
+    { from: 'ra', to: 'sw', style: 'dashed', tone: 'rose' }, { from: 'rb', to: 'sw' },
+    { from: 'sw', to: 'pc1' }, { from: 'sw', to: 'pc2' },
+  ]}
+  flows={[
+    { from: 'rb', to: 'sw', tone: 'emerald', offset: 16 },
+    { from: 'sw', to: 'pc1', tone: 'emerald', offset: 14 },
+    { from: 'sw', to: 'pc2', tone: 'emerald', offset: -14 },
+  ]}
+  notes={[{ x: 320, y: 28, text: 'ARP gratuit : « 192.168.10.1 = MAC de R-B »', tone: 'emerald' }]}
+  caption="R-A tombe : R-B reprend l'adresse de passerelle 192.168.10.1 et l'annonce par un ARP gratuit. Les PC basculent sans rien remarquer."
+/>
+
+## La faiblesse d'ARP : l'usurpation
+
+ARP date de 1982 et ne prévoit **aucune authentification** : une machine accepte une réponse ARP
+sans vérifier qui l'envoie, même sans avoir posé de question. Un attaquant présent dans le VLAN
+peut donc envoyer de fausses réponses, c'est l'**usurpation ARP** (ARP spoofing ou poisoning) :
+
+<Topology
+  width={640}
+  height={260}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 110, y: 190, label: 'PC1', sub: '.10' },
+    { id: 'gw', type: 'router', x: 530, y: 190, label: 'Passerelle', sub: '.1' },
+    { id: 'evil', type: 'host', x: 320, y: 70, label: 'Attaquant', sub: '.66', tone: 'rose' },
+  ]}
+  links={[{ from: 'pc1', to: 'gw', style: 'dashed', label: 'trajet normal' }, { from: 'evil', to: 'pc1' }, { from: 'evil', to: 'gw' }]}
+  flows={[
+    { from: 'evil', to: 'pc1', label: '« .1, c\'est moi »', tone: 'rose', offset: 16 },
+    { from: 'evil', to: 'gw', label: '« .10, c\'est moi »', tone: 'rose', offset: -16 },
+  ]}
+  caption="L'attaquant fait croire à PC1 qu'il est la passerelle, et à la passerelle qu'il est PC1 : tout le trafic passe par lui (attaque de l'homme du milieu)."
+/>
+
+Les protections, sur les switches d'accès :
+
+- **DHCP Snooping** : le switch observe les échanges <Term id="dhcp" /> et retient quelle IP a été
+  attribuée à quelle MAC, sur quel port ;
+- **Dynamic ARP Inspection (DAI)** : le switch compare chaque message ARP à cette table et **jette**
+  ceux qui ne correspondent pas ;
+- des **entrées ARP statiques** pour les équipements critiques, et une segmentation en VLAN qui
+  limite le nombre de machines exposées.
+
+<Callout type="field">
+Un symptôme classique de **conflit d'adresse IP** : une machine qui « marche, puis ne marche plus »,
+de façon aléatoire. Deux équipements répondent à l'ARP pour la même IP, et le cache des autres
+machines oscille entre leurs deux MAC. Sur un switch, `show mac address-table` et `show ip arp`
+permettent de retrouver les deux coupables.
+</Callout>
+
+## Dépanner
+
+| Symptôme | Ce que montre le cache ARP | Piste |
+|---|---|---|
+| Aucune communication avec une machine du même réseau | entrée `FAILED` / `Incomplete` | machine éteinte, mauvais VLAN, câble, firewall local qui bloque |
+| Plus rien au-delà du réseau local | passerelle en `FAILED` | mauvaise adresse de passerelle, interface du routeur down |
+| Coupures aléatoires | la MAC d'une même IP change | conflit d'adresse IP, ou usurpation ARP |
+| Ça marche après un `flush` du cache | ancienne MAC conservée | matériel remplacé, IP déplacée sans ARP gratuit |
+
+Pour voir ARP en direct, une capture avec le filtre `arp` dans Wireshark, ou en ligne de commande :
+
+```bash
+sudo tcpdump -i eth1 -n arp
+```
+
+<Callout type="note">
+En IPv6, ARP n'existe plus : il est remplacé par **NDP** (Neighbor Discovery Protocol), qui
+utilise des messages ICMPv6 (*Neighbor Solicitation* et *Neighbor Advertisement*) envoyés en
+multicast plutôt qu'en broadcast. Le principe reste le même.
+</Callout>
+
+## À retenir
+
+- ARP trouve **la MAC qui correspond à une IP**, à l'intérieur d'un réseau local.
+- Requête en **broadcast**, réponse en **unicast** ; le résultat est gardé dans le **cache ARP**.
+- Pour une destination hors du réseau, on fait l'ARP de la **passerelle**, jamais de la destination.
+- L'**ARP gratuit** annonce une adresse (détection de conflit, bascule de passerelle).
+- ARP n'est pas authentifié : **DHCP Snooping + DAI** protègent contre l'usurpation.
+
+Prochain chapitre : le **routage statique**, où ARP intervient à chaque saut.
