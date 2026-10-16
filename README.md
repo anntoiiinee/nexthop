@@ -81,7 +81,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -95,7 +95,8 @@ src/
 │   ├── Term, TermOfTheDay                      # glossaire
 │   ├── Search, ThemeToggle                     # header
 │   ├── LogoMarquee, Faq, SupportCard           # accueil, fin d'article
-│   ├── TutorialCard, Lab, ClabDiagram, diagrams/OsiModel
+│   ├── Callout, TutorialCard, Lab, ClabDiagram
+│   ├── diagrams/                   # Topology, PacketFormat, Bits, AddressSpace, OsiModel, tones.ts
 ├── data/
 │   ├── tools.ts                   # liste des outils (slug, textes, composant)
 │   ├── glossary.ts                # définitions de <Term>
@@ -130,7 +131,15 @@ src/
 - **Pattern de page** : un composant bilingue `XxxPage.astro` qui reçoit `lang`, et des fichiers de route minimes dans `src/pages/` et `src/pages/en/`.
 - **Textes d'interface** dans `src/i18n/ui.ts` (TypeScript signale une clé manquante dans une langue). **URLs** dans `routes` du même fichier.
 - **Frontmatter obligatoire** : `title`, `description`, `pubDate`, `level` (`beginner` | `intermediate` | `advanced`). Les formations ajoutent `order`. Renseigner `vendor` et `tags` : ils alimentent le filtre par technologie et le carrousel.
-- **Composants dans le MDX** : classe `not-prose` sur le conteneur racine. `<Term>` est disponible sans import (voir `src/lib/mdx.ts`).
+- **Composants dans le MDX** : classe `not-prose` sur le conteneur racine. Disponibles sans import (voir `src/lib/mdx.ts`) :
+  - `<Term id="nat" />` : terme du glossaire avec infobulle ;
+  - `<Callout type="note|tip|warning|field">` : encart (à savoir, astuce, attention, retour terrain) ;
+  - `<Topology nodes links flows groups notes />` : schéma réseau en SVG (routeurs, switches, hôtes, flux, zones) ;
+  - `<PacketFormat rows cols />` : trame, en-tête ou champ de bits, sur une ou plusieurs lignes alignées ;
+  - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
+  - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
+  - `<OsiModel />`, `<Lab name="…" />`.
+- **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`). Mode sombre : variante `dark:`, pilotée par la classe `.dark` sur `<html>`.
 - **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
 - **Nouvel outil** : un composant dans `src/components/`, une entrée dans `src/data/tools.ts`. La page dédiée, la carte et le sitemap suivent automatiquement.
@@ -185,12 +194,38 @@ Mise en route (une seule fois) :
 - [x] Flux RSS FR/EN
 - [x] Logos Arista, NetBox, Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
-- [ ] Composants `<Callout>` et `<CliOutput>`
+- [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
+- [x] Formation Fondamentaux complète en FR (6 chapitres illustrés + lab `static-routing`)
+- [ ] Composant `<CliOutput>` (sortie CLI annotée)
 - [ ] Images Open Graph propres à chaque article (générées au build)
 - [ ] Traduction anglaise de la formation Fondamentaux
-- [ ] Contenu : chapitres des fondamentaux (ethernet, vlan, stp, static-routing)
-- [ ] Remplacer les sorties CLI estimées par les vraies sorties du lab `evpn-basic`
+- [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
+- [ ] Formation suivante : le routage dynamique (OSPF, BGP)
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
+
+---
+
+## Idées d'outils
+
+Tous fonctionnent dans le navigateur, sans serveur, comme les outils existants. Pour en ajouter un :
+un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
+
+**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting.
+
+| Priorité | Outil | Ce qu'il fait | Effort |
+|---|---|---|---|
+| Haute | Calculateur IPv6 | Forme courte / complète, préfixe, nombre de /64, type (link-local, ULA, globale), EUI-64 depuis une MAC | Moyen |
+| Haute | Convertisseur binaire / hexa / décimal | Conversion d'un octet ou d'une adresse, avec le poids de chaque bit | Faible |
+| Haute | Visualiseur ContainerLab | Coller un `topology.clab.yml` et obtenir le schéma (réutilise `ClabDiagram`) | Faible |
+| Haute | Calculateur MTU / overhead | Empiler les en-têtes (802.1Q, IP, UDP, VXLAN, GRE, IPsec…) et obtenir MTU utile et MSS TCP | Moyen |
+| Moyenne | Formateur d'adresse MAC | Formats Linux / Cisco / Windows, unicast/multicast, universelle/locale (option : constructeur via l'OUI) | Faible |
+| Moyenne | Résumé de routes | Plus petit agrégat d'une liste de préfixes, avec l'explication en binaire | Moyen |
+| Moyenne | Générateur de wildcard / ACL | Réseau ou plage → masque inverse et ligne d'ACL Cisco / Arista | Faible |
+| Moyenne | Calculateur débit / temps de transfert | « 50 Go sur 100 Mb/s : combien de temps ? », bits et octets | Faible |
+| Spécifique | Décodeur de route EVPN | Expliquer chaque champ d'une route EVPN (type, RD, ESI, MAC, IP) | Moyen à élevé |
+| Spécifique | Générateur de plan VNI / VLAN | Règle de numérotation → tableau et extrait YAML pour AVD | Moyen |
+| Spécifique | Décodeur de certificat X.509 / CSR | CN, SAN, dates, émetteur, taille de clé, sans que rien ne quitte le navigateur | Moyen |
+| Spécifique | Référence ports et protocoles | Tableau consultable port → protocole, avec lien vers le glossaire | Faible |
 
 ---
 

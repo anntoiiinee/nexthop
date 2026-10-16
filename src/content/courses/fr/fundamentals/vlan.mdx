@@ -1,0 +1,297 @@
+---
+title: "Les VLAN"
+description: "Découper un réseau en plusieurs réseaux isolés : ports access, trunks 802.1Q, VLAN natif et routage entre VLAN."
+pubDate: 2026-10-17
+level: beginner
+tags: [vlan, 802.1q, switching]
+vendor: [arista, cisco]
+order: 3
+---
+
+Au chapitre précédent, on a vu qu'un switch forme un seul **domaine de broadcast** : chaque
+machine reçoit les broadcasts de toutes les autres. Dans notre agence, cela veut dire que le
+portable d'un visiteur sur le Wi-Fi invités peut joindre directement le serveur de fichiers.
+Les <Term id="vlan" /> règlent ce problème sans acheter un switch par usage.
+
+## Le principe
+
+Un VLAN découpe un switch physique en plusieurs **switches logiques**, étanches entre eux. Chaque
+VLAN est identifié par un numéro et forme son **propre domaine de broadcast** : une trame reçue
+dans le VLAN 10 ne peut ressortir que par des ports du VLAN 10.
+
+<Topology
+  width={680}
+  height={270}
+  groups={[
+    { x: 20, y: 140, w: 210, h: 120, label: 'VLAN 10 · Utilisateurs', tone: 'sky' },
+    { x: 240, y: 140, w: 200, h: 120, label: 'VLAN 20 · Wi-Fi invités', tone: 'amber' },
+    { x: 450, y: 140, w: 210, h: 120, label: 'VLAN 30 · Serveurs', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 340, y: 60, label: 'SW1' },
+    { id: 'a', type: 'host', x: 75, y: 205, label: 'PC 1' },
+    { id: 'b', type: 'host', x: 175, y: 205, label: 'PC 2' },
+    { id: 'c', type: 'host', x: 290, y: 205, label: 'Invité 1', tone: 'amber' },
+    { id: 'd', type: 'host', x: 390, y: 205, label: 'Invité 2', tone: 'amber' },
+    { id: 'e', type: 'server', x: 505, y: 200, label: 'Fichiers', tone: 'violet' },
+    { id: 'f', type: 'server', x: 605, y: 200, label: 'Impression', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'sw', to: 'a', tone: 'sky' }, { from: 'sw', to: 'b', tone: 'sky' },
+    { from: 'sw', to: 'c', tone: 'amber' }, { from: 'sw', to: 'd', tone: 'amber' },
+    { from: 'sw', to: 'e', tone: 'violet' }, { from: 'sw', to: 'f', tone: 'violet' },
+  ]}
+  caption="Un seul switch, trois VLAN : trois domaines de broadcast isolés. Un invité ne peut plus joindre directement les serveurs."
+/>
+
+Les bénéfices :
+
+- **Sécurité** : les invités, les utilisateurs et les serveurs sont séparés. Pour passer d'un
+  VLAN à l'autre, il faut traverser un routeur ou un firewall, qui peut filtrer.
+- **Performance** : chaque broadcast reste dans son VLAN.
+- **Souplesse** : déplacer un poste d'un service à l'autre, c'est changer une ligne de
+  configuration, pas un câble.
+
+Les numéros vont de **1 à 4094**. Le VLAN 1 existe par défaut : tous les ports y sont au démarrage.
+
+## Ports access et ports trunk
+
+Un port de switch fonctionne selon l'un de ces deux modes :
+
+| Mode | Raccorde | VLAN transportés | Trames |
+|---|---|---|---|
+| **Access** | un équipement final (PC, imprimante, serveur) | un seul | sans étiquette : l'équipement ignore tout du VLAN |
+| **Trunk** | un autre switch, un routeur, un hyperviseur | plusieurs | étiquetées avec le numéro de VLAN (802.1Q) |
+
+Dès qu'on a deux switches, il faut faire passer plusieurs VLAN sur un seul câble : c'est le rôle
+du **trunk**.
+
+<Topology
+  width={680}
+  height={250}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 200, y: 70, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 480, y: 70, label: 'SW2' },
+    { id: 'a', type: 'host', x: 110, y: 190, label: 'PC 1', sub: 'VLAN 10' },
+    { id: 'b', type: 'host', x: 270, y: 190, label: 'Invité', sub: 'VLAN 20', tone: 'amber' },
+    { id: 'c', type: 'host', x: 410, y: 190, label: 'PC 3', sub: 'VLAN 10' },
+    { id: 'd', type: 'server', x: 570, y: 185, label: 'Serveur', sub: 'VLAN 30', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', label: 'trunk 802.1Q · VLAN 10, 20, 30', style: 'trunk' },
+    { from: 'sw1', to: 'a', label: 'access', tone: 'sky' },
+    { from: 'sw1', to: 'b', label: 'access', tone: 'amber' },
+    { from: 'sw2', to: 'c', label: 'access', tone: 'sky' },
+    { from: 'sw2', to: 'd', label: 'access', tone: 'violet' },
+  ]}
+  caption="Les ports vers les machines sont en mode access (un VLAN chacun). Le lien entre switches est un trunk qui transporte tous les VLAN."
+/>
+
+## L'étiquette 802.1Q
+
+Sur un trunk, comment SW2 sait-il à quel VLAN appartient une trame ? SW1 y insère une
+**étiquette** (tag) de 4 octets, définie par la norme **IEEE 802.1Q**, juste après les adresses MAC :
+
+<PacketFormat
+  cols={16}
+  rows={[
+    { label: 'Trame', fields: [
+      { label: 'MAC dest.', sub: '6 o', span: 2, tone: 'amber' },
+      { label: 'MAC source', sub: '6 o', span: 2, tone: 'amber' },
+      { label: 'Tag 802.1Q', sub: '4 octets', span: 4, tone: 'sky' },
+      { label: 'EtherType', sub: '2 o', span: 2, tone: 'violet' },
+      { label: 'Données', sub: '46 à 1500 o', span: 4, tone: 'emerald' },
+      { label: 'FCS', sub: '4 o', span: 2, tone: 'rose' },
+    ] },
+    { label: 'Détail du tag', fields: [
+      { label: 'TPID = 0x8100', sub: '16 bits', span: 2, start: 5, tone: 'sky', mono: true },
+      { label: 'PCP', sub: '3 bits', span: 1, start: 7, tone: 'sky' },
+      { label: 'DEI', sub: '1', span: 1, start: 8, tone: 'sky' },
+      { label: 'VLAN ID', sub: '12 bits', span: 2, start: 9, tone: 'sky' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="Le tag 802.1Q s'insère entre la MAC source et l'EtherType. La trame passe de 1518 à 1522 octets au maximum."
+/>
+
+| Champ | Taille | Rôle |
+|---|---|---|
+| **TPID** | 16 bits | Toujours `0x8100` : il occupe la place de l'EtherType et annonce « cette trame est étiquetée ». |
+| **PCP** | 3 bits | Priorité de 0 à 7, utilisée pour la qualité de service (la voix passe avant le reste). |
+| **DEI** | 1 bit | Indique une trame qui peut être jetée en priorité en cas de congestion. |
+| **VLAN ID** | 12 bits | Le numéro de VLAN. 12 bits donnent 4096 valeurs ; 0 et 4095 sont réservés, d'où **1 à 4094**. |
+
+Le tag n'existe **que sur les trunks**. Voici le parcours d'une trame de PC 1 vers PC 3 :
+
+<Topology
+  width={680}
+  height={230}
+  nodes={[
+    { id: 'a', type: 'host', x: 70, y: 110, label: 'PC 1', sub: 'VLAN 10' },
+    { id: 'sw1', type: 'switch', x: 250, y: 110, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 430, y: 110, label: 'SW2' },
+    { id: 'c', type: 'host', x: 610, y: 110, label: 'PC 3', sub: 'VLAN 10' },
+  ]}
+  links={[
+    { from: 'a', to: 'sw1', tone: 'sky' },
+    { from: 'sw1', to: 'sw2', style: 'trunk' },
+    { from: 'sw2', to: 'c', tone: 'sky' },
+  ]}
+  flows={[
+    { from: 'a', to: 'sw1', label: 'sans tag', tone: 'slate', offset: -16 },
+    { from: 'sw1', to: 'sw2', label: 'tag VLAN 10', tone: 'sky', offset: -16 },
+    { from: 'sw2', to: 'c', label: 'sans tag', tone: 'slate', offset: -16 },
+  ]}
+  caption="SW1 ajoute le tag en entrée de trunk, SW2 le retire en sortie vers le port access. Les PC ne voient jamais de tag."
+/>
+
+## Le VLAN natif
+
+Sur un trunk, un VLAN peut circuler **sans tag** : c'est le **VLAN natif** (le VLAN 1 par
+défaut). Il existe pour la compatibilité avec des équipements qui ne comprennent pas 802.1Q.
+
+Il doit être **identique des deux côtés** du trunk : sinon, une trame non étiquetée envoyée
+dans le VLAN natif de SW1 arrive dans un autre VLAN sur SW2, ce qui fait communiquer deux VLAN
+qui devraient être isolés.
+
+<Callout type="warning">
+Bonnes pratiques de sécurité : ne laissez aucun utilisateur dans le VLAN 1, choisissez comme VLAN
+natif un VLAN **inutilisé** (par exemple 999), et n'autorisez sur chaque trunk **que les VLAN
+nécessaires**. Cela évite notamment les attaques par double étiquette (VLAN hopping).
+</Callout>
+
+## Configuration
+
+On crée les VLAN, on place les ports des machines en mode access et on configure le trunk.
+
+```text title="Arista EOS"
+vlan 10
+   name UTILISATEURS
+vlan 20
+   name WIFI-INVITES
+vlan 30
+   name SERVEURS
+!
+interface Ethernet1
+   description PC-comptabilite
+   switchport mode access
+   switchport access vlan 10
+!
+interface Ethernet48
+   description trunk-vers-SW2
+   switchport mode trunk
+   switchport trunk allowed vlan 10,20,30
+   switchport trunk native vlan 999
+```
+
+```text title="Cisco IOS"
+vlan 10
+ name UTILISATEURS
+vlan 20
+ name WIFI-INVITES
+vlan 30
+ name SERVEURS
+!
+interface GigabitEthernet1/0/1
+ description PC-comptabilite
+ switchport mode access
+ switchport access vlan 10
+!
+interface GigabitEthernet1/0/48
+ description trunk-vers-SW2
+ switchport mode trunk
+ switchport trunk allowed vlan 10,20,30
+ switchport trunk native vlan 999
+ switchport nonegotiate
+```
+
+<Callout type="note">
+Sur Cisco, `switchport nonegotiate` désactive DTP, un protocole propriétaire qui peut transformer
+un port en trunk automatiquement. Fixer le mode à la main est plus sûr. Sur certains anciens
+modèles, il faut aussi ajouter `switchport trunk encapsulation dot1q` avant `switchport mode trunk`.
+</Callout>
+
+## Vérifier
+
+```text title="SW1#show vlan"
+VLAN  Name                             Status    Ports
+----- -------------------------------- --------- -------------------------------
+1     default                          active
+10    UTILISATEURS                     active    Et1, Et2, Et48
+20    WIFI-INVITES                     active    Et3, Et48
+30    SERVEURS                         active    Et48
+999   VLAN0999                         active    Et48
+```
+
+```text title="SW1#show interfaces trunk"
+Port          Mode            Status          Native vlan
+Et48          trunk           trunking        999
+
+Port          Vlans allowed
+Et48          10,20,30
+
+Port          Vlans allowed and active in management domain
+Et48          10,20,30
+```
+
+Les erreurs les plus fréquentes : un VLAN créé sur un switch mais **pas sur l'autre**, un VLAN
+absent de la liste `allowed` du trunk, ou un VLAN natif différent des deux côtés.
+
+## Faire communiquer les VLAN
+
+Les VLAN sont isolés en couche 2 : pour qu'un PC du VLAN 10 joigne le serveur du VLAN 30, il faut
+**router**, donc passer en couche 3. Deux architectures existent :
+
+- le **router-on-a-stick** : un routeur relié au switch par un trunk, avec une sous-interface
+  par VLAN. Simple, mais tout le trafic entre VLAN passe par un seul lien ;
+- le **switch de niveau 3** : le switch route lui-même grâce à une interface virtuelle par VLAN,
+  la <Term id="svi" />. C'est la solution standard aujourd'hui.
+
+<Topology
+  width={680}
+  height={285}
+  groups={[
+    { x: 30, y: 150, w: 290, h: 125, label: 'VLAN 10 · 192.168.10.0/26', tone: 'sky' },
+    { x: 360, y: 150, w: 290, h: 125, label: 'VLAN 30 · 192.168.10.96/28', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'l3', type: 'l3switch', x: 340, y: 70, label: 'SW-L3' },
+    { id: 'a', type: 'host', x: 120, y: 210, label: 'PC 1', sub: '192.168.10.10' },
+    { id: 'b', type: 'host', x: 230, y: 210, label: 'PC 2', sub: '192.168.10.11' },
+    { id: 's', type: 'server', x: 500, y: 205, label: 'Fichiers', sub: '192.168.10.100', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'l3', to: 'a', tone: 'sky' }, { from: 'l3', to: 'b', tone: 'sky' }, { from: 'l3', to: 's', tone: 'violet' },
+  ]}
+  notes={[
+    { x: 160, y: 50, text: 'SVI Vlan10 : 192.168.10.1', tone: 'sky', mono: true },
+    { x: 520, y: 50, text: 'SVI Vlan30 : 192.168.10.97', tone: 'violet', mono: true },
+  ]}
+  caption="Chaque VLAN a sa SVI, qui sert de passerelle aux machines du VLAN. Le switch route entre les SVI."
+/>
+
+```text title="Arista EOS : routage entre VLAN"
+ip routing
+!
+interface Vlan10
+   ip address 192.168.10.1/26
+!
+interface Vlan30
+   ip address 192.168.10.97/28
+```
+
+Les adresses utilisées ici (le `/26`, le `/28`) sont expliquées au chapitre sur l'adressage
+IPv4, et le routage lui-même au dernier chapitre. Retenez pour l'instant : **un VLAN = un
+sous-réseau IP = une passerelle**.
+
+## À retenir
+
+- Un VLAN crée un **domaine de broadcast isolé** ; on en dispose de **1 à 4094**.
+- Port **access** : un VLAN, sans tag, vers une machine. Port **trunk** : plusieurs VLAN,
+  étiquetés 802.1Q, entre équipements réseau.
+- Le tag 802.1Q ajoute **4 octets** dont **12 bits** de numéro de VLAN.
+- Le **VLAN natif** circule sans tag et doit être identique des deux côtés.
+- Pour passer d'un VLAN à l'autre, il faut **router** (SVI sur un switch de niveau 3).
+
+Prochain chapitre : que se passe-t-il quand on relie les switches par **plusieurs** câbles
+pour la redondance ? Bienvenue dans le monde du **Spanning Tree**.

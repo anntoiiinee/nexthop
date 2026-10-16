@@ -1,11 +1,74 @@
 ---
 title: "Les fondamentaux du réseau"
-description: "Les bases indispensables : modèle OSI, Ethernet, VLAN, STP, adressage IP et routage statique."
+description: "Les bases indispensables : modèle OSI, Ethernet, VLAN, Spanning Tree, adressage IPv4 et routage statique, avec schémas et lab."
 pubDate: 2026-10-15
+updatedDate: 2026-10-17
 level: beginner
-tags: [osi, vlan, stp, ipv4]
+tags: [osi, ethernet, vlan, stp, ipv4, routing]
+vendor: [arista, cisco]
 order: 0
 ---
 
-Cette formation pose les bases sur lesquelles reposent tous les autres sujets du site.
-Aucun prérequis : on part de zéro.
+Cette formation pose les bases sur lesquelles reposent tous les autres sujets du site :
+BGP, EVPN-VXLAN, firewalls ou automatisation. **Aucun prérequis** : on part de zéro,
+et chaque chapitre s'appuie sur le précédent.
+
+## Le fil rouge : le réseau d'une agence
+
+Plutôt que des exemples isolés, on construit chapitre après chapitre le réseau d'une petite
+agence reliée à son siège. À la fin de la formation, vous saurez expliquer chaque trame et
+chaque paquet qui le traverse.
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 16, y: 16, w: 430, h: 268, label: 'Agence', tone: 'sky' },
+    { x: 560, y: 16, w: 144, h: 268, label: 'Siège', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 70, y: 230, label: 'PC', sub: 'VLAN 10' },
+    { id: 'wifi', type: 'host', x: 170, y: 230, label: 'Wi-Fi', sub: 'VLAN 20' },
+    { id: 'srv', type: 'server', x: 270, y: 222, label: 'Serveur', sub: 'VLAN 30' },
+    { id: 'sw1', type: 'switch', x: 120, y: 110, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 270, y: 110, label: 'SW2' },
+    { id: 'r1', type: 'router', x: 390, y: 110, label: 'R1' },
+    { id: 'r2', type: 'router', x: 500, y: 200, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 632, y: 110, label: 'R3', tone: 'violet' },
+    { id: 'srv2', type: 'server', x: 632, y: 222, label: 'Appli', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc1', to: 'sw1' },
+    { from: 'wifi', to: 'sw1' },
+    { from: 'srv', to: 'sw2' },
+    { from: 'sw1', to: 'sw2', label: 'trunk', style: 'trunk' },
+    { from: 'sw2', to: 'r1', style: 'trunk' },
+    { from: 'r1', to: 'r2' },
+    { from: 'r2', to: 'r3' },
+    { from: 'r3', to: 'srv2' },
+  ]}
+  caption="Le réseau construit au fil des chapitres : des VLAN sur deux switches, un routeur d'agence et un routage statique jusqu'au siège."
+/>
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **1. Le modèle OSI** | Situer un problème ou un équipement dans les couches, comprendre l'encapsulation |
+| **2. Ethernet et adresses MAC** | Lire une trame, expliquer comment un switch apprend et transmet |
+| **3. Les VLAN** | Segmenter un réseau, configurer ports access et trunks 802.1Q |
+| **4. Spanning Tree** | Comprendre pourquoi une boucle est fatale et comment STP l'évite |
+| **5. Adressage IPv4 et subnetting** | Calculer réseau, broadcast et plage d'hôtes, faire un plan d'adressage VLSM |
+| **6. Le routage statique** | Lire une table de routage, configurer des routes et dépanner avec ping et traceroute |
+
+## Comment suivre la formation
+
+- **Lisez dans l'ordre** : chaque chapitre réutilise les notions du précédent.
+- **Survolez les termes soulignés en pointillés** (comme <Term id="vlan" />) : leur définition s'affiche.
+- **Pratiquez** avec les [outils](/outils) : calculateur de sous-réseau, découpeur VLSM et quiz.
+- **Refaites le lab** du dernier chapitre : il ne demande qu'un PC, Docker et ContainerLab.
+
+<Callout type="note">
+Les exemples de configuration sont donnés pour **Arista EOS** et **Cisco IOS** : les deux syntaxes
+sont très proches, et ce sont celles que vous rencontrerez le plus souvent en entreprise.
+</Callout>

@@ -1,0 +1,296 @@
+---
+title: "Ethernet et adresses MAC"
+description: "La trame Ethernet champ par champ, l'adresse MAC, et comment un switch apprend où se trouve chaque machine."
+pubDate: 2026-10-17
+level: beginner
+tags: [ethernet, mac, switching]
+vendor: [arista, cisco]
+order: 2
+---
+
+Ethernet est la technologie de couche 1 et 2 utilisée par la quasi-totalité des réseaux
+locaux (<Term id="lan" />) : les prises RJ45 de votre bureau, les liens fibre entre switches,
+les serveurs d'un data center. Même le Wi-Fi reprend son format d'adresses. Comprendre Ethernet,
+c'est comprendre ce que fait **un switch**, l'équipement le plus répandu d'un réseau.
+
+## Les supports et les débits
+
+Ethernet existe en de nombreuses variantes, nommées selon le débit et le support. Le nom
+`1000BASE-T` se lit : 1000 Mb/s, transmission en bande de base (BASE), sur paires torsadées (T).
+
+| Norme | Débit | Support | Usage courant |
+|---|---|---|---|
+| 100BASE-TX | 100 Mb/s | cuivre, RJ45 | téléphones IP, vieux équipements |
+| 1000BASE-T | 1 Gb/s | cuivre, RJ45 (Cat 5e/6) | postes de travail, imprimantes |
+| 10GBASE-SR | 10 Gb/s | fibre multimode, SFP+ | serveurs, liens entre switches |
+| 25GBASE-SR | 25 Gb/s | fibre multimode, SFP28 | serveurs en data center |
+| 100GBASE-SR4 / LR4 | 100 Gb/s | fibre, QSFP28 | liens spine/leaf, cœur de réseau |
+
+Le cuivre est limité à **100 mètres** ; au-delà, on passe à la fibre (quelques centaines de
+mètres en multimode, des kilomètres en monomode).
+
+## L'adresse MAC
+
+Chaque carte réseau possède une adresse <Term id="mac" /> de **48 bits** (6 octets), écrite en
+hexadécimal. Elle identifie l'interface sur le réseau local.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: '00 : 1c : 73', sub: 'OUI · 3 octets', span: 6, tone: 'amber', mono: true },
+      { label: 'aa : bb : cc', sub: 'identifiant de la carte · 3 octets', span: 6, tone: 'sky', mono: true },
+    ] },
+  ]}
+  minWidth="28rem"
+  caption="Une adresse MAC : les 3 premiers octets identifient le constructeur, les 3 suivants la carte."
+/>
+
+- Les 3 premiers octets forment l'<Term id="oui" />, attribué par l'IEEE à chaque constructeur.
+  `00:1c:73` appartient à Arista : en voyant cette adresse dans une table, vous savez déjà de quel
+  type d'équipement il s'agit.
+- Les 3 octets suivants sont choisis par le constructeur pour que chaque carte soit unique.
+
+Deux bits du premier octet ont un sens particulier :
+
+<PacketFormat
+  cols={8}
+  rows={[
+    { label: '1er octet', fields: [
+      { label: 'b7', sub: '0', mono: true }, { label: 'b6', sub: '0', mono: true },
+      { label: 'b5', sub: '0', mono: true }, { label: 'b4', sub: '0', mono: true },
+      { label: 'b3', sub: '0', mono: true }, { label: 'b2', sub: '0', mono: true },
+      { label: 'U/L', sub: '0 = universelle', tone: 'violet' },
+      { label: 'I/G', sub: '0 = unicast', tone: 'rose' },
+    ] },
+  ]}
+  minWidth="34rem"
+  caption="Le bit I/G distingue unicast et multicast, le bit U/L une adresse constructeur d'une adresse administrée localement."
+/>
+
+- **I/G** (bit de poids faible) : `0` = adresse d'**une** machine (unicast), `1` = adresse de
+  **groupe** (multicast ou broadcast).
+- **U/L** : `0` = adresse universelle (celle du constructeur), `1` = adresse administrée
+  localement, par exemple générée par une machine virtuelle ou un téléphone qui masque son adresse.
+
+Selon les équipements, la même adresse s'écrit de plusieurs façons. Toutes désignent la même carte :
+
+| Format | Exemple | Utilisé par |
+|---|---|---|
+| Deux-points | `00:1c:73:aa:bb:cc` | Linux, Arista (affichage) |
+| Tirets | `00-1C-73-AA-BB-CC` | Windows |
+| Points (par groupes de 4) | `001c.73aa.bbcc` | Cisco, Arista (tables MAC) |
+
+<Callout type="tip">
+Pour passer d'un format à l'autre, retirez tous les séparateurs : il reste 12 caractères
+hexadécimaux, toujours les mêmes.
+</Callout>
+
+## La trame Ethernet
+
+Les données de la couche 3 (un paquet IP) sont placées dans une **trame** Ethernet. Voici le
+format utilisé partout aujourd'hui, appelé Ethernet II :
+
+<PacketFormat
+  cols={13}
+  rows={[
+    { fields: [
+      { label: 'Préambule + SFD', sub: '8 octets', span: 2, dashed: true },
+      { label: 'MAC destination', sub: '6 octets', span: 2, tone: 'amber' },
+      { label: 'MAC source', sub: '6 octets', span: 2, tone: 'amber' },
+      { label: 'EtherType', sub: '2 octets', span: 1, tone: 'violet' },
+      { label: 'Données (paquet IP…)', sub: '46 à 1500 octets', span: 5, tone: 'emerald' },
+      { label: 'FCS', sub: '4 octets', span: 1, tone: 'rose' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Une trame Ethernet II. Le préambule sert à synchroniser l'émission (couche 1) : il n'apparaît pas dans les captures."
+/>
+
+| Champ | Rôle |
+|---|---|
+| **MAC destination** | À qui est destinée la trame. Placée en premier pour que le switch puisse commencer à décider très tôt. |
+| **MAC source** | Qui envoie la trame. C'est grâce à ce champ que le switch **apprend**. |
+| **EtherType** | Quel protocole est transporté : `0x0800` IPv4, `0x86DD` IPv6, `0x0806` <Term id="arp" />, `0x8100` VLAN 802.1Q. |
+| **Données** | Le paquet de la couche 3. Au minimum 46 octets (on complète si besoin), au maximum 1500 : c'est la <Term id="mtu" /> standard. |
+| **FCS** | Code de contrôle (<Term id="fcs" />) calculé sur toute la trame. Le récepteur le recalcule : s'il ne correspond pas, la trame est jetée. |
+
+Une trame mesure donc entre **64 et 1518 octets** (sans le préambule).
+
+<Callout type="field">
+Un compteur d'erreurs **CRC** ou **FCS** qui augmente sur une interface signale presque
+toujours un problème physique : câble abîmé, connecteur mal serti, optique sale ou incompatible.
+C'est la couche 1 qui parle, pas la configuration.
+</Callout>
+
+## Unicast, broadcast et multicast
+
+L'adresse de destination indique combien de machines doivent recevoir la trame :
+
+| Type | Adresse de destination | Reçue par | Exemple |
+|---|---|---|---|
+| **Unicast** | l'adresse d'une carte, bit I/G à 0 | une seule machine | la plupart du trafic |
+| **Broadcast** | `ff:ff:ff:ff:ff:ff` | toutes les machines du réseau local | requête ARP, DHCP Discover |
+| **Multicast** | bit I/G à 1, par exemple `01:00:5e:…` | les machines abonnées à un groupe | IPTV, protocoles de routage |
+
+## Comment un switch apprend
+
+Un switch ne connaît rien au démarrage. Il construit sa **table d'adresses MAC** (aussi appelée
+table CAM) en observant le trafic. Sa règle tient en trois lignes :
+
+1. **Apprendre** : pour chaque trame reçue, il note « l'adresse MAC source se trouve derrière ce port ».
+2. **Transmettre** : si l'adresse MAC de destination est dans la table, il envoie la trame
+   uniquement sur le port correspondant.
+3. **Inonder** : si la destination est inconnue (ou si c'est un broadcast), il envoie une copie
+   sur **tous les ports** sauf celui d'arrivée.
+
+Suivons un échange entre A et B sur un switch qui vient de démarrer.
+
+### Étape 1 : A envoie une trame à B
+
+<Topology
+  width={640}
+  height={260}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 70, label: 'SW1' },
+    { id: 'a', type: 'host', x: 120, y: 200, label: 'A', sub: '…:0a' },
+    { id: 'b', type: 'host', x: 320, y: 200, label: 'B', sub: '…:0b' },
+    { id: 'c', type: 'host', x: 520, y: 200, label: 'C', sub: '…:0c' },
+  ]}
+  links={[
+    { from: 'sw', to: 'a', fromLabel: 'Et1' },
+    { from: 'sw', to: 'b', fromLabel: 'Et2' },
+    { from: 'sw', to: 'c', fromLabel: 'Et3' },
+  ]}
+  flows={[
+    { from: 'a', to: 'sw', label: '① A → B', tone: 'sky' },
+    { from: 'sw', to: 'b', tone: 'amber', offset: -14 },
+    { from: 'sw', to: 'c', label: '② inondation', tone: 'amber' },
+  ]}
+  caption="Le switch apprend que A est sur Et1. Il ne connaît pas encore B : il inonde la trame sur tous les autres ports."
+/>
+
+Le switch lit l'adresse source et note `…:0a → Et1`. La destination `…:0b` est inconnue :
+il **inonde** la trame vers Et2 et Et3. C ne la demandait pas : sa carte réseau voit que
+l'adresse de destination n'est pas la sienne et la jette.
+
+| VLAN | Adresse MAC | Port |
+|---|---|---|
+| 1 | `0200.0000.000a` | Et1 |
+
+### Étape 2 : B répond à A
+
+<Topology
+  width={640}
+  height={260}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 70, label: 'SW1' },
+    { id: 'a', type: 'host', x: 120, y: 200, label: 'A', sub: '…:0a' },
+    { id: 'b', type: 'host', x: 320, y: 200, label: 'B', sub: '…:0b' },
+    { id: 'c', type: 'host', x: 520, y: 200, label: 'C', sub: '…:0c', tone: 'slate' },
+  ]}
+  links={[
+    { from: 'sw', to: 'a', fromLabel: 'Et1' },
+    { from: 'sw', to: 'b', fromLabel: 'Et2' },
+    { from: 'sw', to: 'c', fromLabel: 'Et3' },
+  ]}
+  flows={[
+    { from: 'b', to: 'sw', label: '① B → A', tone: 'sky', offset: 14 },
+    { from: 'sw', to: 'a', label: '② transmise', tone: 'emerald', offset: -14 },
+  ]}
+  caption="Le switch apprend que B est sur Et2. Il connaît A : la réponse part uniquement sur Et1, C ne reçoit rien."
+/>
+
+Cette fois, le switch apprend `…:0b → Et2`, et il **connaît** la destination `…:0a` : la trame
+sort uniquement sur Et1. Désormais, tout le trafic entre A et B est commuté directement.
+
+| VLAN | Adresse MAC | Port |
+|---|---|---|
+| 1 | `0200.0000.000a` | Et1 |
+| 1 | `0200.0000.000b` | Et2 |
+
+Une entrée qui ne sert plus disparaît après un délai d'inactivité, **300 secondes** par défaut :
+c'est l'**aging time**. Si une machine change de port, son adresse est simplement réapprise
+sur le nouveau port à sa prochaine trame.
+
+## Domaine de broadcast
+
+Un broadcast est inondé sur **tous les ports** du switch, et d'un switch à l'autre. L'ensemble
+des machines atteintes par un même broadcast forme un **domaine de broadcast**.
+
+<Topology
+  width={640}
+  height={250}
+  groups={[{ x: 20, y: 20, w: 600, h: 215, label: 'Un seul domaine de broadcast', tone: 'amber' }]}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 200, y: 85, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 440, y: 85, label: 'SW2' },
+    { id: 'a', type: 'host', x: 100, y: 190, label: 'A' },
+    { id: 'b', type: 'host', x: 250, y: 190, label: 'B' },
+    { id: 'c', type: 'host', x: 390, y: 190, label: 'C' },
+    { id: 'd', type: 'server', x: 540, y: 185, label: 'Serveur' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2' }, { from: 'sw1', to: 'a' }, { from: 'sw1', to: 'b' },
+    { from: 'sw2', to: 'c' }, { from: 'sw2', to: 'd' },
+  ]}
+  flows={[
+    { from: 'a', to: 'sw1', label: 'broadcast', tone: 'amber' },
+    { from: 'sw1', to: 'sw2', tone: 'amber', offset: -12 },
+    { from: 'sw1', to: 'b', tone: 'amber' },
+    { from: 'sw2', to: 'c', tone: 'amber', offset: -12 },
+    { from: 'sw2', to: 'd', tone: 'amber' },
+  ]}
+  caption="Un broadcast envoyé par A atteint toutes les machines reliées aux switches, quel que soit le nombre de switches."
+/>
+
+Plus le domaine est grand, plus chaque machine reçoit de broadcasts qui ne la concernent pas,
+et plus une panne ou une boucle a d'impact. C'est exactement le problème que résolvent les
+**VLAN**, au chapitre suivant.
+
+<Callout type="note">
+Les anciens **hubs** recopiaient chaque trame sur tous les ports, sans table MAC, et un seul
+équipement pouvait émettre à la fois (half duplex, collisions). Les switches modernes travaillent
+en **full duplex** : chaque port émet et reçoit en même temps, et les collisions n'existent plus.
+</Callout>
+
+## Sur un vrai switch
+
+La table MAC s'affiche avec la même commande sur Arista EOS et Cisco IOS :
+
+```text title="SW1#show mac address-table"
+          Mac Address Table
+------------------------------------------------------------------
+
+Vlan    Mac Address       Type        Ports      Moves   Last Move
+----    -----------       ----        -----      -----   ---------
+   1    0200.0000.000a    DYNAMIC     Et1        1       0:00:42 ago
+   1    0200.0000.000b    DYNAMIC     Et2        1       0:00:41 ago
+Total Mac Addresses for this criterion: 2
+```
+
+Quelques variantes utiles :
+
+```text
+show mac address-table address 0200.0000.000b   ! où se trouve cette machine ?
+show mac address-table interface Ethernet1      ! qui est derrière ce port ?
+clear mac address-table dynamic                 ! vider la table (elle se reconstruit seule)
+```
+
+<Callout type="field">
+Pour retrouver le port d'un équipement dont on ne connaît que l'IP : un `ping` depuis le réseau
+(pour qu'il émette), puis `show ip arp` sur la passerelle pour obtenir sa MAC, et enfin
+`show mac address-table address …` de switch en switch jusqu'à un port qui n'est pas un lien
+vers un autre switch.
+</Callout>
+
+## À retenir
+
+- Une adresse MAC fait **48 bits** : 3 octets de constructeur (OUI) et 3 octets de carte.
+- La trame Ethernet contient **MAC destination, MAC source, EtherType, données et FCS** ;
+  la MTU standard est de **1500 octets**.
+- Un switch **apprend** avec l'adresse source, **transmet** avec l'adresse destination,
+  et **inonde** quand il ne sait pas.
+- Un broadcast (`ff:ff:ff:ff:ff:ff`) atteint tout le **domaine de broadcast**.
+
+Prochain chapitre : découper ce domaine en plusieurs réseaux isolés avec les **VLAN**.

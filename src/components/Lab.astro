@@ -60,9 +60,12 @@ const downloadScript = [
   ...files.map((f) => `curl -fsSL --create-dirs -o ${f} ${new URL(f, baseUrl)}`),
 ].join('\n');
 
+// Premier équipement Arista du lab, pour l'exemple de connexion à la CLI
+const firstCeos = topology.match(/^\s{4}([\w-]+):\s*\n\s+kind:\s*(?:arista_)?ceos/m)?.[1] ?? 'r1';
+
 const runScript = [
   `sudo containerlab deploy -t ${topologyFile}`,
-  `docker exec -it clab-${name}-leaf1 Cli`,
+  `docker exec -it clab-${name}-${firstCeos} Cli`,
   `sudo containerlab destroy -t ${topologyFile}`,
 ].join('\n');
 
