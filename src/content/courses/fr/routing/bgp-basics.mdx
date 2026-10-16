@@ -1,0 +1,279 @@
+---
+title: "Les bases de BGP"
+description: "Systèmes autonomes, session BGP sur TCP 179, messages et états, eBGP et iBGP, annonce d'un préfixe, AS_PATH et prévention des boucles, avec un lab à deux opérateurs."
+pubDate: 2026-10-17
+level: intermediate
+tags: [bgp, ebgp, ibgp, routing]
+vendor: [arista, cisco]
+order: 3
+---
+
+Internet n'est pas un réseau, c'est une **interconnexion de dizaines de milliers de réseaux**
+indépendants : opérateurs, hébergeurs, grandes entreprises, universités. Chacun gère son réseau
+comme il l'entend, mais tous doivent s'échanger leurs routes. Le protocole qui le permet, c'est
+<Term id="bgp" /> (Border Gateway Protocol), et il est aussi au cœur des data centers modernes.
+
+## Les systèmes autonomes
+
+Un **système autonome** (<Term id="as" />) est un ensemble de réseaux géré par une même organisation,
+avec une politique de routage commune. Chaque AS a un numéro (ASN) :
+
+| Plage | Usage |
+|---|---|
+| 1 à 64 495 | ASN publics sur 2 octets, attribués par les registres (RIPE en Europe) |
+| **64 512 à 65 534** | **privés** sur 2 octets : utilisables librement en interne, jamais annoncés sur Internet |
+| 4 200 000 000 à 4 294 967 294 | privés sur 4 octets |
+
+Dans notre exemple, l'entreprise utilise l'AS **65010**. Elle est raccordée à deux opérateurs,
+les AS 65100 et 65200, eux-mêmes reliés au reste d'Internet (ici l'AS 65300).
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 'host', type: 'host', x: 70, y: 160, label: 'host1', sub: '198.51.100.10' },
+    { id: 'ce1', type: 'router', x: 230, y: 160, label: 'CE1', sub: 'AS 65010', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 450, y: 70, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'router', x: 450, y: 250, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 670, y: 160, label: 'Internet', sub: 'AS 65300', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'host', to: 'ce1' },
+    { from: 'ce1', to: 'ispa', label: '192.0.2.0/31', tone: 'emerald' },
+    { from: 'ce1', to: 'ispb', label: '192.0.2.2/31', tone: 'emerald' },
+    { from: 'ispa', to: 'inet', label: '192.0.2.4/31' },
+    { from: 'ispb', to: 'inet', label: '192.0.2.6/31' },
+  ]}
+  caption="L'entreprise (AS 65010) possède le préfixe 198.51.100.0/24 et le fait connaître à Internet par ses deux opérateurs."
+/>
+
+L'entreprise veut deux choses : **annoncer son préfixe** `198.51.100.0/24` à Internet (sinon personne
+ne saura lui répondre), et **apprendre les routes** d'Internet pour savoir par quel opérateur sortir.
+
+## Une session BGP
+
+Contrairement à OSPF, BGP ne découvre pas ses voisins : chaque voisin (on dit **pair**, ou *peer*)
+est **configuré explicitement**, avec son adresse et son numéro d'AS. Les deux routeurs ouvrent une
+connexion **TCP sur le port 179**, et tout l'échange passe par elle. TCP garantit la livraison :
+BGP n'a pas besoin de répéter ses annonces, il n'envoie que les **changements**.
+
+La session passe par plusieurs états :
+
+<PacketFormat
+  cols={6}
+  rows={[
+    { fields: [
+      { label: 'Idle', sub: 'rien' },
+      { label: 'Connect', sub: 'ouverture TCP', tone: 'amber' },
+      { label: 'Active', sub: 'TCP en échec, on réessaie', tone: 'rose' },
+      { label: 'OpenSent', sub: 'OPEN envoyé', tone: 'amber' },
+      { label: 'OpenConfirm', sub: 'OPEN reçu et accepté', tone: 'amber' },
+      { label: 'Established', sub: 'échange des routes', tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Les états d'une session BGP. Seul Established permet d'échanger des routes."
+/>
+
+<Callout type="field">
+Une session qui reste en **Active** ne veut pas dire « active » : TCP n'arrive pas à s'établir.
+Les causes classiques : mauvaise adresse du voisin, pas de route vers lui, port 179 filtré, ou
+numéro d'AS différent de celui attendu par l'autre côté (la session tombe alors juste après l'OPEN,
+avec un message d'erreur explicite dans les logs).
+</Callout>
+
+Quatre types de messages circulent dans la session :
+
+| Message | Rôle |
+|---|---|
+| **OPEN** | se présenter : numéro d'AS, router ID, temporisateur, capacités (IPv6, EVPN…) |
+| **UPDATE** | annoncer de nouvelles routes avec leurs attributs, ou en retirer |
+| **KEEPALIVE** | « je suis toujours là », toutes les **60 s** ; sans nouvelles pendant **180 s** (hold time), la session tombe |
+| **NOTIFICATION** | signaler une erreur, juste avant de fermer la session |
+
+## eBGP et iBGP
+
+- **eBGP** (<Term id="ebgp" />) : une session entre deux AS **différents**, ici CE1 et chaque opérateur.
+  Les pairs sont en général directement connectés.
+- **iBGP** (<Term id="ibgp" />) : une session entre deux routeurs du **même** AS, par exemple deux
+  routeurs de bordure de l'entreprise, pour partager ce que chacun a appris de ses opérateurs.
+
+<Topology
+  width={760}
+  height={260}
+  groups={[{ x: 16, y: 16, w: 330, h: 228, label: 'AS 65010', tone: 'emerald' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 200, y: 70, label: 'CE1', tone: 'emerald' },
+    { id: 'ce2', type: 'router', x: 200, y: 190, label: 'CE2', tone: 'emerald' },
+    { id: 'ispa', type: 'cloud', x: 540, y: 70, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'cloud', x: 540, y: 190, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ce2', label: 'iBGP', tone: 'emerald', style: 'dashed' },
+    { from: 'ce1', to: 'ispa', label: 'eBGP' },
+    { from: 'ce2', to: 'ispb', label: 'eBGP' },
+  ]}
+  caption="Avec deux routeurs de bordure, chacun parle eBGP à son opérateur, et iBGP à l'autre pour partager ce qu'il a appris."
+/>
+
+Les deux types ne se comportent pas pareil :
+
+| | eBGP | iBGP |
+|---|---|---|
+| Distance administrative (Cisco) | 20 | 200 |
+| AS_PATH | on y ajoute son propre AS en annonçant | inchangé |
+| Next hop | remplacé par sa propre adresse | **conservé** (d'où `next-hop-self`) |
+| Retransmission | une route eBGP est annoncée à tous les pairs | une route apprise en iBGP n'est **pas** réannoncée à un autre pair iBGP |
+
+La dernière règle évite les boucles à l'intérieur d'un AS, mais impose que tous les routeurs iBGP
+soient reliés entre eux (full mesh) ou passent par des **route reflectors**. On y reviendra dans la
+formation data center, où c'est la base des fabrics EVPN.
+
+## Annoncer un préfixe
+
+BGP n'annonce **que ce qu'on lui demande**. La méthode la plus propre est l'instruction `network`,
+qui annonce un préfixe **s'il est présent à l'identique dans la table de routage** :
+
+- ici, `198.51.100.0/24` est le réseau connecté de l'interface LAN de CE1 : il est dans la table ;
+- si le préfixe annoncé est plus large que les réseaux réels (un `/22` découpé en `/24` internes),
+  on ajoute une route statique vers `Null0` pour qu'il existe dans la table.
+
+```text title="Arista EOS : annonce d'un agrégat"
+ip route 198.51.100.0/22 Null0
+!
+router bgp 65010
+   network 198.51.100.0/22
+```
+
+<Callout type="warning">
+On n'annonce sur Internet **que des préfixes qui nous appartiennent** (attribués par un registre ou
+par l'opérateur). Annoncer le préfixe de quelqu'un d'autre, même par erreur, peut détourner son
+trafic : c'est un détournement BGP (*hijacking*), et il y en a régulièrement dans l'actualité.
+</Callout>
+
+## L'AS_PATH et la prévention des boucles
+
+Chaque fois qu'une route passe d'un AS à un autre en eBGP, l'AS qui l'annonce **ajoute son numéro
+en tête** de l'attribut **AS_PATH**. Quand le préfixe de l'entreprise arrive chez Internet, il
+porte donc la liste complète des AS traversés :
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 90, y: 100, label: 'CE1', sub: 'AS 65010', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 380, y: 100, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'inet', type: 'router', x: 670, y: 100, label: 'inet', sub: 'AS 65300', tone: 'violet' },
+  ]}
+  links={[{ from: 'ce1', to: 'ispa' }, { from: 'ispa', to: 'inet' }]}
+  flows={[
+    { from: 'ce1', to: 'ispa', label: '198.51.100.0/24 · AS_PATH : 65010', tone: 'emerald', offset: -20 },
+    { from: 'ispa', to: 'inet', label: 'AS_PATH : 65100 65010', tone: 'emerald', offset: -20 },
+  ]}
+  caption="Chaque AS ajoute son numéro en tête de l'AS_PATH. On lit le chemin de droite (l'origine) à gauche (le dernier AS traversé)."
+/>
+
+Cette liste sert à deux choses :
+
+1. **éviter les boucles** : un routeur qui reçoit une route dont l'AS_PATH contient **déjà son propre
+   numéro d'AS** la rejette. Une route ne peut donc jamais revenir dans l'AS qui l'a émise ;
+2. **choisir** : à défaut d'autre critère, BGP préfère le chemin qui traverse **le moins d'AS**.
+   Le chapitre suivant détaille tous les critères.
+
+## Configuration
+
+Sur CE1, on déclare les deux opérateurs et on annonce le préfixe de l'entreprise :
+
+```text title="CE1 · Arista EOS"
+router bgp 65010
+   router-id 10.255.0.10
+   neighbor 192.0.2.0 remote-as 65100
+   neighbor 192.0.2.0 description ISP-A
+   neighbor 192.0.2.2 remote-as 65200
+   neighbor 192.0.2.2 description ISP-B
+   network 198.51.100.0/24
+   !
+   address-family ipv4
+      neighbor 192.0.2.0 activate
+      neighbor 192.0.2.2 activate
+```
+
+```text title="CE1 · Cisco IOS"
+router bgp 65010
+ bgp router-id 10.255.0.10
+ neighbor 192.0.2.0 remote-as 65100
+ neighbor 192.0.2.0 description ISP-A
+ neighbor 192.0.2.2 remote-as 65200
+ neighbor 192.0.2.2 description ISP-B
+ !
+ address-family ipv4
+  network 198.51.100.0 mask 255.255.255.0
+  neighbor 192.0.2.0 activate
+  neighbor 192.0.2.2 activate
+```
+
+<Callout type="warning">
+Cette configuration minimale **fonctionne mais n'est pas sûre** : CE1 accepte tout ce que lui
+envoient les opérateurs, et réannonce à chacun ce qu'il apprend de l'autre. Le chapitre 5 ajoute les
+filtres indispensables avant toute mise en production.
+</Callout>
+
+## Vérifier
+
+```text title="CE1#show ip bgp summary"
+BGP summary information for VRF default
+Router identifier 10.255.0.10, local AS number 65010
+  Description  Neighbor    V AS     MsgRcvd MsgSent InQ OutQ  Up/Down State   PfxRcd PfxAcc
+  ISP-A        192.0.2.0   4 65100       12      14   0    0 00:05:12 Estab   1      1
+  ISP-B        192.0.2.2   4 65200       11      13   0    0 00:04:58 Estab   1      1
+```
+
+Les deux sessions sont **Established**, et chaque opérateur envoie un préfixe : la route vers Internet.
+Le préfixe de l'entreprise ne revient pas : il contiendrait l'AS 65010 dans son AS_PATH.
+
+```text title="CE1#show ip bgp"
+          Network                Next Hop         Metric  LocPref Weight  Path
+ * >      198.51.100.0/24        -                -       -       0       i
+ * >      203.0.113.0/24         192.0.2.0        0       100     0       65100 65300 i
+ *        203.0.113.0/24         192.0.2.2        0       100     0       65200 65300 i
+```
+
+- `*` : la route est **valide** (son next hop est joignable) ; `>` : c'est la **meilleure**, celle
+  installée dans la table de routage.
+- Internet (`203.0.113.0/24`) est connu par les deux opérateurs, avec un AS_PATH de même longueur.
+  BGP a retenu ISP-A grâce à un critère de départage ; le chapitre suivant explique lequel, et comment
+  choisir soi-même.
+- Le `i` final est l'attribut **ORIGIN** : le préfixe a été injecté avec `network`.
+
+## Le lab
+
+Les opérateurs et « Internet » sont déjà configurés. Seul **CE1** est à faire :
+
+1. Déployez le lab. Sur `host1`, `ping 203.0.113.1` échoue.
+2. Sur CE1, configurez les deux sessions eBGP **sans** l'instruction `network`. Vérifiez qu'elles
+   passent en Established et que vous recevez `203.0.113.0/24`.
+3. Le ping échoue toujours : l'aller part bien, mais Internet ne connaît pas `198.51.100.0/24`,
+   la réponse n'a pas de chemin de retour. Ajoutez `network 198.51.100.0/24` : le ping passe.
+4. Sur `inet`, regardez `show ip bgp 198.51.100.0/24` : quels AS_PATH voyez-vous ?
+5. Essayez d'annoncer un préfixe qui n'est pas à vous (`network 10.99.0.0/16` avec une route vers
+   Null0). Les opérateurs l'acceptent-ils ? Pourquoi ? Regardez leur configuration.
+
+<Lab name="bgp-basic" lang="fr" />
+
+<Callout type="tip" title="Solution">
+La configuration CE1 de la section « Configuration » suffit. À l'étape 5, les opérateurs n'acceptent
+de CE1 que `198.51.100.0/24` (un filtre par prefix-list à l'entrée de leur session) : c'est exactement
+ce que font les vrais opérateurs avec leurs clients.
+</Callout>
+
+## À retenir
+
+- Un **AS** est un réseau à politique unique ; les ASN **64 512 à 65 534** sont privés.
+- BGP échange les routes sur une session **TCP 179** entre pairs **configurés explicitement** ;
+  seule une session **Established** échange des routes.
+- **eBGP** entre AS différents, **iBGP** dans un même AS (next hop conservé, pas de réannonce iBGP→iBGP).
+- On n'annonce que ce qu'on demande avec `network`, à condition que le préfixe soit **dans la table de routage**.
+- L'**AS_PATH** liste les AS traversés : il empêche les boucles et sert de critère de choix.
+
+Prochain chapitre : comment BGP choisit entre plusieurs chemins, et comment **décider soi-même**
+par quel opérateur entrer et sortir.

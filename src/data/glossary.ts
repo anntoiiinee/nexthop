@@ -16,6 +16,14 @@ export const glossary = {
       en: 'Protocol that finds the MAC address matching an IPv4 address on the local network, using a broadcast request.',
     },
   },
+  as: {
+    term: 'AS',
+    expansion: 'Autonomous System',
+    definition: {
+      fr: "Système autonome : ensemble de réseaux géré par une même organisation, avec une politique de routage commune, identifié par un numéro (ASN).",
+      en: "Autonomous system: a set of networks run by one organization with a common routing policy, identified by a number (ASN).",
+    },
+  },
   bgp: {
     term: 'BGP',
     expansion: 'Border Gateway Protocol',
@@ -56,6 +64,14 @@ export const glossary = {
       en: "Protocol that automatically assigns hosts their IP address, mask, gateway and DNS servers.",
     },
   },
+  ebgp: {
+    term: 'eBGP',
+    expansion: 'External BGP',
+    definition: {
+      fr: "Session BGP entre deux systèmes autonomes différents, par exemple entre une entreprise et son opérateur.",
+      en: "BGP session between two different autonomous systems, for example between a company and its ISP.",
+    },
+  },
   evpn: {
     term: 'EVPN',
     expansion: 'Ethernet VPN',
@@ -72,12 +88,36 @@ export const glossary = {
       en: "The last 4 bytes of an Ethernet frame: a check code (CRC-32) used to detect a frame damaged in transit.",
     },
   },
+  fib: {
+    term: 'FIB',
+    expansion: 'Forwarding Information Base',
+    definition: {
+      fr: "Table de transfert : la copie des meilleures routes programmée dans le matériel du routeur, utilisée pour chaque paquet.",
+      en: "Forwarding table: the copy of the best routes programmed into the router hardware, used for every packet.",
+    },
+  },
+  ibgp: {
+    term: 'iBGP',
+    expansion: 'Internal BGP',
+    definition: {
+      fr: "Session BGP entre deux routeurs d'un même système autonome, pour partager les routes apprises de l'extérieur.",
+      en: "BGP session between two routers of the same autonomous system, to share routes learned from outside.",
+    },
+  },
   icmp: {
     term: 'ICMP',
     expansion: 'Internet Control Message Protocol',
     definition: {
       fr: "Protocole de messages de contrôle et d'erreur d'IP. C'est lui qu'utilisent ping (echo request / echo reply) et traceroute.",
       en: "IP's control and error message protocol. It is what ping (echo request / echo reply) and traceroute rely on.",
+    },
+  },
+  igp: {
+    term: 'IGP',
+    expansion: 'Interior Gateway Protocol',
+    definition: {
+      fr: "Protocole de routage utilisé à l'intérieur d'un système autonome, comme OSPF ou IS-IS.",
+      en: "Routing protocol used inside an autonomous system, such as OSPF or IS-IS.",
     },
   },
   lan: {
@@ -96,12 +136,28 @@ export const glossary = {
       en: "Standard protocol (IEEE 802.1AB) through which a device advertises its identity to its direct neighbors: what is plugged into which port.",
     },
   },
+  lsa: {
+    term: 'LSA',
+    expansion: 'Link State Advertisement',
+    definition: {
+      fr: "Message OSPF par lequel un routeur décrit ses liens. L'ensemble des LSA forme la base topologique (LSDB), identique sur tous les routeurs d'une zone.",
+      en: "OSPF message in which a router describes its links. All LSAs together form the topology database (LSDB), identical on every router of an area.",
+    },
+  },
   mac: {
     term: 'MAC',
     expansion: 'Media Access Control',
     definition: {
       fr: "Adresse physique de 48 bits gravée dans chaque carte réseau, notée par exemple 00:1c:73:aa:bb:cc. Elle sert à livrer les trames sur le réseau local.",
       en: "48-bit physical address burned into each network card, written for example 00:1c:73:aa:bb:cc. It is used to deliver frames on the local network.",
+    },
+  },
+  med: {
+    term: 'MED',
+    expansion: 'Multi-Exit Discriminator',
+    definition: {
+      fr: "Attribut BGP qui suggère à un AS voisin, relié par plusieurs liens, lequel utiliser pour nous joindre. Le plus bas est préféré.",
+      en: "BGP attribute suggesting to a neighbor AS connected over several links which one to use to reach us. Lower is preferred.",
     },
   },
   mtu: {
@@ -120,6 +176,14 @@ export const glossary = {
       en: 'IP address translation performed by a router or firewall. It notably lets hosts with private addresses reach the Internet behind a public address.',
     },
   },
+  ospf: {
+    term: 'OSPF',
+    expansion: 'Open Shortest Path First',
+    definition: {
+      fr: "Protocole de routage à état de liens : chaque routeur connaît la carte complète de sa zone et calcule le plus court chemin (Dijkstra).",
+      en: "Link-state routing protocol: each router knows the full map of its area and computes the shortest path (Dijkstra).",
+    },
+  },
   oui: {
     term: 'OUI',
     expansion: 'Organizationally Unique Identifier',
@@ -134,6 +198,22 @@ export const glossary = {
     definition: {
       fr: "Le nom de l'unité de données à chaque couche : bit (couche 1), trame (2), paquet (3), segment ou datagramme (4).",
       en: "The name of the data unit at each layer: bit (layer 1), frame (2), packet (3), segment or datagram (4).",
+    },
+  },
+  rib: {
+    term: 'RIB',
+    expansion: 'Routing Information Base',
+    definition: {
+      fr: "Table de routage du plan de contrôle : toutes les routes connues, d'où le routeur extrait la meilleure pour chaque destination.",
+      en: "Control plane routing table: every known route, from which the router picks the best one for each destination.",
+    },
+  },
+  rpki: {
+    term: 'RPKI',
+    expansion: 'Resource Public Key Infrastructure',
+    definition: {
+      fr: "Infrastructure qui permet de vérifier cryptographiquement qu'un AS a le droit d'annoncer un préfixe (via des ROA).",
+      en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
     },
   },
   stp: {

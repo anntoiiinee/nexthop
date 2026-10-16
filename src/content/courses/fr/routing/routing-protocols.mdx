@@ -1,0 +1,237 @@
+---
+title: "Pourquoi le routage dynamique"
+description: "Les limites du routage statique, les familles de protocoles (vecteur de distance, état de liens, vecteur de chemin), IGP et EGP, métriques, plan de contrôle et convergence."
+pubDate: 2026-10-17
+level: intermediate
+tags: [routing, igp, egp]
+order: 1
+---
+
+Le routage statique a deux défauts majeurs : il faut **tout écrire à la main**, et il **ne réagit
+pas aux pannes**. Un protocole de routage dynamique règle les deux : les routeurs s'échangent ce
+qu'ils savent, construisent leur table eux-mêmes et la recalculent quand le réseau change.
+
+## Le problème du statique
+
+Reprenons un anneau de quatre routeurs. En statique, R1 a une route vers le siège via R2. Si le
+lien R1-R2 tombe, la route reste dans la table… et le trafic part dans le vide, alors qu'un autre
+chemin existe par R4.
+
+<Topology
+  width={720}
+  height={280}
+  nodes={[
+    { id: 'r1', type: 'router', x: 110, y: 80, label: 'R1', sub: 'agence A' },
+    { id: 'r2', type: 'router', x: 380, y: 80, label: 'R2' },
+    { id: 'r3', type: 'router', x: 380, y: 220, label: 'R3', sub: 'siège' },
+    { id: 'r4', type: 'router', x: 110, y: 220, label: 'R4' },
+    { id: 'srv', type: 'server', x: 600, y: 214, label: 'Siège', sub: '172.16.20.0/24', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: 'panne', style: 'dashed', tone: 'rose' },
+    { from: 'r2', to: 'r3' }, { from: 'r3', to: 'r4' }, { from: 'r4', to: 'r1' }, { from: 'r3', to: 'srv' },
+  ]}
+  flows={[
+    { from: 'r1', to: 'r4', label: 'chemin de secours ignoré', tone: 'slate', offset: -16 },
+  ]}
+  notes={[{ x: 245, y: 30, text: 'route statique vers R2 : le trafic est perdu', tone: 'rose' }]}
+  caption="La route statique pointe toujours vers R2 : sans protocole dynamique, R1 ne découvre pas le chemin par R4."
+/>
+
+On pourrait ajouter des routes flottantes partout, mais le nombre de combinaisons explose avec la
+taille du réseau. Un protocole dynamique, lui, recalcule tout automatiquement en quelques secondes.
+
+## Ce que fait un protocole de routage
+
+Quel que soit le protocole, on retrouve les mêmes étapes :
+
+1. **Découvrir ses voisins** : les routeurs directement connectés qui parlent le même protocole.
+2. **Échanger des informations** : les réseaux connus, et à quel « prix ».
+3. **Calculer le meilleur chemin** vers chaque réseau.
+4. **Installer** ces routes dans la table de routage.
+5. **Surveiller** : si un voisin disparaît ou qu'un lien change, recommencer le calcul.
+
+## Plan de contrôle et plan de données
+
+Un routeur fait deux métiers très différents, qu'on sépare clairement :
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Contrôle', fields: [
+      { label: 'Protocoles', sub: 'OSPF · BGP · statique', span: 4, tone: 'violet' },
+      { label: 'RIB', sub: 'table de routage : toutes les routes connues', span: 4, tone: 'sky' },
+      { label: 'Meilleures routes', sub: 'une par destination', span: 4, tone: 'sky' },
+    ] },
+    { label: 'Données', fields: [
+      { label: 'FIB', sub: 'table de transfert, dans le matériel', span: 4, start: 9, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="Le plan de contrôle calcule (lentement, par le processeur), le plan de données transfère (très vite, par des puces dédiées)."
+/>
+
+- Le **plan de contrôle** : les protocoles, les calculs, la <Term id="rib" />. Il tourne sur le
+  processeur du routeur et prend son temps.
+- Le **plan de données** : le transfert de chaque paquet, à partir de la <Term id="fib" />, une copie
+  des meilleures routes programmée dans des puces spécialisées. Il traite des milliards de paquets
+  par seconde.
+
+<Callout type="tip">
+Cette séparation explique beaucoup de choses : un routeur dont le processeur sature peut continuer
+à transférer le trafic, et une route visible dans `show ip route` mais absente du matériel est un
+vrai cas de panne (on parle de RIB et de FIB désynchronisées).
+</Callout>
+
+## IGP et EGP
+
+On classe d'abord les protocoles selon **où** ils sont utilisés :
+
+- un **IGP** (<Term id="igp" />) fonctionne **à l'intérieur** d'une organisation, dans un même
+  **système autonome** (<Term id="as" />). Objectif : trouver le chemin le plus rapide, converger vite.
+  Exemples : OSPF, IS-IS, (EIGRP, RIP).
+- un **EGP** fonctionne **entre** organisations. Objectif : appliquer des **politiques** (qui peut
+  passer par chez qui, à quel prix commercial), à l'échelle d'Internet. Il n'en reste qu'un : **BGP**.
+
+<Topology
+  width={720}
+  height={240}
+  groups={[
+    { x: 16, y: 30, w: 300, h: 190, label: 'AS 65010 · entreprise', tone: 'sky' },
+    { x: 404, y: 30, w: 300, h: 190, label: 'AS 65100 · opérateur', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'a1', type: 'router', x: 80, y: 120, label: 'R1' },
+    { id: 'a2', type: 'router', x: 250, y: 120, label: 'CE1' },
+    { id: 'b1', type: 'router', x: 470, y: 120, label: 'PE1', tone: 'violet' },
+    { id: 'b2', type: 'router', x: 640, y: 120, label: 'P1', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'a1', to: 'a2', label: 'IGP (OSPF)', tone: 'sky' },
+    { from: 'a2', to: 'b1', label: 'EGP (BGP)', tone: 'emerald', style: 'trunk' },
+    { from: 'b1', to: 'b2', label: 'IGP (IS-IS)', tone: 'violet' },
+  ]}
+  caption="Chaque organisation choisit son IGP en interne. Entre organisations, tout le monde parle BGP."
+/>
+
+## Trois familles de protocoles
+
+### Le vecteur de distance : « le routage par la rumeur »
+
+Chaque routeur envoie à ses voisins **sa table de routage** : « je connais tel réseau, à telle
+distance ». Le voisin ajoute 1 et transmet à son tour. Personne n'a de vue d'ensemble : on croit
+ce que disent les voisins. C'est le principe de **RIP**.
+
+<Topology
+  width={720}
+  height={180}
+  nodes={[
+    { id: 'net', type: 'server', x: 60, y: 80, label: '10.1.0.0/16', tone: 'violet' },
+    { id: 'a', type: 'router', x: 220, y: 86, label: 'RA' },
+    { id: 'b', type: 'router', x: 420, y: 86, label: 'RB' },
+    { id: 'c', type: 'router', x: 620, y: 86, label: 'RC' },
+  ]}
+  links={[{ from: 'net', to: 'a' }, { from: 'a', to: 'b' }, { from: 'b', to: 'c' }]}
+  flows={[
+    { from: 'a', to: 'b', label: '« 10.1/16 à 1 saut »', tone: 'sky', offset: -18 },
+    { from: 'b', to: 'c', label: '« 10.1/16 à 2 sauts »', tone: 'sky', offset: -18 },
+  ]}
+  caption="Chaque routeur répète ce qu'il a entendu en ajoutant sa propre distance. Simple, mais lent à réagir et sujet aux boucles."
+/>
+
+Simple, mais **lent** : une mauvaise nouvelle se propage de voisin en voisin, et des boucles
+temporaires peuvent apparaître. RIP a quasiment disparu des réseaux d'entreprise.
+
+### L'état de liens : chacun a la carte complète
+
+Chaque routeur décrit **ses propres liens** (« je suis R1, je suis relié à R2 avec un coût de 10 »)
+et diffuse cette description **à tous les routeurs** de la zone. Chacun obtient ainsi la **carte
+complète** du réseau, identique partout, et calcule lui-même le plus court chemin avec l'algorithme
+de **Dijkstra** (SPF, *Shortest Path First*). C'est le principe d'**OSPF** et d'**IS-IS**.
+
+<Topology
+  width={720}
+  height={290}
+  nodes={[
+    { id: 'r1', type: 'router', x: 120, y: 80, label: 'R1', tone: 'emerald' },
+    { id: 'r2', type: 'router', x: 360, y: 80, label: 'R2' },
+    { id: 'r3', type: 'router', x: 600, y: 80, label: 'R3' },
+    { id: 'r4', type: 'router', x: 120, y: 230, label: 'R4' },
+    { id: 'r5', type: 'router', x: 360, y: 230, label: 'R5' },
+    { id: 'r6', type: 'router', x: 600, y: 230, label: 'R6', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: '10', tone: 'emerald' },
+    { from: 'r2', to: 'r3', label: '10' },
+    { from: 'r1', to: 'r4', label: '10' },
+    { from: 'r2', to: 'r5', label: '10', tone: 'emerald' },
+    { from: 'r3', to: 'r6', label: '50' },
+    { from: 'r4', to: 'r5', label: '30' },
+    { from: 'r5', to: 'r6', label: '10', tone: 'emerald' },
+  ]}
+  caption="R1 connaît tous les liens et leur coût. Vers R6, il calcule : par R2, R3 = 70 ; par R4, R5 = 50 ; par R2, R5 = 30. Le chemin vert gagne."
+/>
+
+Plus de calcul pour chaque routeur, mais une convergence **rapide** et **sans boucle**, puisque tout
+le monde travaille sur la même carte. C'est la famille des IGP modernes.
+
+### Le vecteur de chemin : BGP
+
+**BGP** ressemble au vecteur de distance (on annonce des réseaux à ses voisins), mais au lieu d'une
+simple distance, chaque route transporte **la liste des AS traversés** (l'AS_PATH) et de nombreux
+autres attributs. Cette liste permet d'éviter les boucles (un AS rejette une route qui contient déjà
+son numéro) et d'appliquer des **politiques** très fines. On y consacre les chapitres 3 à 5.
+
+| Famille | Principe | Protocoles | Où |
+|---|---|---|---|
+| Vecteur de distance | on transmet sa table aux voisins | RIP, (EIGRP) | historique |
+| État de liens | chacun a la carte complète et calcule | **OSPF**, **IS-IS** | réseaux internes, opérateurs, data centers |
+| Vecteur de chemin | on transmet des routes avec la liste des AS | **BGP** | Internet, interconnexions, fabrics EVPN |
+
+## La métrique
+
+Pour départager plusieurs chemins vers une même destination **au sein d'un protocole**, chacun
+utilise sa **métrique** :
+
+- RIP compte les **sauts**, sans tenir compte du débit : il préférera 2 sauts en 10 Mb/s à 3 sauts
+  en 10 Gb/s ;
+- OSPF utilise un **coût** lié au débit des liens : plus le lien est rapide, moins il coûte ;
+- BGP n'a pas de métrique unique, mais une **liste d'attributs** comparés dans un ordre précis.
+
+Et entre **deux protocoles différents** qui proposent la même destination ? C'est la **distance
+administrative**, vue au chapitre sur le routage statique, qui tranche : à préfixe égal, la source
+la plus fiable gagne (statique 1, eBGP 20, OSPF 110 chez Cisco). La règle du **plus long préfixe**
+reste prioritaire sur tout le reste.
+
+<Callout type="warning">
+On ne compare jamais une métrique OSPF à une métrique BGP : elles n'ont rien en commun. L'ordre de
+décision complet est : 1) le plus long préfixe, 2) la plus petite distance administrative,
+3) la meilleure métrique, à l'intérieur du protocole retenu.
+</Callout>
+
+## La convergence
+
+La **convergence**, c'est le temps entre un changement (un lien qui tombe) et le moment où **tous**
+les routeurs ont une table cohérente. Pendant ce temps, du trafic peut être perdu. Elle se décompose en :
+
+1. **détecter** la panne : immédiat si le lien physique tombe, plusieurs secondes si on attend que
+   le voisin ne réponde plus (d'où l'intérêt de **BFD**, qui détecte une panne en moins d'une seconde) ;
+2. **propager** l'information aux autres routeurs ;
+3. **recalculer** les meilleurs chemins ;
+4. **mettre à jour** la FIB dans le matériel.
+
+<Callout type="field">
+En production, on règle rarement les temporisateurs des protocoles eux-mêmes. On active plutôt
+**BFD** sur les liens importants : la détection passe de 40 secondes (temps mort OSPF par défaut)
+à quelques centaines de millisecondes, et tout le reste suit.
+</Callout>
+
+## À retenir
+
+- Le routage dynamique **découvre** les voisins, **échange** les routes, **calcule** et **réagit** aux pannes.
+- **IGP** à l'intérieur d'un AS (OSPF, IS-IS), **EGP** entre AS (BGP).
+- **État de liens** : chaque routeur a la carte complète et calcule le plus court chemin (Dijkstra).
+- Ordre de décision : **plus long préfixe**, puis **distance administrative**, puis **métrique**.
+- **Plan de contrôle** (RIB, calcul) et **plan de données** (FIB, transfert) sont séparés.
+
+Place à la pratique avec le premier protocole à état de liens : **OSPF**.

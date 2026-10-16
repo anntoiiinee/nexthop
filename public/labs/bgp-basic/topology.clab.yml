@@ -1,0 +1,42 @@
+name: bgp-basic
+
+# Lab des chapitres BGP (formation Routage dynamique).
+# ce1 (AS 65010, l'entreprise) est raccordé à deux opérateurs (AS 65100 et 65200),
+# eux-mêmes reliés à « Internet » (AS 65300) qui annonce 203.0.113.0/24.
+# Les opérateurs et Internet sont configurés ; ce1 n'a que ses interfaces : c'est l'exercice.
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+  nodes:
+    inet:
+      kind: arista_ceos
+      startup-config: configs/inet.cfg
+      labels: { graph-level: 1 }
+    isp-a:
+      kind: arista_ceos
+      startup-config: configs/isp-a.cfg
+      labels: { graph-level: 2 }
+    isp-b:
+      kind: arista_ceos
+      startup-config: configs/isp-b.cfg
+      labels: { graph-level: 2 }
+    ce1:
+      kind: arista_ceos
+      startup-config: configs/ce1.cfg
+      labels: { graph-level: 3 }
+    host1:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 4 }
+      exec:
+        - ip addr add 198.51.100.10/24 dev eth1
+        - ip route replace default via 198.51.100.1
+
+  links:
+    - endpoints: ["ce1:eth1", "isp-a:eth1"]
+    - endpoints: ["ce1:eth2", "isp-b:eth1"]
+    - endpoints: ["isp-a:eth2", "inet:eth1"]
+    - endpoints: ["isp-b:eth2", "inet:eth2"]
+    - endpoints: ["host1:eth1", "ce1:eth3"]

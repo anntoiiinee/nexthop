@@ -81,7 +81,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -200,7 +200,8 @@ Mise en route (une seule fois) :
 - [ ] Images Open Graph propres à chaque article (générées au build)
 - [ ] Traduction anglaise de la formation Fondamentaux
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
-- [ ] Formation suivante : le routage dynamique (OSPF, BGP)
+- [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
+- [ ] Formation suivante : le data center (VRF, spine/leaf, VXLAN, EVPN)
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 
 ---

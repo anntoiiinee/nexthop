@@ -31,6 +31,7 @@ export const roadmap: RoadmapStep[] = [
     title: { fr: 'Le routage dynamique', en: 'Dynamic routing' },
     text: { fr: 'Comment les routeurs apprennent le réseau tout seuls.', en: 'How routers learn the network on their own.' },
     chapters: [
+      { slug: 'routing-protocols', title: { fr: 'Pourquoi le routage dynamique', en: 'Why dynamic routing' } },
       { slug: 'ospf', title: { fr: 'Les bases d’OSPF', en: 'OSPF basics' } },
       { slug: 'bgp-basics', title: { fr: 'Les bases de BGP', en: 'BGP basics' } },
       { slug: 'bgp-attributes', title: { fr: 'Attributs et meilleur chemin', en: 'Attributes and best path' } },
