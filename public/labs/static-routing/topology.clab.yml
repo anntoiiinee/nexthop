@@ -1,0 +1,42 @@
+name: static-routing
+
+# Lab du chapitre « Le routage statique » (formation Fondamentaux).
+# Les routeurs démarrent SANS route statique : c'est l'exercice.
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+  nodes:
+    r1:
+      kind: arista_ceos
+      startup-config: configs/r1.cfg
+      labels: { graph-level: 1 }
+    r2:
+      kind: arista_ceos
+      startup-config: configs/r2.cfg
+      labels: { graph-level: 1 }
+    r3:
+      kind: arista_ceos
+      startup-config: configs/r3.cfg
+      labels: { graph-level: 1 }
+    pc1:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 2 }
+      exec:
+        - ip addr add 192.168.10.10/26 dev eth1
+        - ip route replace default via 192.168.10.1
+    appli:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 2 }
+      exec:
+        - ip addr add 172.16.20.10/24 dev eth1
+        - ip route replace default via 172.16.20.1
+
+  links:
+    - endpoints: ["pc1:eth1", "r1:eth1"]
+    - endpoints: ["r1:eth2", "r2:eth1"]
+    - endpoints: ["r2:eth2", "r3:eth1"]
+    - endpoints: ["r3:eth2", "appli:eth1"]

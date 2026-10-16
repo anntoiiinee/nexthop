@@ -1,18 +1,162 @@
 ---
 title: "Le modèle OSI"
-description: "Les 7 couches, et pourquoi on en parle encore tous les jours."
+description: "Les 7 couches, l'encapsulation, et pourquoi on en parle encore tous les jours pour dépanner un réseau."
 pubDate: 2026-10-15
+updatedDate: 2026-10-17
 level: beginner
-tags: [osi]
+tags: [osi, tcp-ip]
 order: 1
 ---
 
-import OsiModel from '@/components/diagrams/OsiModel.astro';
+Quand un collègue dit « c'est un problème de couche 2 » ou qu'un firewall est vendu comme
+« couche 7 », il fait référence au **modèle OSI**. Ce n'est pas un protocole : c'est une grille
+de lecture qui découpe une communication réseau en 7 étapes, des signaux électriques jusqu'à
+l'application.
 
 ## Pourquoi un modèle en couches ?
 
-Contenu à venir.
+Envoyer un e-mail met en jeu des dizaines de choses : un câble ou du Wi-Fi, des adresses,
+des routeurs, une connexion fiable, un format de message… Les mettre toutes dans un seul
+bloc serait ingérable. Le modèle en couches **sépare les responsabilités** :
+
+- chaque couche rend **un service** à la couche du dessus et s'appuie sur celle du dessous ;
+- chaque couche ne dialogue qu'avec **la même couche** de l'autre machine ;
+- on peut changer une couche sans toucher aux autres : remplacer le cuivre par de la fibre
+  ne change rien pour votre navigateur.
+
+C'est le même principe que la poste : vous écrivez une lettre (le contenu), la mettez dans
+une enveloppe avec une adresse, la poste la trie et la transporte en camion. Le facteur ne lit
+pas votre lettre, et vous ne choisissez pas le camion.
 
 ## Les 7 couches
 
 <OsiModel lang="fr" />
+
+On regroupe souvent les couches en deux familles :
+
+- **les couches basses (1 à 4)** transportent les données : c'est le terrain de l'ingénieur réseau ;
+- **les couches hautes (5 à 7)** concernent l'application et ses données. Dans la pratique, on
+  les fusionne en une seule couche « application », comme le fait le modèle TCP/IP.
+
+| Couche | Elle répond à la question… | Adresse utilisée |
+|---|---|---|
+| 1. Physique | Comment transmettre des 0 et des 1 sur ce support ? | aucune |
+| 2. Liaison | À quelle machine **du réseau local** je livre cette trame ? | adresse <Term id="mac" /> |
+| 3. Réseau | Par où passer pour atteindre **un autre réseau** ? | adresse IP |
+| 4. Transport | À quelle **application** je remets les données, et sont-elles toutes arrivées ? | port (80, 443, 22…) |
+| 7. Application | Que contiennent les données et comment les interpréter ? | nom (URL, e-mail…) |
+
+## L'encapsulation
+
+À l'émission, les données **descendent** les couches. Chaque couche ajoute son propre en-tête
+devant les données reçues de la couche du dessus, sans les modifier : c'est l'**encapsulation**.
+L'unité de données change de nom à chaque étage : c'est la <Term id="pdu" />.
+
+<PacketFormat
+  cols={14}
+  rows={[
+    { label: '7 · Données', fields: [
+      { label: 'Données HTTP', sub: 'GET /index.html', span: 6, start: 8, tone: 'violet' },
+    ] },
+    { label: '4 · Segment', fields: [
+      { label: 'En-tête TCP', sub: 'ports', span: 2, start: 6, tone: 'sky' },
+      { label: 'Données', span: 6, start: 8, tone: 'violet', dashed: true },
+    ] },
+    { label: '3 · Paquet', fields: [
+      { label: 'En-tête IP', sub: 'adresses IP', span: 2, start: 4, tone: 'emerald' },
+      { label: 'TCP', span: 2, start: 6, tone: 'sky', dashed: true },
+      { label: 'Données', span: 6, start: 8, tone: 'violet', dashed: true },
+    ] },
+    { label: '2 · Trame', fields: [
+      { label: 'En-tête Ethernet', sub: 'adresses MAC', span: 3, start: 1, tone: 'amber' },
+      { label: 'IP', span: 2, start: 4, tone: 'emerald', dashed: true },
+      { label: 'TCP', span: 2, start: 6, tone: 'sky', dashed: true },
+      { label: 'Données', span: 5, start: 8, tone: 'violet', dashed: true },
+      { label: 'FCS', sub: 'contrôle', span: 2, start: 13, tone: 'amber' },
+    ] },
+    { label: '1 · Bits', fields: [
+      { label: '0101 1100 0010 1110 1010 0111 0001 …', span: 14, start: 1, tone: 'rose', mono: true },
+    ] },
+  ]}
+  caption="Chaque couche ajoute son en-tête devant les données reçues du dessus. Ethernet ajoute aussi un champ de contrôle (FCS) à la fin."
+/>
+
+À la réception, le chemin inverse se produit : chaque couche lit **son** en-tête, le retire,
+et passe le reste à la couche du dessus. C'est la **désencapsulation**.
+
+<Callout type="tip">
+Retenez surtout ce vocabulaire : on parle de **trame** en couche 2, de **paquet** en couche 3
+et de **segment** en couche 4. Dire « le switch a reçu un paquet » est compris par tout le monde,
+mais « une trame » est plus juste.
+</Callout>
+
+## Qui travaille à quelle couche ?
+
+Un équipement réseau n'a pas besoin d'aller jusqu'à la couche 7 pour faire son travail. Il lit
+juste ce qu'il lui faut pour décider où envoyer les données :
+
+<Topology
+  width={720}
+  height={230}
+  nodes={[
+    { id: 'a', type: 'host', x: 70, y: 90, label: 'PC A', sub: 'couches 1 à 7' },
+    { id: 'sw', type: 'switch', x: 270, y: 90, label: 'Switch', sub: 'couches 1 et 2', tone: 'amber' },
+    { id: 'r', type: 'router', x: 450, y: 90, label: 'Routeur', sub: 'couches 1 à 3', tone: 'emerald' },
+    { id: 'b', type: 'server', x: 650, y: 90, label: 'Serveur web', sub: 'couches 1 à 7' },
+  ]}
+  links={[{ from: 'a', to: 'sw' }, { from: 'sw', to: 'r' }, { from: 'r', to: 'b' }]}
+  notes={[
+    { x: 270, y: 185, text: 'lit l\'adresse MAC', tone: 'amber' },
+    { x: 450, y: 185, text: 'lit l\'adresse IP', tone: 'emerald' },
+    { x: 360, y: 215, text: 'Seules les extrémités lisent les données de l\'application.', tone: 'slate' },
+  ]}
+  caption="Un switch décide avec l'adresse MAC (couche 2), un routeur avec l'adresse IP (couche 3)."
+/>
+
+- un **switch** lit l'en-tête Ethernet et transmet la trame selon l'adresse MAC de destination ;
+- un **routeur** retire l'en-tête Ethernet, lit l'adresse IP, choisit la sortie, puis
+  **reconstruit une nouvelle trame** pour le lien suivant ;
+- un **firewall stateful** regarde jusqu'à la couche 4 (ports, état des connexions), un
+  **firewall nouvelle génération** jusqu'à la couche 7 (application, URL, contenu).
+
+## OSI ou TCP/IP ?
+
+Internet ne fonctionne pas avec « les protocoles OSI » mais avec la pile **TCP/IP**, qui ne
+compte que 4 couches (le schéma plus haut montre la correspondance). Pourtant, tout le monde
+continue à parler en couches OSI, parce que la numérotation est devenue un langage commun :
+
+- « couche 2 » = Ethernet, switches, VLAN, adresses MAC ;
+- « couche 3 » = IP, routage ;
+- « couche 4 » = <Term id="tcp" /> et <Term id="udp" />, ports ;
+- « couche 7 » = l'application (HTTP, DNS…).
+
+## Dépanner couche par couche
+
+Le modèle OSI sert surtout à **dépanner méthodiquement**. Face à « ça ne marche pas », on
+vérifie les couches **de bas en haut** : inutile de chercher une erreur DNS si le câble est
+débranché.
+
+| Couche | Questions à se poser | Commandes utiles |
+|---|---|---|
+| 1. Physique | Le lien est-il up ? Erreurs CRC, optique trop faible ? | `show interfaces status`, `show interfaces counters errors` |
+| 2. Liaison | Le bon VLAN ? L'adresse MAC est-elle apprise ? | `show vlan`, `show mac address-table` |
+| 3. Réseau | La bonne IP, le bon masque, la bonne passerelle ? Une route existe ? | `ping`, `show ip route`, `traceroute` |
+| 4. Transport | Le port est-il ouvert ? Un firewall bloque-t-il ? | `nc -zv serveur 443`, logs du firewall |
+| 7. Application | Le service répond-il correctement ? | `curl -v`, `dig`, logs applicatifs |
+
+<Callout type="field">
+En production, une grande partie des incidents « réseau » se règlent en couche 1 ou 2 : un câble
+abîmé, une optique sale, un port dans le mauvais VLAN. Commencer par le bas fait gagner
+énormément de temps, et évite d'accuser le réseau quand le problème est applicatif.
+</Callout>
+
+## À retenir
+
+- Le modèle OSI découpe une communication en **7 couches**, chacune avec son rôle.
+- À l'émission, chaque couche **ajoute son en-tête** (encapsulation) ; à la réception, elle le retire.
+- Les noms à connaître : **bit, trame, paquet, segment**.
+- Un switch travaille en **couche 2** (MAC), un routeur en **couche 3** (IP).
+- Pour dépanner, on remonte les couches **de bas en haut**.
+
+Dans le prochain chapitre, on zoome sur la couche 2 : **Ethernet**, les adresses MAC et le
+fonctionnement d'un switch.

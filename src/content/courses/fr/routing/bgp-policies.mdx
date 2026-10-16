@@ -1,0 +1,287 @@
+---
+title: "Politiques de routage BGP"
+description: "Ne jamais devenir un transit, filtrer en entrée et en sortie avec prefix-lists, AS-path lists et route-maps, limiter le nombre de routes, utiliser les communautés, et un mot sur RPKI."
+pubDate: 2026-10-17
+level: intermediate
+tags: [bgp, route-map, prefix-list, community, rpki]
+vendor: [arista, cisco]
+order: 5
+---
+
+Une session BGP sans filtre, c'est une porte ouverte dans les deux sens : on peut **annoncer
+n'importe quoi** au monde entier, et **accepter n'importe quoi** de ses voisins. Les plus grosses
+pannes d'Internet viennent presque toutes de là. Une **politique de routage** décide, pour chaque
+voisin, ce qu'on accepte, ce qu'on annonce et avec quels attributs.
+
+## Le piège : devenir un transit
+
+Reprenons la configuration minimale du chapitre 3. CE1 reçoit les routes d'ISP-A… et, comme BGP
+annonce par défaut ses meilleures routes à tous ses pairs eBGP, il les **réannonce à ISP-B**.
+Résultat : l'entreprise se présente comme un chemin possible entre ses deux opérateurs.
+
+<Topology
+  width={760}
+  height={310}
+  groups={[{ x: 30, y: 90, w: 230, h: 120, label: 'AS 65010', tone: 'rose' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 145, y: 150, label: 'CE1', sub: 'entreprise', tone: 'rose' },
+    { id: 'ispa', type: 'router', x: 450, y: 60, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'router', x: 450, y: 240, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'cust', type: 'cloud', x: 670, y: 60, label: 'Clients d\'ISP-A', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ispa' }, { from: 'ce1', to: 'ispb' }, { from: 'ispa', to: 'cust' },
+    { from: 'ispa', to: 'ispb', style: 'dashed', label: 'liens d\'interconnexion' },
+  ]}
+  flows={[
+    { from: 'ispa', to: 'ce1', label: 'routes d\'ISP-A', tone: 'violet', offset: -22 },
+    { from: 'ce1', to: 'ispb', label: 'réannoncées à ISP-B', tone: 'rose', offset: 22 },
+  ]}
+  caption="Sans filtre en sortie, CE1 réannonce à ISP-B ce qu'il apprend d'ISP-A. Si ISP-B préfère ce chemin, le trafic entre les deux opérateurs traverse le petit lien de l'entreprise."
+/>
+
+Si ISP-B retient ce chemin (parce qu'il préfère les routes de ses clients, ce qui est la règle chez
+les opérateurs), une partie du trafic d'Internet passe **par le lien de l'entreprise**, qui sature.
+Ce genre de **fuite de routes** (*route leak*) a déjà coupé des services majeurs pendant des heures.
+
+<Callout type="warning">
+Règle d'or pour une entreprise : **n'annoncer à ses opérateurs que ses propres préfixes**. Tout le
+reste doit être filtré en sortie, sur chaque session, sans exception.
+</Callout>
+
+## Les outils de filtrage
+
+Trois outils, qui se combinent :
+
+| Outil | Ce qu'il compare | Exemple |
+|---|---|---|
+| **Prefix-list** | le préfixe et sa longueur | « 198.51.100.0/24 exactement », « tout ce qui est dans 10.0.0.0/8 » |
+| **AS-path list** | l'AS_PATH, avec une expression régulière | `^$` : routes nées dans mon AS · `^65100_` : reçues directement d'ISP-A |
+| **Route-map** | le chef d'orchestre : des clauses `match` (prefix-list, AS-path, communauté…) et des actions `set` | « si le préfixe est dans PL-X, mettre LOCAL_PREF à 200 » |
+
+### Les prefix-lists
+
+Une prefix-list compare le préfixe **et sa longueur**. Les mots-clés `ge` (supérieur ou égal) et
+`le` (inférieur ou égal) élargissent la correspondance :
+
+| Entrée | Correspond à |
+|---|---|
+| `permit 198.51.100.0/24` | exactement 198.51.100.0/24, pas un /25 à l'intérieur |
+| `permit 10.0.0.0/8 le 32` | 10.0.0.0/8 et tous les sous-réseaux inclus, jusqu'aux /32 |
+| `permit 0.0.0.0/0` | uniquement la route par défaut |
+| `permit 0.0.0.0/0 le 24` | toutes les routes de /0 à /24 (on refuse les plus spécifiques) |
+
+### Les route-maps
+
+Une route-map est une suite de **clauses numérotées**, évaluées dans l'ordre. Chaque clause est un
+`permit` ou un `deny` avec des conditions (`match`) et éventuellement des modifications (`set`) :
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Clause 10', fields: [
+      { label: 'deny', span: 2, tone: 'rose', mono: true },
+      { label: 'match : préfixe dans PL-BOGONS', span: 6 },
+      { label: '→ route rejetée', span: 4, tone: 'rose' },
+    ] },
+    { label: 'Clause 20', fields: [
+      { label: 'permit', span: 2, tone: 'emerald', mono: true },
+      { label: 'match : rien (toutes les autres)', span: 6 },
+      { label: 'set local-preference 200', span: 4, tone: 'emerald', mono: true },
+    ] },
+    { label: 'Fin', fields: [
+      { label: 'deny implicite : tout ce qui n\'a correspondu à aucune clause est rejeté', span: 12, dashed: true },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Une route est comparée clause par clause ; la première qui correspond décide. Sans correspondance, la route est rejetée (deny implicite)."
+/>
+
+<Callout type="tip">
+Le **deny implicite** à la fin d'une route-map est le piège classique : une route-map qui ne contient
+qu'une clause `permit` avec un `match` rejette silencieusement tout le reste. Pour « tout accepter
+en modifiant certaines routes », terminez par une clause `permit` sans `match`.
+</Callout>
+
+## La politique de CE1
+
+### En sortie : uniquement nos préfixes
+
+```text title="CE1 · Arista EOS"
+ip prefix-list PL-NOS-PREFIXES seq 10 permit 198.51.100.0/24
+!
+route-map RM-ISP-A-OUT permit 10
+   match ip address prefix-list PL-NOS-PREFIXES
+!
+route-map RM-ISP-B-OUT permit 10
+   match ip address prefix-list PL-NOS-PREFIXES
+   set as-path prepend 65010 65010
+```
+
+Grâce au deny implicite, tout ce qui n'est pas `198.51.100.0/24` est refusé en sortie : plus de transit.
+Ceinture et bretelles : on peut aussi filtrer sur l'AS_PATH, avec `^$` qui ne correspond qu'aux
+routes **nées dans notre AS** (AS_PATH vide avant l'envoi).
+
+```text title="Arista EOS : filtre par AS-path"
+ip as-path access-list AS-LOCAL permit ^$ any
+```
+
+### En entrée : rien de suspect, et pas trop
+
+En entrée, on refuse ce qu'aucun opérateur ne devrait nous envoyer : **nos propres préfixes** (qui
+reviendraient), les **plages privées** et réservées (les *bogons*), et les préfixes trop spécifiques.
+
+```text title="CE1 · Arista EOS"
+ip prefix-list PL-BOGONS seq 10 permit 10.0.0.0/8 le 32
+ip prefix-list PL-BOGONS seq 20 permit 172.16.0.0/12 le 32
+ip prefix-list PL-BOGONS seq 30 permit 192.168.0.0/16 le 32
+ip prefix-list PL-BOGONS seq 40 permit 100.64.0.0/10 le 32
+ip prefix-list PL-BOGONS seq 50 permit 127.0.0.0/8 le 32
+ip prefix-list PL-BOGONS seq 60 permit 198.51.100.0/24 le 32
+ip prefix-list PL-BOGONS seq 70 permit 0.0.0.0/0 ge 25
+!
+route-map RM-ISP-A-IN deny 10
+   match ip address prefix-list PL-BOGONS
+route-map RM-ISP-A-IN permit 20
+   set local-preference 200
+!
+route-map RM-ISP-B-IN deny 10
+   match ip address prefix-list PL-BOGONS
+route-map RM-ISP-B-IN permit 20
+```
+
+La ligne `0.0.0.0/0 ge 25` attrape tous les préfixes plus longs qu'un /24 : par convention, Internet
+n'accepte pas de routes plus spécifiques. La ligne `198.51.100.0/24 le 32` refuse notre propre préfixe.
+
+### Limiter le nombre de routes
+
+Si un opérateur se met à nous envoyer subitement des centaines de milliers de routes (une erreur de
+sa part), notre routeur peut saturer. On fixe un **plafond** par session :
+
+```text title="CE1 · Arista EOS : la session complète"
+router bgp 65010
+   router-id 10.255.0.10
+   neighbor 192.0.2.0 remote-as 65100
+   neighbor 192.0.2.0 description ISP-A
+   neighbor 192.0.2.0 route-map RM-ISP-A-IN in
+   neighbor 192.0.2.0 route-map RM-ISP-A-OUT out
+   neighbor 192.0.2.0 maximum-routes 1000
+   neighbor 192.0.2.2 remote-as 65200
+   neighbor 192.0.2.2 description ISP-B
+   neighbor 192.0.2.2 route-map RM-ISP-B-IN in
+   neighbor 192.0.2.2 route-map RM-ISP-B-OUT out
+   neighbor 192.0.2.2 maximum-routes 1000
+   network 198.51.100.0/24
+   !
+   address-family ipv4
+      neighbor 192.0.2.0 activate
+      neighbor 192.0.2.2 activate
+```
+
+<Callout type="note">
+Sur Cisco, l'équivalent de `maximum-routes` est `neighbor … maximum-prefix`. Avec la table Internet
+complète (plus d'un million de routes IPv4 et IPv6 aujourd'hui), le plafond se règle bien sûr en
+conséquence ; beaucoup d'entreprises se contentent de recevoir une **route par défaut** de chaque
+opérateur, ce qui suffit à choisir une sortie principale et une de secours.
+</Callout>
+
+## Les communautés
+
+Une **communauté** est une étiquette de 32 bits attachée à une route, écrite `ASN:valeur`, par
+exemple `65010:100`. Elle ne change rien au routage par elle-même : elle sert à **transmettre une
+intention** que les routeurs, chez soi ou chez le voisin, traduisent en action.
+
+| Communauté | Signification |
+|---|---|
+| `no-export` (65535:65281) | ne pas annoncer cette route en dehors de l'AS qui la reçoit |
+| `no-advertise` (65535:65282) | ne l'annoncer à aucun autre pair |
+| `blackhole` (65535:666, RFC 7999) | demander à l'opérateur de jeter le trafic vers ce préfixe (défense contre un DDoS) |
+| Communautés d'un opérateur | définies et publiées par chaque opérateur, par exemple « 65100:80 = mettre ma LOCAL_PREF à 80 » |
+
+Le dernier usage est très puissant : au lieu de bricoler avec le prepending, on demande directement à
+l'opérateur de baisser la préférence de notre route **chez lui**, en marquant nos annonces avec la
+communauté qu'il documente.
+
+```text title="Arista EOS : marquer nos annonces vers ISP-B"
+route-map RM-ISP-B-OUT permit 10
+   match ip address prefix-list PL-NOS-PREFIXES
+   set community 65200:80
+!
+router bgp 65010
+   neighbor 192.0.2.2 send-community
+```
+
+<Callout type="warning">
+Les communautés **ne sont pas envoyées par défaut** sur Arista EOS ni sur Cisco IOS : sans
+`send-community` sur la session, vos étiquettes n'arrivent jamais chez le voisin.
+</Callout>
+
+## Appliquer une modification
+
+BGP n'envoie que les changements : modifier une route-map ne réévalue pas toujours immédiatement les
+routes déjà reçues. Selon les plateformes, on déclenche une **réévaluation douce**, sans couper la session :
+
+```text
+clear ip bgp 192.0.2.0 soft in     ! réévaluer les routes reçues de ce voisin
+clear ip bgp 192.0.2.0 soft out    ! renvoyer nos annonces avec la nouvelle politique
+```
+
+Et toujours vérifier ce qu'on reçoit et ce qu'on envoie réellement :
+
+```text
+show ip bgp neighbors 192.0.2.0 received-routes      ! avant la politique d'entrée (voir ci-dessous)
+show ip bgp neighbors 192.0.2.0 routes               ! après la politique d'entrée
+show ip bgp neighbors 192.0.2.0 advertised-routes    ! ce qu'on annonce réellement
+```
+
+Pour voir les routes **avant** filtrage, le routeur doit les conserver : c'est l'option
+`neighbor … rib-in pre-policy retain` sur Arista EOS, et `neighbor … soft-reconfiguration inbound`
+sur Cisco IOS. Sans elle, `received-routes` peut rester vide.
+
+## RPKI : vérifier qui a le droit d'annoncer
+
+Les filtres protègent de nos propres erreurs, mais comment savoir si un préfixe reçu est annoncé par
+son **véritable propriétaire** ? C'est le rôle de la **RPKI** (<Term id="rpki" />) : chaque titulaire
+publie, signé cryptographiquement, un **ROA** qui dit « tel préfixe peut être annoncé par tel AS ».
+Les routeurs comparent chaque route reçue à ces ROA et rejettent les annonces invalides.
+
+<Callout type="field">
+La validation RPKI et les filtres stricts font partie des bonnes pratiques **MANRS** (Mutually Agreed
+Norms for Routing Security), adoptées par la plupart des grands opérateurs. Pour une entreprise, le
+minimum est de créer les ROA de ses propres préfixes chez son registre : c'est gratuit et ça la protège
+contre les détournements.
+</Callout>
+
+## Le lab
+
+Toujours le lab `bgp-basic`, avec la configuration du chapitre précédent (sans filtre) :
+
+1. Sur `isp-b`, `show ip bgp` : voyez-vous `203.0.113.0/24` **appris par CE1** (AS_PATH `65010 65100 65300`) ?
+   C'est la fuite. (Ici ISP-B le refuse grâce à son propre filtre client : regardez
+   `show ip bgp neighbors 192.0.2.3 received-routes` côté ISP-B pour la voir arriver.)
+2. Appliquez la politique de sortie de CE1 et vérifiez avec `advertised-routes` qu'on n'annonce plus
+   que `198.51.100.0/24`.
+3. Appliquez la politique d'entrée avec la LOCAL_PREF sur ISP-A. Vérifiez `received-routes` contre `routes`.
+4. Ajoutez la communauté `65200:80` vers ISP-B, sans puis avec `send-community`, et regardez ce que reçoit ISP-B
+   (`show ip bgp 198.51.100.0/24` sur isp-b).
+
+<Lab name="bgp-basic" lang="fr" />
+
+<Callout type="tip" title="Solution">
+La configuration complète de CE1 est celle des sections « En sortie », « En entrée » et
+« Limiter le nombre de routes ». N'oubliez pas les `route-map … in` et `… out` sur chaque voisin :
+une route-map définie mais pas appliquée ne fait rien.
+</Callout>
+
+## À retenir
+
+- Une entreprise n'annonce à ses opérateurs **que ses propres préfixes** : sinon, elle devient un **transit**.
+- **Prefix-list** (préfixes), **AS-path list** (chemins), **route-map** (match + set, clauses ordonnées,
+  **deny implicite** à la fin).
+- En entrée : refuser **bogons**, nos propres préfixes, les préfixes plus longs que /24, et **plafonner**
+  le nombre de routes.
+- Les **communautés** transmettent des intentions ; pensez à `send-community`.
+- **RPKI** vérifie qu'un AS a le droit d'annoncer un préfixe : créez les ROA de vos préfixes.
+
+Félicitations, vous avez terminé le routage dynamique ! La suite : la formation **data center**, où
+OSPF et BGP servent de fondation aux fabrics **spine/leaf EVPN-VXLAN**.

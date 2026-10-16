@@ -24,6 +24,7 @@ export const startHere: Record<AudienceKey, StartStep[]> = {
     { kind: 'tool', slug: 'subnet-calculator', label: { fr: 'Jouer avec le calculateur IPv4', en: 'Play with the IPv4 calculator' } },
   ],
   admins: [
+    { kind: 'course', course: 'routing', label: { fr: 'La formation Routage dynamique', en: 'The Dynamic routing course' } },
     { kind: 'tutorial', slug: 'bgp-evpn-route-types', label: { fr: 'Les route types EVPN', en: 'EVPN route types' } },
     { kind: 'course', course: 'datacenter', label: { fr: 'La formation Data center', en: 'The Data center course' } },
     { kind: 'course', course: 'automation', label: { fr: "La formation Automatisation", en: 'The Automation course' } },

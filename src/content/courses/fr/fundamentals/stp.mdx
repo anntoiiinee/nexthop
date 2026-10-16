@@ -1,0 +1,294 @@
+---
+title: "Spanning Tree (STP)"
+description: "Pourquoi une boucle peut paralyser un réseau en quelques secondes, et comment Spanning Tree l'évite : élection, rôles de ports, RSTP et bonnes pratiques."
+pubDate: 2026-10-17
+level: beginner
+tags: [stp, rstp, mstp, switching]
+vendor: [arista, cisco]
+order: 4
+---
+
+Dans un réseau d'entreprise, on relie les switches par **plusieurs chemins** : si un câble ou
+un switch tombe, le trafic doit passer ailleurs. Mais en couche 2, cette redondance crée une
+**boucle**, et une boucle Ethernet peut mettre un réseau entier à genoux en quelques secondes.
+Le <Term id="stp" /> existe pour avoir la redondance **sans** la boucle.
+
+## Le problème : la tempête de broadcast
+
+Prenons trois switches reliés en triangle. A envoie un broadcast (une requête <Term id="arp" />
+par exemple) :
+
+<Topology
+  width={640}
+  height={310}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 180, y: 200, label: 'SW2' },
+    { id: 'sw3', type: 'switch', x: 480, y: 200, label: 'SW3' },
+    { id: 'a', type: 'host', x: 60, y: 250, label: 'A' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2' }, { from: 'sw1', to: 'sw3' }, { from: 'sw2', to: 'sw3' }, { from: 'a', to: 'sw2' },
+  ]}
+  flows={[
+    { from: 'a', to: 'sw2', label: 'broadcast', tone: 'amber' },
+    { from: 'sw2', to: 'sw1', tone: 'rose' },
+    { from: 'sw1', to: 'sw3', tone: 'rose' },
+    { from: 'sw3', to: 'sw2', label: '…et ça recommence', tone: 'rose' },
+    { from: 'sw2', to: 'sw3', tone: 'rose' },
+    { from: 'sw3', to: 'sw1', tone: 'rose' },
+    { from: 'sw1', to: 'sw2', tone: 'rose' },
+  ]}
+  caption="Chaque switch inonde le broadcast sur ses autres ports : deux copies tournent dans le triangle, dans les deux sens, sans fin."
+/>
+
+1. SW2 inonde le broadcast vers SW1 et SW3.
+2. SW1 le renvoie vers SW3, SW3 le renvoie vers SW1, et chacun le renvoie à nouveau vers SW2…
+3. Les copies tournent **indéfiniment** et se multiplient à chaque inondation.
+
+Contrairement à un paquet IP, une trame Ethernet n'a **pas de compteur de durée de vie**
+(pas de <Term id="ttl" />) : rien ne l'arrête. En quelques secondes, les liens saturent, les
+switches voient l'adresse de A arriver sur plusieurs ports à la fois (leur table MAC devient
+instable) et leurs processeurs s'emballent. Plus rien ne passe.
+
+<Callout type="field">
+Une boucle arrive rarement par la conception, presque toujours par accident : un utilisateur qui
+branche les deux prises murales de son bureau sur un petit switch, ou un câble de test oublié
+entre deux ports. Un bon réglage de Spanning Tree transforme cet incident majeur en simple port
+désactivé.
+</Callout>
+
+## Le principe : un arbre sans boucle
+
+Spanning Tree fait en sorte qu'il n'existe **qu'un seul chemin actif** entre deux switches.
+Il élit un switch central, la **racine** (root bridge), puis calcule depuis chaque switch le
+meilleur chemin vers elle. Les liens en trop sont **bloqués** : ils restent branchés, mais ne
+transmettent aucune trame utilisateur. Si un lien actif tombe, un lien bloqué est réactivé.
+
+Pour se coordonner, les switches échangent des messages appelés <Term id="bpdu" />, toutes les
+**2 secondes**.
+
+## L'identifiant de pont (Bridge ID)
+
+Chaque switch possède un **Bridge ID** de 8 octets, qui sert à élire la racine :
+
+<PacketFormat
+  cols={16}
+  rows={[
+    { fields: [
+      { label: 'Priorité', sub: '4 bits', span: 2, tone: 'violet' },
+      { label: 'Extended System ID', sub: '12 bits · n° de VLAN ou d\'instance', span: 4, tone: 'sky' },
+      { label: 'Adresse MAC du switch', sub: '48 bits', span: 10, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="La priorité (32768 par défaut, réglable par pas de 4096) est comparée en premier, puis l'adresse MAC départage."
+/>
+
+**Le plus petit Bridge ID gagne.** Avec les valeurs par défaut, toutes les priorités valent
+32768 : c'est donc le switch qui a **la plus petite adresse MAC** qui devient racine… souvent le
+plus ancien et le moins puissant du réseau. D'où la première bonne pratique : **choisir la
+racine soi-même** en baissant sa priorité.
+
+## L'élection, étape par étape
+
+Reprenons le triangle avec des liens à 10 Gb/s. On a configuré SW1 avec une priorité de 4096 ;
+SW2 et SW3 sont restés à 32768.
+
+| Switch | Priorité | Adresse MAC | Bridge ID |
+|---|---|---|---|
+| SW1 | 4096 | `0200.0000.0001` | **4096**.0200.0000.0001 |
+| SW2 | 32768 | `0200.0000.0002` | 32768.0200.0000.0002 |
+| SW3 | 32768 | `0200.0000.0003` | 32768.0200.0000.0003 |
+
+Chaque lien a un **coût** qui dépend de son débit : plus il est rapide, moins il coûte.
+
+| Débit | Coût (méthode courte, 802.1D) | Coût (méthode longue, 802.1t) |
+|---|---|---|
+| 100 Mb/s | 19 | 200 000 |
+| 1 Gb/s | 4 | 20 000 |
+| 10 Gb/s | 2 | 2 000 |
+| 100 Gb/s | — | 200 |
+
+On utilise ici la méthode longue : chaque lien 10G coûte **2000**.
+
+**Étape 1 : élire la racine.** Le plus petit Bridge ID est celui de SW1. Tous ses ports sont
+**désignés** (DP) : la racine transmet toujours sur tous ses liens.
+
+**Étape 2 : choisir un port racine (RP) sur chaque autre switch**, celui qui offre le
+**coût le plus faible** jusqu'à la racine. Pour SW2 : en direct vers SW1, le coût est 2000 ;
+en passant par SW3, il serait de 4000. Son port racine est donc le lien direct. Même raisonnement
+pour SW3.
+
+**Étape 3 : élire un port désigné sur chaque lien restant.** Sur le lien SW2-SW3, SW2 et SW3
+sont tous les deux à 2000 de la racine : égalité. On compare alors leurs Bridge ID, et SW2
+l'emporte (même priorité, MAC plus petite). Le port de SW2 devient désigné, **celui de SW3 est bloqué**.
+
+<Topology
+  width={640}
+  height={290}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1', sub: 'racine · 4096', tone: 'emerald' },
+    { id: 'sw2', type: 'switch', x: 150, y: 220, label: 'SW2', sub: '32768 · …0002' },
+    { id: 'sw3', type: 'switch', x: 490, y: 220, label: 'SW3', sub: '32768 · …0003' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', fromLabel: 'DP', toLabel: 'RP', label: 'coût 2000', tone: 'emerald' },
+    { from: 'sw1', to: 'sw3', fromLabel: 'DP', toLabel: 'RP', label: 'coût 2000', tone: 'emerald' },
+    { from: 'sw2', to: 'sw3', fromLabel: 'DP', toLabel: 'ALT', style: 'blocked' },
+  ]}
+  caption="Résultat : SW1 est la racine, chaque switch a un port racine (RP) vers elle, et le port de SW3 vers SW2 est bloqué. Plus aucune boucle."
+/>
+
+Les règles de départage, dans l'ordre, si une égalité subsiste :
+
+1. le plus faible **coût** jusqu'à la racine ;
+2. le plus petit **Bridge ID** de l'émetteur ;
+3. la plus petite **priorité de port**, puis le plus petit numéro de port.
+
+## Quand un lien tombe
+
+Si le lien entre SW1 et SW3 casse, SW3 ne reçoit plus les BPDU de la racine par son port racine.
+Son port bloqué vers SW2 devient alors son **nouveau port racine** : le trafic passe par SW2.
+
+<Topology
+  width={640}
+  height={290}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 320, y: 60, label: 'SW1', sub: 'racine', tone: 'emerald' },
+    { id: 'sw2', type: 'switch', x: 150, y: 220, label: 'SW2' },
+    { id: 'sw3', type: 'switch', x: 490, y: 220, label: 'SW3' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', fromLabel: 'DP', toLabel: 'RP', tone: 'emerald' },
+    { from: 'sw1', to: 'sw3', label: 'panne', style: 'dashed', tone: 'rose' },
+    { from: 'sw2', to: 'sw3', fromLabel: 'DP', toLabel: 'RP', tone: 'emerald' },
+  ]}
+  flows={[
+    { from: 'sw3', to: 'sw2', label: 'nouveau chemin', tone: 'emerald', offset: 16 },
+    { from: 'sw2', to: 'sw1', tone: 'emerald', offset: 16 },
+  ]}
+  caption="Le lien SW1-SW3 est coupé : l'ancien port bloqué de SW3 devient son port racine. La redondance a joué son rôle."
+/>
+
+Le temps que prend cette bascule dépend de la version de Spanning Tree.
+
+## STP, RSTP, MSTP : les versions
+
+Le Spanning Tree d'origine (**802.1D**) fait passer un port par plusieurs états avant de
+transmettre, avec des temporisations prudentes :
+
+| STP 802.1D | RSTP 802.1w | Que fait le port ? |
+|---|---|---|
+| Blocking | Discarding | Ne transmet rien, écoute les BPDU |
+| Listening | Discarding | Participe à l'élection |
+| Learning | Learning | Apprend les adresses MAC, ne transmet pas encore |
+| Forwarding | Forwarding | Transmet normalement |
+
+Avec 802.1D, une bascule prend **30 à 50 secondes**, une éternité pour une application. Le
+**Rapid Spanning Tree** (RSTP, 802.1w) négocie directement avec ses voisins et bascule en
+**moins d'une seconde** à quelques secondes. Il introduit aussi les rôles **alternate** (un
+chemin de secours vers la racine, comme le port ALT de SW3) et **backup**.
+
+| Version | Norme | Particularité | Où on la trouve |
+|---|---|---|---|
+| STP | 802.1D | Un seul arbre, convergence lente | Historique, à éviter |
+| RSTP | 802.1w | Un seul arbre, convergence rapide | Partout |
+| PVST+ / Rapid PVST+ | Cisco | Un arbre **par VLAN** | Mode par défaut des switches Cisco |
+| MSTP | 802.1s | Plusieurs VLAN regroupés par **instance** | Mode par défaut d'Arista EOS |
+
+<Callout type="note">
+Dans un data center moderne (fabric spine/leaf), on évite au maximum Spanning Tree : les liens
+entre switches sont routés (couche 3) et la redondance est assurée par le routage. On le garde
+cependant activé vers les serveurs et les utilisateurs, comme filet de sécurité.
+</Callout>
+
+## Les ports vers les machines : PortFast et BPDU Guard
+
+Un port qui raccorde un PC ou un serveur ne peut pas créer de boucle : inutile de lui faire
+attendre les états d'écoute et d'apprentissage. On le déclare comme **port de bordure** :
+
+- **PortFast** (edge port) : le port passe immédiatement en forwarding. Sans lui, un PC peut
+  attendre 30 secondes son adresse DHCP au démarrage ;
+- **BPDU Guard** : si un BPDU arrive malgré tout sur ce port (quelqu'un y a branché un switch),
+  le port est **désactivé** (état err-disabled). C'est la protection contre la boucle accidentelle.
+
+<Topology
+  width={640}
+  height={230}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 320, y: 60, label: 'SW-accès' },
+    { id: 'pc', type: 'host', x: 170, y: 175, label: 'PC', sub: 'edge · OK', tone: 'emerald' },
+    { id: 'rogue', type: 'switch', x: 470, y: 175, label: 'Switch pirate', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'sw', to: 'pc', label: 'PortFast', tone: 'emerald' },
+    { from: 'sw', to: 'rogue', label: 'err-disabled', style: 'blocked' },
+  ]}
+  flows={[{ from: 'rogue', to: 'sw', label: 'BPDU', tone: 'rose', offset: 16 }]}
+  caption="Le PC démarre sans attendre. Le switch branché par erreur envoie un BPDU : BPDU Guard coupe aussitôt le port."
+/>
+
+## Configuration
+
+Fixer la racine, régler les ports de bordure, et protéger les ports d'accès.
+
+```text title="Arista EOS"
+spanning-tree mode mstp
+spanning-tree mst 0 priority 4096        ! sur le switch qui doit être racine
+!
+interface Ethernet1
+   description PC-comptabilite
+   switchport access vlan 10
+   spanning-tree portfast
+   spanning-tree bpduguard enable
+```
+
+```text title="Cisco IOS"
+spanning-tree mode rapid-pvst
+spanning-tree vlan 10,20,30 priority 4096   ! sur le switch qui doit être racine
+!
+interface GigabitEthernet1/0/1
+ description PC-comptabilite
+ switchport mode access
+ switchport access vlan 10
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+```
+
+## Vérifier
+
+Sur SW3, on retrouve exactement le résultat de l'élection :
+
+```text title="SW3#show spanning-tree"
+MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    4096
+             Address     0200.0000.0001
+             Cost        2000 (Ext) 0 (Int)
+             Port        1 (Ethernet1)
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     0200.0000.0003
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et1              root       forwarding 2000      128.1    P2p
+Et2              alternate  discarding 2000      128.2    P2p
+```
+
+- **Root ID** : la racine est bien SW1 (priorité 4096, MAC `…0001`), à un coût de 2000.
+- **Et1** est le port racine, **Et2** est le port alternatif, en discarding : c'est lui qui casse la boucle.
+
+## À retenir
+
+- Une boucle en couche 2 provoque une **tempête de broadcast** : les trames n'ont pas de TTL.
+- Spanning Tree élit une **racine** (le plus petit Bridge ID), puis garde **un seul chemin**
+  actif vers elle et **bloque** les autres.
+- Rôles à connaître : **port racine** (RP), **port désigné** (DP), **port bloqué / alternatif**.
+- Utilisez **RSTP ou MSTP**, fixez la racine à la main, et activez **PortFast + BPDU Guard**
+  sur les ports d'accès.
+
+Avant de quitter la couche 2, un dernier outil indispensable au quotidien : **LLDP et CDP**, pour
+savoir qui est branché sur chaque port.

@@ -119,11 +119,11 @@ const btn = 'rounded-full border border-slate-300 px-3 py-1 text-xs font-medium 
       spellcheck="false"
       autocomplete="off"
       inputmode="decimal"
-      class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+      class="w-full min-w-0 rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
     />
-    <div class="flex gap-2">
-      <button type="submit" data-submit class="flex-1 rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600 sm:flex-none">{copy.check}</button>
-      <button type="button" data-skip class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400">{copy.skip}</button>
+    <div class="flex shrink-0 gap-2">
+      <button type="submit" data-submit class="flex-1 whitespace-nowrap rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600 sm:flex-none">{copy.check}</button>
+      <button type="button" data-skip class="whitespace-nowrap rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400">{copy.skip}</button>
     </div>
   </form>
   <p class="mt-2 text-xs text-slate-500">{copy.enterHint}</p>

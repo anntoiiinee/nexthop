@@ -1,0 +1,51 @@
+---
+// Encart dans un article. Disponible dans tous les MDX sans import.
+// <Callout type="tip">Texte en **Markdown**.</Callout>
+// Types : note (à savoir), tip (astuce), warning (attention), field (retour terrain).
+import type { Lang } from '@/i18n/ui';
+
+type Type = 'note' | 'tip' | 'warning' | 'field';
+interface Props { type?: Type; title?: string; lang?: Lang }
+const { type = 'note', title } = Astro.props;
+const lang = (Astro.props.lang ?? Astro.currentLocale ?? 'fr') as Lang;
+
+const titles: Record<Type, Record<Lang, string>> = {
+  note: { fr: 'À savoir', en: 'Good to know' },
+  tip: { fr: 'Astuce', en: 'Tip' },
+  warning: { fr: 'Attention', en: 'Watch out' },
+  field: { fr: 'Retour terrain', en: 'From the field' },
+};
+const icons: Record<Type, string> = { note: 'i', tip: '✓', warning: '!', field: '>' };
+const styles: Record<Type, { box: string; badge: string; title: string }> = {
+  note: {
+    box: 'border-sky-300 bg-sky-50/60 dark:border-sky-500/30 dark:bg-sky-500/5',
+    badge: 'bg-sky-500 text-white',
+    title: 'text-sky-800 dark:text-sky-300',
+  },
+  tip: {
+    box: 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-500/30 dark:bg-emerald-500/5',
+    badge: 'bg-emerald-500 text-white',
+    title: 'text-emerald-800 dark:text-emerald-300',
+  },
+  warning: {
+    box: 'border-amber-300 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/5',
+    badge: 'bg-amber-500 text-white',
+    title: 'text-amber-800 dark:text-amber-300',
+  },
+  field: {
+    box: 'border-violet-300 bg-violet-50/60 dark:border-violet-500/30 dark:bg-violet-500/5',
+    badge: 'bg-violet-500 font-mono text-white',
+    title: 'text-violet-800 dark:text-violet-300',
+  },
+};
+const s = styles[type];
+---
+<aside class:list={['my-8 rounded-xl border-l-4 border-y border-r px-5 py-4', s.box]}>
+  <p class:list={['not-prose flex items-center gap-2 text-sm font-semibold', s.title]}>
+    <span class:list={['inline-flex size-5 items-center justify-center rounded-full text-xs font-bold', s.badge]} aria-hidden="true">{icons[type]}</span>
+    {title ?? titles[type][lang]}
+  </p>
+  <div class="mt-2 text-[0.95rem] [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+    <slot />
+  </div>
+</aside>

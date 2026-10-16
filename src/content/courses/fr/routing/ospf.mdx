@@ -1,0 +1,331 @@
+---
+title: "Les bases d'OSPF"
+description: "OSPF pas à pas : router ID, voisinages et états, réseaux point à point et DR/BDR, coût et plus court chemin, zones et LSA, configuration et lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [ospf, igp, routing]
+vendor: [arista, cisco]
+order: 2
+---
+
+<Term id="ospf" /> (Open Shortest Path First) est l'IGP le plus répandu en entreprise. C'est un
+protocole à **état de liens** : chaque routeur décrit ses propres liens, tous les routeurs
+partagent la même carte du réseau, et chacun calcule ses meilleurs chemins avec l'algorithme de
+Dijkstra. On le déploie ici sur le réseau interne de l'entreprise.
+
+## Le réseau de l'exemple
+
+Quatre routeurs en **anneau** : il y a donc toujours deux chemins entre deux sites, et OSPF devra
+choisir le meilleur puis basculer en cas de panne.
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 60, y: 80, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 230, y: 80, label: 'R1', sub: '10.255.0.1' },
+    { id: 'r2', type: 'router', x: 530, y: 80, label: 'R2', sub: '10.255.0.2' },
+    { id: 'r4', type: 'router', x: 230, y: 250, label: 'R4', sub: '10.255.0.4' },
+    { id: 'r3', type: 'router', x: 530, y: 250, label: 'R3', sub: '10.255.0.3' },
+    { id: 'srv', type: 'server', x: 700, y: 244, label: 'Siège', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc1', to: 'r1' },
+    { from: 'r1', to: 'r2', label: '10.0.12.0/31' },
+    { from: 'r2', to: 'r3', label: '10.0.23.0/31' },
+    { from: 'r3', to: 'r4', label: '10.0.34.0/31' },
+    { from: 'r4', to: 'r1', label: '10.0.14.0/31' },
+    { from: 'r3', to: 'srv' },
+  ]}
+  caption="Quatre routeurs en anneau, chacun avec une loopback (10.255.0.x/32) qui sert d'identifiant. L'agence A est derrière R1, le siège derrière R3."
+/>
+
+## Le router ID
+
+Chaque routeur OSPF est identifié par un **router ID** de 32 bits, écrit comme une adresse IPv4.
+Il est choisi dans cet ordre :
+
+1. la valeur configurée avec `router-id` ;
+2. sinon, la plus grande adresse IP d'une interface loopback ;
+3. sinon, la plus grande adresse IP d'une interface active.
+
+<Callout type="tip">
+Configurez toujours le router ID explicitement, avec la même valeur que l'adresse de la loopback.
+Un router ID qui change au redémarrage, ou deux routeurs avec le même, provoque des comportements
+très difficiles à diagnostiquer.
+</Callout>
+
+## Les voisinages
+
+Les routeurs OSPF se découvrent en envoyant des paquets **Hello** toutes les **10 secondes**, en
+multicast (`224.0.0.5`), sur chaque interface où OSPF est activé. Pour devenir voisins, deux
+routeurs doivent être d'accord sur plusieurs paramètres :
+
+| Paramètre | Doit être identique | Défaut |
+|---|---|---|
+| Zone (area) | oui | — |
+| Hello / dead interval | oui | 10 s / 40 s |
+| Sous-réseau et masque | oui (sauf en point à point) | — |
+| Authentification | oui | aucune |
+| Type de zone (stub…) | oui | normale |
+| MTU | oui, sinon blocage à l'échange des bases | 1500 |
+| Router ID | **différent** | — |
+
+Un voisinage passe ensuite par plusieurs **états** avant d'être complet :
+
+<PacketFormat
+  cols={7}
+  rows={[
+    { fields: [
+      { label: 'Down', sub: 'rien reçu' },
+      { label: 'Init', sub: 'Hello reçu' },
+      { label: '2-Way', sub: 'je me vois dans son Hello', tone: 'sky' },
+      { label: 'ExStart', sub: 'qui mène l\'échange', tone: 'amber' },
+      { label: 'Exchange', sub: 'résumé des bases', tone: 'amber' },
+      { label: 'Loading', sub: 'LSA manquants', tone: 'amber' },
+      { label: 'Full', sub: 'bases identiques', tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Les états d'un voisinage OSPF. En 2-Way, les routeurs se connaissent ; en Full, ils ont synchronisé leurs bases topologiques."
+/>
+
+<Callout type="field">
+Un voisinage bloqué en **ExStart** ou **Exchange** est presque toujours un problème de **MTU**
+différente des deux côtés. Bloqué en **Init** : le Hello ne passe que dans un sens (ACL, filtrage).
+Absent : vérifiez la zone, les temporisateurs et le masque.
+</Callout>
+
+## Point à point ou DR/BDR
+
+Sur un segment Ethernet partagé par plusieurs routeurs (un switch au milieu), si chacun devait
+synchroniser sa base avec tous les autres, le nombre de voisinages exploserait. OSPF élit donc un
+**DR** (Designated Router) et un **BDR** (son remplaçant) : les autres routeurs ne sont en Full
+qu'avec eux, et restent en 2-Way entre eux.
+
+<Topology
+  width={700}
+  height={300}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 350, y: 140, label: 'Switch' },
+    { id: 'a', type: 'router', x: 130, y: 60, label: 'RA', sub: 'DR', tone: 'emerald' },
+    { id: 'b', type: 'router', x: 570, y: 60, label: 'RB', sub: 'BDR', tone: 'sky' },
+    { id: 'c', type: 'router', x: 130, y: 230, label: 'RC', sub: 'DROTHER', tone: 'slate' },
+    { id: 'd', type: 'router', x: 570, y: 230, label: 'RD', sub: 'DROTHER', tone: 'slate' },
+  ]}
+  links={[{ from: 'sw', to: 'a' }, { from: 'sw', to: 'b' }, { from: 'sw', to: 'c' }, { from: 'sw', to: 'd' }]}
+  caption="Sur un segment partagé, RC et RD synchronisent leur base uniquement avec le DR et le BDR (priorité la plus haute, puis router ID le plus grand)."
+/>
+
+Entre deux routeurs reliés directement (nos liens en `/31`), cette élection est inutile et ralentit
+la montée du voisinage. On déclare donc le lien en **point à point** :
+`ip ospf network point-to-point`. C'est la bonne pratique sur tous les liens entre routeurs.
+
+## La base topologique et les LSA
+
+Chaque routeur décrit ses liens dans un **LSA** (<Term id="lsa" />, *Link State Advertisement*) et
+l'inonde dans toute la zone. L'ensemble des LSA forme la **LSDB** (base de données d'état de liens),
+**identique sur tous les routeurs de la zone**. À partir de cette carte, chacun exécute Dijkstra en
+se plaçant à la racine, et obtient son arbre des plus courts chemins.
+
+| Type de LSA | Émis par | Décrit |
+|---|---|---|
+| 1 · Router | chaque routeur | ses liens et leur coût, dans sa zone |
+| 2 · Network | le DR | les routeurs présents sur un segment partagé |
+| 3 · Summary | un ABR | les réseaux d'une autre zone |
+| 5 · External | un ASBR | des routes venues d'ailleurs (statique, BGP…) |
+
+## Le coût
+
+OSPF choisit le chemin dont la **somme des coûts** est la plus faible. Le coût d'une interface se
+calcule par défaut ainsi :
+
+**coût = bande passante de référence / débit de l'interface**
+
+Le piège : la référence par défaut vaut **100 Mb/s**. Tout lien de 100 Mb/s ou plus coûte donc **1**,
+et OSPF ne fait plus la différence entre 1 Gb/s et 100 Gb/s. On relève la référence sur **tous** les
+routeurs, à la même valeur :
+
+| Débit | Coût (référence 100 Mb/s) | Coût (référence 100 Gb/s) |
+|---|---|---|
+| 100 Mb/s | 1 | 1000 |
+| 1 Gb/s | 1 | 100 |
+| 10 Gb/s | 1 | 10 |
+| 100 Gb/s | 1 | 1 |
+
+On peut aussi fixer le coût d'une interface à la main avec `ip ospf cost`, pour orienter le trafic.
+
+Dans notre anneau, tous les liens sont à 10 Gb/s, donc coût 10. Depuis R1, le siège est à **30**
+par R2 (10 + 10 + 10 pour le LAN) et à **30** par R4 : égalité. OSPF installe alors **les deux
+chemins** et répartit le trafic (ECMP, *Equal-Cost Multi-Path*).
+
+<Topology
+  width={760}
+  height={300}
+  nodes={[
+    { id: 'r1', type: 'router', x: 230, y: 70, label: 'R1', tone: 'emerald' },
+    { id: 'r2', type: 'router', x: 530, y: 70, label: 'R2' },
+    { id: 'r4', type: 'router', x: 230, y: 240, label: 'R4' },
+    { id: 'r3', type: 'router', x: 530, y: 240, label: 'R3' },
+    { id: 'srv', type: 'server', x: 700, y: 234, label: 'Siège', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: 'coût 10', tone: 'emerald' },
+    { from: 'r2', to: 'r3', label: 'coût 10', tone: 'emerald' },
+    { from: 'r3', to: 'r4', label: 'coût 10', tone: 'emerald' },
+    { from: 'r4', to: 'r1', label: 'coût 10', tone: 'emerald' },
+    { from: 'r3', to: 'srv', label: '10' },
+  ]}
+  flows={[
+    { from: 'r1', to: 'r2', tone: 'emerald', offset: -16 },
+    { from: 'r2', to: 'r3', tone: 'emerald', offset: -16 },
+    { from: 'r1', to: 'r4', tone: 'emerald', offset: 16 },
+    { from: 'r4', to: 'r3', tone: 'emerald', offset: 16 },
+  ]}
+  caption="Deux chemins de coût 30 vers le siège : OSPF les installe tous les deux et répartit le trafic (ECMP)."
+/>
+
+Si on veut que le chemin par R4 ne serve qu'en secours, il suffit d'augmenter son coût, par exemple
+`ip ospf cost 100` sur les interfaces du lien R1-R4. Le chemin par R2 (30) devient seul gagnant,
+celui par R4 (120) ne sera utilisé que si le lien R1-R2 tombe.
+
+## Les zones
+
+Dans un grand réseau, une seule base topologique deviendrait énorme, et chaque changement forcerait
+tous les routeurs à recalculer. OSPF découpe donc le réseau en **zones** (areas) :
+
+- la **zone 0** (backbone) est obligatoire, et toutes les autres zones s'y rattachent ;
+- un routeur à cheval sur deux zones est un **ABR** (Area Border Router) : il résume une zone dans
+  l'autre avec des LSA de type 3 ;
+- un routeur qui injecte des routes externes (statiques, BGP) est un **ASBR**.
+
+<Topology
+  width={760}
+  height={260}
+  groups={[
+    { x: 16, y: 40, w: 200, h: 200, label: 'Zone 10', tone: 'amber' },
+    { x: 240, y: 40, w: 280, h: 200, label: 'Zone 0 · backbone', tone: 'sky' },
+    { x: 544, y: 40, w: 200, h: 200, label: 'Zone 20', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'a', type: 'router', x: 110, y: 140, label: 'R-agence', tone: 'amber' },
+    { id: 'abr1', type: 'router', x: 290, y: 140, label: 'ABR1', sub: 'zones 10 + 0' },
+    { id: 'abr2', type: 'router', x: 470, y: 140, label: 'ABR2', sub: 'zones 0 + 20' },
+    { id: 'b', type: 'router', x: 650, y: 140, label: 'R-usine', tone: 'violet' },
+  ]}
+  links={[{ from: 'a', to: 'abr1' }, { from: 'abr1', to: 'abr2' }, { from: 'abr2', to: 'b' }]}
+  caption="Les zones 10 et 20 se rattachent à la zone 0 par des ABR. Une panne dans la zone 20 ne fait recalculer que les routeurs de la zone 20."
+/>
+
+<Callout type="note">
+Un réseau de quelques dizaines de routeurs fonctionne très bien en **zone 0 unique**. Les zones
+deviennent utiles à partir de quelques centaines de routeurs, ou pour isoler des sites instables.
+Ne découpez pas « par principe » : chaque frontière de zone complique le dépannage.
+</Callout>
+
+## Configuration
+
+On active OSPF interface par interface, on déclare les liens entre routeurs en point à point, et on
+rend l'interface du LAN **passive** : son réseau est annoncé, mais aucun Hello n'y est envoyé, pour
+qu'aucune machine ne puisse monter un voisinage.
+
+```text title="R1 · Arista EOS"
+router ospf 1
+   router-id 10.255.0.1
+   auto-cost reference-bandwidth 100000
+   passive-interface Ethernet3
+   max-lsa 12000
+!
+interface Ethernet1
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet2
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet3
+   ip ospf area 0.0.0.0
+!
+interface Loopback0
+   ip ospf area 0.0.0.0
+```
+
+```text title="R1 · Cisco IOS"
+router ospf 1
+ router-id 10.255.0.1
+ auto-cost reference-bandwidth 100000
+ passive-interface GigabitEthernet0/3
+!
+interface GigabitEthernet0/1
+ ip ospf network point-to-point
+ ip ospf 1 area 0
+!
+interface GigabitEthernet0/2
+ ip ospf network point-to-point
+ ip ospf 1 area 0
+!
+interface GigabitEthernet0/3
+ ip ospf 1 area 0
+!
+interface Loopback0
+ ip ospf 1 area 0
+```
+
+## Vérifier
+
+```text title="R1#show ip ospf neighbor"
+Neighbor ID     Instance VRF      Pri State                  Dead Time   Address         Interface
+10.255.0.2      1        default  0   FULL                   00:00:35    10.0.12.1       Ethernet1
+10.255.0.4      1        default  0   FULL                   00:00:31    10.0.14.1       Ethernet2
+```
+
+```text title="R1#show ip route ospf"
+ O        10.0.23.0/31 [110/20] via 10.0.12.1, Ethernet1
+ O        10.0.34.0/31 [110/20] via 10.0.14.1, Ethernet2
+ O        172.16.20.0/24 [110/30] via 10.0.12.1, Ethernet1
+                                  via 10.0.14.1, Ethernet2
+```
+
+- `[110/30]` : distance administrative d'OSPF (110) et coût total (30).
+- Deux lignes `via` pour le siège : c'est l'ECMP.
+- Les loopbacks des autres routeurs apparaissent aussi (non affichées ici) : leur coût dépend du
+  constructeur, qui n'attribue pas tous la même valeur à une interface loopback.
+
+D'autres commandes utiles : `show ip ospf interface brief` (coût, état, type de réseau de chaque
+interface), `show ip ospf database` (la LSDB).
+
+## Le lab
+
+Les quatre routeurs démarrent avec leurs adresses, mais **sans OSPF** :
+
+1. Déployez le lab. Depuis `pc1`, `ping 172.16.20.10` échoue : R1 ne connaît pas le siège.
+2. Configurez OSPF sur les quatre routeurs (modèle ci-dessus). Suivez les voisinages avec
+   `show ip ospf neighbor` jusqu'à l'état FULL.
+3. Le ping passe. Regardez `show ip route ospf` sur R1 : le siège est-il en ECMP ?
+4. Augmentez le coût du lien R1-R4 (`ip ospf cost 100` des deux côtés). Que devient la route ?
+5. Coupez le lien R1-R2 (`shutdown` sur Et1 de R1) en laissant tourner `ping` sur `pc1` :
+   combien de paquets perdez-vous ? Réactivez le lien.
+6. Bonus : passez une interface en `ip ospf network broadcast` d'un seul côté. Que devient le voisinage ?
+
+<Lab name="ospf-basic" lang="fr" />
+
+<Callout type="tip" title="Solution">
+Sur chaque routeur : `router ospf 1` avec son `router-id` (sa loopback) et
+`auto-cost reference-bandwidth 100000`, puis `ip ospf area 0.0.0.0` sur toutes les interfaces,
+`ip ospf network point-to-point` sur les liens entre routeurs, et `passive-interface` pour les LAN
+(Ethernet3 sur R1 et R3).
+</Callout>
+
+## À retenir
+
+- OSPF est un protocole à **état de liens** : chaque routeur a la carte complète de sa zone (LSDB)
+  et calcule le plus court chemin avec Dijkstra.
+- Un voisinage exige les **mêmes zone, temporisateurs, masque, authentification et MTU**, et des
+  router ID différents ; il doit atteindre l'état **Full**.
+- Sur les liens entre routeurs : **point à point**, pas de DR/BDR.
+- **Coût = référence / débit** : relevez la référence partout. À coût égal, **ECMP**.
+- La **zone 0** est le backbone ; les autres zones s'y rattachent par des ABR.
+
+OSPF fait circuler les routes à l'intérieur de l'entreprise. Pour échanger avec le reste du monde,
+il faut **BGP**.

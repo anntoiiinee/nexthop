@@ -1,0 +1,67 @@
+---
+title: "Le routage dynamique"
+description: "Faire apprendre le réseau aux routeurs : principes des protocoles de routage, OSPF, puis BGP de la session aux politiques de routage, avec deux labs."
+pubDate: 2026-10-17
+level: intermediate
+tags: [routing, ospf, bgp]
+vendor: [arista, cisco]
+order: 0
+---
+
+Dans la formation [Fondamentaux](/formations/fundamentals), on a écrit chaque route à la main.
+Ça fonctionne pour trois routeurs. Avec trente, ou dès qu'un lien tombe, ça devient ingérable :
+il faut que les routeurs **apprennent le réseau tout seuls** et **s'adaptent aux pannes**. C'est le
+rôle des protocoles de routage dynamique.
+
+## Le fil rouge : l'entreprise grandit
+
+L'agence et le siège de la première formation font maintenant partie d'un réseau plus large.
+En interne, les routeurs s'échangent leurs routes avec **OSPF**. Vers l'extérieur, le siège est
+raccordé à **deux opérateurs** avec **BGP**, pour ne jamais perdre Internet.
+
+<Topology
+  width={760}
+  height={320}
+  groups={[
+    { x: 16, y: 16, w: 440, h: 288, label: 'Réseau interne · OSPF · AS 65010', tone: 'sky' },
+    { x: 486, y: 16, w: 258, h: 288, label: 'Internet · BGP', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'r1', type: 'router', x: 90, y: 90, label: 'R1', sub: 'agence A' },
+    { id: 'r2', type: 'router', x: 250, y: 90, label: 'R2', sub: 'cœur' },
+    { id: 'r4', type: 'router', x: 90, y: 230, label: 'R4', sub: 'agence B' },
+    { id: 'r3', type: 'router', x: 250, y: 230, label: 'R3', sub: 'siège' },
+    { id: 'ce', type: 'router', x: 390, y: 160, label: 'CE1', sub: 'bordure', tone: 'emerald' },
+    { id: 'ispa', type: 'cloud', x: 580, y: 90, label: 'Opérateur A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'cloud', x: 580, y: 230, label: 'Opérateur B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 690, y: 160, label: 'Internet', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2' }, { from: 'r2', to: 'r3' }, { from: 'r3', to: 'r4' }, { from: 'r4', to: 'r1' },
+    { from: 'r3', to: 'ce' },
+    { from: 'ce', to: 'ispa', label: 'eBGP', tone: 'emerald' }, { from: 'ce', to: 'ispb', label: 'eBGP', tone: 'emerald' },
+    { from: 'ispa', to: 'inet' }, { from: 'ispb', to: 'inet' },
+  ]}
+  caption="OSPF fait circuler les routes à l'intérieur de l'entreprise, BGP les échange avec les opérateurs."
+/>
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **1. Pourquoi le routage dynamique** | Distinguer IGP et EGP, vecteur de distance et état de liens, comprendre métrique et convergence |
+| **2. Les bases d'OSPF** | Monter des voisinages, lire la base topologique, régler les coûts, découper en zones |
+| **3. Les bases de BGP** | Établir une session eBGP, annoncer un préfixe, lire une table BGP |
+| **4. Attributs et meilleur chemin** | Expliquer le choix de BGP, privilégier un opérateur en entrée et en sortie |
+| **5. Politiques de routage** | Filtrer avec prefix-lists et route-maps, utiliser les communautés, ne jamais devenir un transit |
+
+## Prérequis
+
+La formation [Fondamentaux](/formations/fundamentals), en particulier l'**adressage IPv4** et le
+**routage statique** : table de routage, plus long préfixe, prochain saut et distance administrative.
+
+<Callout type="note">
+Deux labs ContainerLab accompagnent la formation : `ospf-basic` (quatre routeurs en anneau) et
+`bgp-basic` (une entreprise raccordée à deux opérateurs). Dans les deux, c'est vous qui configurez
+le protocole : la solution est donnée à la fin de chaque chapitre.
+</Callout>

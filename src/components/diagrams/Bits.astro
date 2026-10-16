@@ -1,0 +1,77 @@
+---
+// Adresse IPv4 en binaire, bits réseau en couleur et bits hôte en gris, avec le masque en option.
+// <Bits ip="172.16.45.130" prefix={27} mask caption="…" />
+import { toInt, prefixToMask, toIp } from '@/lib/ipv4';
+import type { Lang } from '@/i18n/ui';
+
+interface Props { ip: string; prefix: number; mask?: boolean; caption?: string; lang?: Lang }
+const { ip, prefix, mask = false, caption } = Astro.props;
+const lang = (Astro.props.lang ?? Astro.currentLocale ?? 'fr') as Lang;
+
+const value = toInt(ip);
+if (value === null) throw new Error(`<Bits> : adresse invalide "${ip}"`);
+
+const copy = {
+  fr: { address: 'Adresse', mask: 'Masque', net: (n: number) => `réseau : ${n} bit${n > 1 ? 's' : ''}`, host: (n: number) => `hôte : ${n} bit${n > 1 ? 's' : ''}` },
+  en: { address: 'Address', mask: 'Mask', net: (n: number) => `network: ${n} bit${n > 1 ? 's' : ''}`, host: (n: number) => `host: ${n} bit${n > 1 ? 's' : ''}` },
+}[lang];
+
+// 32 bits + 3 colonnes de séparation entre octets
+const col = (bit: number) => bit + Math.floor(bit / 8) + 2; // +1 base 1, +1 colonne d'étiquette
+const lines = [
+  { label: copy.address, value, decimal: ip },
+  ...(mask ? [{ label: copy.mask, value: prefixToMask(prefix), decimal: toIp(prefixToMask(prefix)) }] : []),
+];
+---
+<figure class="not-prose my-10">
+  <div class="overflow-x-auto pb-1">
+    <div
+      class="grid items-center gap-y-1 font-mono"
+      style="grid-template-columns: 4.5rem repeat(8, minmax(0,1fr)) 0.75rem repeat(8, minmax(0,1fr)) 0.75rem repeat(8, minmax(0,1fr)) 0.75rem repeat(8, minmax(0,1fr)); min-width: 34rem"
+    >
+      {lines.map((line, r) => {
+        const bits = line.value.toString(2).padStart(32, '0');
+        const octets = line.decimal.split('.');
+        const row = r * 2 + 1;
+        return (
+          <>
+            <div style={`grid-row: ${row}; grid-column: 1`} class="text-xs font-medium text-slate-500">{line.label}</div>
+            {[...bits].map((b, i) => (
+              <div
+                style={`grid-row: ${row}; grid-column: ${col(i)}`}
+                class:list={[
+                  'text-center text-sm sm:text-base',
+                  i < prefix ? 'font-bold text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500',
+                ]}
+              >{b}</div>
+            ))}
+            {[8, 16, 24].map((i) => (
+              <div style={`grid-row: ${row}; grid-column: ${col(i) - 1}`} class="text-center text-slate-400">.</div>
+            ))}
+            {octets.map((o, k) => (
+              <div
+                style={`grid-row: ${row + 1}; grid-column: ${col(k * 8)} / span 8`}
+                class="mx-0.5 border-t border-slate-200 pt-0.5 text-center text-xs text-slate-500 dark:border-slate-700"
+              >{o}</div>
+            ))}
+          </>
+        );
+      })}
+
+      <!-- Accolades réseau / hôte -->
+      {prefix > 0 && (
+        <div
+          style={`grid-row: ${lines.length * 2 + 1}; grid-column: ${col(0)} / ${col(prefix - 1) + 1}`}
+          class="mt-2 rounded-md bg-sky-100 py-1 text-center text-xs font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"
+        >{copy.net(prefix)}</div>
+      )}
+      {prefix < 32 && (
+        <div
+          style={`grid-row: ${lines.length * 2 + 1}; grid-column: ${col(prefix)} / ${col(31) + 1}`}
+          class="mt-2 rounded-md bg-slate-100 py-1 text-center text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+        >{copy.host(32 - prefix)}</div>
+      )}
+    </div>
+  </div>
+  {caption && <figcaption class="mt-3 text-center text-sm text-slate-500">{caption}</figcaption>}
+</figure>

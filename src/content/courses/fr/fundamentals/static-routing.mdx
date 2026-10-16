@@ -1,0 +1,352 @@
+---
+title: "Le routage statique"
+description: "Passerelle par défaut, table de routage, plus long préfixe, saut par saut (next hop), route par défaut et routes flottantes, avec un lab ContainerLab."
+pubDate: 2026-10-17
+level: beginner
+tags: [routing, static, ipv4, arp]
+vendor: [arista, cisco]
+order: 8
+---
+
+Les chapitres précédents nous ont donné des réseaux bien découpés : des VLAN, chacun avec son
+sous-réseau IP. Il reste à les **relier entre eux** et au siège. C'est le travail du routeur,
+et c'est d'ailleurs lui qui a donné son nom à ce site : à chaque étape, un routeur ne connaît
+pas tout le chemin, seulement **le prochain saut**, le *next hop*.
+
+## Le réseau de l'exemple
+
+On part du réseau de l'agence, relié au siège à travers un routeur intermédiaire :
+
+<Topology
+  width={760}
+  height={250}
+  groups={[
+    { x: 16, y: 20, w: 250, h: 210, label: 'Agence · 192.168.10.0/26', tone: 'sky' },
+    { x: 494, y: 20, w: 250, h: 210, label: 'Siège · 172.16.20.0/24', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 120, label: 'PC1', sub: '.10' },
+    { id: 'r1', type: 'router', x: 210, y: 120, label: 'R1', sub: '.1' },
+    { id: 'r2', type: 'router', x: 380, y: 120, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 550, y: 120, label: 'R3', sub: '.1', tone: 'violet' },
+    { id: 'app', type: 'server', x: 680, y: 114, label: 'Appli', sub: '.10', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc', to: 'r1' },
+    { from: 'r1', to: 'r2', label: '192.168.10.120/31' },
+    { from: 'r2', to: 'r3', label: '10.0.23.0/31' },
+    { from: 'r3', to: 'app' },
+  ]}
+  caption="PC1 (192.168.10.10) doit joindre l'application du siège (172.16.20.10), à trois routeurs de distance."
+/>
+
+| Équipement | Interface | Adresse |
+|---|---|---|
+| PC1 | eth1 | 192.168.10.10/26, passerelle 192.168.10.1 |
+| R1 | Et1 / Et2 | 192.168.10.1/26 · 192.168.10.120/31 |
+| R2 | Et1 / Et2 | 192.168.10.121/31 · 10.0.23.0/31 |
+| R3 | Et1 / Et2 | 10.0.23.1/31 · 172.16.20.1/24 |
+| Appli | eth1 | 172.16.20.10/24, passerelle 172.16.20.1 |
+
+## Côté machine : la passerelle par défaut
+
+Avant même d'envoyer un paquet, PC1 se pose une question : **la destination est-elle dans mon
+réseau ?** Il applique son masque à sa propre adresse et à celle de la destination :
+
+- `192.168.10.10/26` → réseau **192.168.10.0** ;
+- `172.16.20.10` avec le même masque → réseau 172.16.20.0 : **ce n'est pas mon réseau**.
+
+La règle est simple :
+
+1. **même réseau** → il envoie la trame directement à la machine de destination ;
+2. **autre réseau** → il envoie la trame à sa **passerelle par défaut** (192.168.10.1, R1), qui
+   se chargera de la suite.
+
+Dans les deux cas, il lui faut l'**adresse MAC** du prochain équipement. Il la demande avec
+<Term id="arp" />, détaillé au [chapitre précédent](/formations/fundamentals/arp) :
+
+<Topology
+  width={640}
+  height={230}
+  nodes={[
+    { id: 'pc', type: 'host', x: 120, y: 110, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 520, y: 110, label: 'R1', sub: '192.168.10.1' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }]}
+  flows={[
+    { from: 'pc', to: 'r1', label: '① broadcast : « Qui a 192.168.10.1 ? »', tone: 'amber', offset: -20 },
+    { from: 'r1', to: 'pc', label: '② unicast : « C\'est moi, ma MAC est 001c.73…»', tone: 'emerald', offset: -20 },
+  ]}
+  caption="La requête ARP est un broadcast (tout le VLAN la reçoit), la réponse un unicast. PC1 garde le résultat en cache quelques minutes."
+/>
+
+<Callout type="warning">
+Une passerelle oubliée ou fausse est l'erreur la plus fréquente sur un poste ou un serveur : la
+machine joint parfaitement son propre réseau, mais rien au-delà. Premier réflexe : `ip route`
+(Linux) ou `ipconfig` (Windows).
+</Callout>
+
+## La table de routage
+
+Un routeur décide où envoyer chaque paquet grâce à sa **table de routage** : une liste de
+réseaux de destination, avec pour chacun l'interface de sortie et le prochain saut.
+
+Au démarrage, R1 connaît seulement ses réseaux **directement connectés** : ceux de ses interfaces.
+
+```text title="R1#show ip route"
+VRF: default
+Codes: C - connected, S - static, K - kernel, B - BGP, O - OSPF
+
+Gateway of last resort is not set
+
+ C        192.168.10.0/26 is directly connected, Ethernet1
+ C        192.168.10.120/31 is directly connected, Ethernet2
+```
+
+Le réseau du siège n'y figure pas : un paquet vers 172.16.20.10 serait **jeté**. Pour qu'il le
+connaisse, deux solutions : le lui dire à la main (**routage statique**), ou le lui faire apprendre
+par un protocole (**routage dynamique** : OSPF, BGP… dans la formation suivante).
+
+## Configurer une route statique
+
+Une route statique se résume à : « pour aller vers **ce réseau**, envoie au **prochain saut** ».
+
+```text title="Arista EOS"
+ip route 172.16.20.0/24 192.168.10.121
+```
+
+```text title="Cisco IOS"
+ip route 172.16.20.0 255.255.255.0 192.168.10.121
+```
+
+Le prochain saut doit être **joignable directement**, sur un réseau connecté : ici, l'adresse de
+R2 sur le lien R1-R2.
+
+## La route par défaut
+
+R1 est un routeur d'agence : tout ce qui n'est pas local part vers R2. Plutôt que d'écrire une
+route par réseau du siège, on utilise la **route par défaut**, `0.0.0.0/0`, qui correspond à
+**toutes** les destinations :
+
+```text title="R1 · Arista EOS"
+ip route 0.0.0.0/0 192.168.10.121
+```
+
+C'est l'équivalent de la passerelle par défaut d'un PC, mais pour un routeur. Elle apparaît comme
+**Gateway of last resort** dans la table.
+
+## Le plus long préfixe gagne
+
+Une destination peut correspondre à plusieurs routes. Imaginons cette table sur R2, et un paquet
+pour **172.16.20.10** :
+
+| Route | Correspond à 172.16.20.10 ? | Longueur |
+|---|---|---|
+| `0.0.0.0/0` via 10.0.23.1 | oui (toutes les adresses) | 0 bit |
+| `172.16.0.0/16` via 10.0.23.1 | oui | 16 bits |
+| `172.16.20.0/24` via 10.0.23.1 | oui | **24 bits** ✓ |
+| `172.16.30.0/24` via 10.0.23.1 | non | |
+
+Le routeur choisit **la route la plus précise**, celle qui a le préfixe le plus long : le /24.
+La route par défaut ne sert donc que lorsqu'**aucune autre route** ne correspond.
+
+<Callout type="tip">
+Cette règle est fondamentale et vaut pour tous les protocoles : statique, OSPF, BGP. Elle permet
+par exemple d'avoir une route large vers tout le siège (`172.16.0.0/16`) et une exception plus
+précise vers un site particulier.
+</Callout>
+
+## Saut par saut : le next hop
+
+Ajoutons les routes nécessaires sur chaque routeur :
+
+```text title="R1"
+ip route 0.0.0.0/0 192.168.10.121           ! tout le reste : vers R2
+```
+
+```text title="R2"
+ip route 192.168.10.0/24 192.168.10.120     ! l'agence : vers R1
+ip route 172.16.20.0/24 10.0.23.1           ! le siège : vers R3
+```
+
+```text title="R3"
+ip route 192.168.10.0/24 10.0.23.0          ! l'agence : vers R2
+```
+
+Sur R2, une seule route `/24` couvre **tous** les réseaux de l'agence (utilisateurs, Wi-Fi,
+serveurs…) : c'est l'intérêt d'avoir tiré tous les sous-réseaux VLSM d'un même bloc.
+
+Suivons maintenant le paquet. Chaque routeur décide **seul**, sans connaître le chemin complet :
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'pc', type: 'host', x: 55, y: 100, label: 'PC1' },
+    { id: 'r1', type: 'router', x: 220, y: 100, label: 'R1' },
+    { id: 'r2', type: 'router', x: 385, y: 100, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 550, y: 100, label: 'R3', tone: 'violet' },
+    { id: 'app', type: 'server', x: 705, y: 94, label: 'Appli', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }, { from: 'r1', to: 'r2' }, { from: 'r2', to: 'r3' }, { from: 'r3', to: 'app' }]}
+  flows={[
+    { from: 'pc', to: 'r1', label: 'passerelle', tone: 'sky', offset: -18 },
+    { from: 'r1', to: 'r2', label: '0.0.0.0/0', tone: 'sky', offset: -18 },
+    { from: 'r2', to: 'r3', label: '172.16.20.0/24', tone: 'sky', offset: -18 },
+    { from: 'r3', to: 'app', label: 'connecté', tone: 'sky', offset: -18 },
+  ]}
+  caption="Chaque routeur choisit le prochain saut d'après sa propre table. Aucun ne connaît le chemin de bout en bout."
+/>
+
+Et à chaque saut, que devient le paquet ? Les **adresses IP ne changent pas** : elles désignent
+la source et la destination finales. En revanche, chaque routeur retire la trame Ethernet et en
+**construit une nouvelle** pour le lien suivant, avec de nouvelles adresses MAC. Il décrémente
+aussi le <Term id="ttl" /> :
+
+<PacketFormat
+  cols={13}
+  rows={[
+    { label: 'PC1 → R1', fields: [
+      { label: 'MAC R1 Et1', sub: 'destination', span: 3, tone: 'amber' },
+      { label: 'MAC PC1', sub: 'source', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', sub: 'IP source', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', sub: 'IP destination', span: 3, tone: 'emerald', mono: true },
+      { label: '64', sub: 'TTL', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R1 → R2', fields: [
+      { label: 'MAC R2 Et1', span: 3, tone: 'amber' },
+      { label: 'MAC R1 Et2', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '63', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R2 → R3', fields: [
+      { label: 'MAC R3 Et1', span: 3, tone: 'amber' },
+      { label: 'MAC R2 Et2', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '62', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R3 → Appli', fields: [
+      { label: 'MAC Appli', span: 3, tone: 'amber' },
+      { label: 'MAC R3 Et2', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '61', span: 1, tone: 'violet', mono: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="Les adresses MAC changent à chaque saut (couche 2, locale à chaque lien), les adresses IP restent les mêmes de bout en bout (couche 3)."
+/>
+
+C'est le résumé de toute cette formation : **la couche 2 livre d'un équipement au suivant, la
+couche 3 décide du chemin jusqu'à la destination finale.**
+
+## Le piège du retour
+
+Un ping, c'est un aller **et un retour**. La réponse de l'application part de 172.16.20.10 vers
+192.168.10.10 : chaque routeur du chemin doit aussi savoir **revenir** vers l'agence.
+
+<Topology
+  width={640}
+  height={210}
+  nodes={[
+    { id: 'pc', type: 'host', x: 70, y: 100, label: 'PC1' },
+    { id: 'r1', type: 'router', x: 240, y: 100, label: 'R1' },
+    { id: 'r3', type: 'router', x: 410, y: 100, label: 'R3', sub: 'pas de route retour', tone: 'rose' },
+    { id: 'app', type: 'server', x: 570, y: 94, label: 'Appli', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }, { from: 'r1', to: 'r3', style: 'dashed' }, { from: 'r3', to: 'app' }]}
+  flows={[
+    { from: 'r1', to: 'r3', label: 'aller : OK', tone: 'emerald', offset: -16 },
+    { from: 'app', to: 'r3', label: 'réponse', tone: 'amber', offset: 16 },
+  ]}
+  notes={[{ x: 410, y: 180, text: 'R3 ne sait pas joindre 192.168.10.0/24 : réponse jetée', tone: 'rose' }]}
+  caption="Si R3 n'a pas de route vers l'agence, la requête arrive mais la réponse est jetée : le ping échoue alors que l'aller fonctionne."
+/>
+
+<Callout type="field">
+« Le ping ne passe pas, pourtant ma route est bonne » : neuf fois sur dix, c'est la **route retour**
+qui manque, sur un routeur ou sur un firewall du chemin. Vérifiez les deux sens, à chaque saut.
+</Callout>
+
+## Les routes flottantes
+
+On peut configurer **deux routes vers la même destination**, par exemple un lien principal et un
+lien de secours 4G. Pour les départager, chaque source de routes a une **distance administrative**
+(AD) : la plus faible l'emporte.
+
+| Source | Distance administrative (Cisco) |
+|---|---|
+| Réseau connecté | 0 |
+| Route statique | 1 |
+| eBGP | 20 |
+| OSPF | 110 |
+| iBGP | 200 |
+
+<Callout type="note">
+Ces valeurs sont celles de Cisco. Elles varient selon les constructeurs : sur Arista EOS, par
+exemple, BGP utilise 200 par défaut pour eBGP comme pour iBGP. L'important est le principe :
+à préfixe égal, la plus petite distance gagne.
+</Callout>
+
+Une **route flottante** est une route statique à laquelle on donne volontairement une distance
+plus élevée. Elle reste en réserve, et n'apparaît dans la table que si la route principale disparaît :
+
+```text title="R1 · Arista EOS"
+ip route 0.0.0.0/0 192.168.10.121          ! principale, AD 1
+ip route 0.0.0.0/0 192.0.2.1 250           ! secours 4G, AD 250 : utilisée seulement si la principale tombe
+```
+
+## Dépanner
+
+Trois commandes couvrent l'essentiel :
+
+- `show ip route` (ou `show ip route 172.16.20.10`) : le routeur a-t-il une route, laquelle ?
+- `ping` : la destination répond-elle ? Utilise <Term id="icmp" />.
+- `traceroute` : par quels routeurs passe-t-on, et où ça s'arrête ?
+
+`traceroute` exploite le TTL : il envoie des paquets avec un TTL de 1, puis 2, puis 3… Chaque
+routeur qui fait tomber le TTL à 0 renvoie un message d'erreur ICMP, ce qui révèle son adresse :
+
+```text title="pc1:~# traceroute 172.16.20.10"
+traceroute to 172.16.20.10 (172.16.20.10), 30 hops max, 46 byte packets
+ 1  192.168.10.1 (192.168.10.1)  0.512 ms  0.271 ms  0.236 ms
+ 2  192.168.10.121 (192.168.10.121)  0.874 ms  0.611 ms  0.583 ms
+ 3  10.0.23.1 (10.0.23.1)  1.102 ms  0.947 ms  0.902 ms
+ 4  172.16.20.10 (172.16.20.10)  1.215 ms  1.033 ms  1.011 ms
+```
+
+Si la trace s'arrête à un saut (des `* * *`), le problème se situe sur ce routeur ou juste après :
+route manquante à l'aller, ou au retour.
+
+## Le lab
+
+Reproduisez ce réseau chez vous. Les trois routeurs démarrent **sans aucune route statique** :
+
+1. Déployez le lab, connectez-vous à `pc1` (`docker exec -it clab-static-routing-pc1 sh`) et
+   lancez `ping 172.16.20.10` : il échoue.
+2. Regardez `show ip route` sur R1 : il ne connaît que ses réseaux connectés.
+3. Ajoutez les routes, routeur par routeur, en relançant le ping à chaque étape.
+   Remarquez qu'il ne passe qu'une fois **la route retour** configurée sur R3.
+4. Lancez `traceroute 172.16.20.10` depuis `pc1` et comparez avec la sortie ci-dessus.
+5. Bonus : remplacez les deux routes de R2 par une seule route par défaut. Que se passe-t-il, et pourquoi ?
+
+<Lab name="static-routing" lang="fr" />
+
+<Callout type="tip" title="Solution">
+Les routes à ajouter sont exactement celles de la section « Saut par saut » : une route par défaut
+sur R1, deux routes sur R2, une route vers l'agence sur R3. Pour entrer dans la configuration :
+`enable`, puis `configure`, puis les commandes `ip route`.
+</Callout>
+
+## À retenir
+
+- Une machine envoie directement si la destination est **dans son réseau**, sinon à sa **passerelle**.
+- Un routeur choisit la route avec le **plus long préfixe** ; `0.0.0.0/0` est la route par défaut.
+- Chaque routeur ne connaît que **le prochain saut** : les MAC changent à chaque saut, les IP non.
+- Toujours penser à la **route retour**.
+- La **distance administrative** départage les sources de routes ; une route flottante sert de secours.
+
+Bravo, vous avez terminé les fondamentaux ! La suite logique : apprendre aux routeurs à se
+découvrir tout seuls avec le [routage dynamique](/formations/routing) (OSPF, puis BGP).
