@@ -56,8 +56,14 @@ const rows: { label: string; items: Brand[]; reverse?: boolean }[] = [
                       class="flex h-12 items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-4 text-slate-500 transition hover:border-sky-400 hover:text-slate-900 focus-visible:border-sky-400 focus-visible:text-slate-900 focus-visible:outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:text-white dark:focus-visible:text-white"
                     >
                       {brand.path && (
-                        <svg viewBox={brand.viewBox ?? '0 0 24 24'} class="size-5 shrink-0" fill="currentColor" aria-hidden="true">
+                        <svg
+                          viewBox={brand.viewBox ?? '0 0 24 24'}
+                          class:list={['shrink-0', brand.wordmark ? 'h-3.5 w-auto' : 'size-5']}
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
                           <g transform={brand.transform}>
+                            {brand.faded?.map((d) => <path d={d} opacity="0.45" />)}
                             {[brand.path].flat().map((d) => <path d={d} />)}
                           </g>
                         </svg>
@@ -69,7 +75,7 @@ const rows: { label: string; items: Brand[]; reverse?: boolean }[] = [
                           aria-hidden="true"
                         ></span>
                       )}
-                      <span class="whitespace-nowrap text-sm font-semibold tracking-tight">{brand.name}</span>
+                      <span class:list={['whitespace-nowrap text-sm font-semibold tracking-tight', brand.wordmark && 'sr-only']}>{brand.name}</span>
                       {count > 0 && (
                         <span class="rounded-full bg-sky-100 px-1.5 font-mono text-[10px] font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">{count}</span>
                       )}

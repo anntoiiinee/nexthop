@@ -53,7 +53,7 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 | Sitemap | `@astrojs/sitemap` (FR/EN) | 3.7.4 |
 | Flux RSS | `@astrojs/rss` (FR/EN) | 4.0.19 |
 | Labs | Fichiers ContainerLab parsés avec `yaml` | `yaml` 2.9.1 |
-| Logos | [Simple Icons](https://simpleicons.org) (CC0) + logos officiels ContainerLab (BSD-3, © Nokia), Infoblox, Stormshield | Simple Icons 16.35.0 |
+| Logos | [Simple Icons](https://simpleicons.org) (CC0) + logos officiels : ContainerLab (BSD-3, © Nokia), NetBox (Apache 2.0), Arista (domaine public), Infoblox, Stormshield | Simple Icons 16.35.0 |
 | Runtime | Node.js (voir `.nvmrc`) | 22.23.1 |
 | Hébergement | Cloudflare Workers (static assets), déploiement auto à chaque push sur `main` | Wrangler 4.151 |
 
@@ -183,7 +183,7 @@ Mise en route (une seule fois) :
 - [x] Accueil : carrousel des technologies, chiffres, par où commencer, terme du jour, FAQ
 - [x] Favicon, Buy Me a Coffee, signalement d'erreur via GitHub
 - [x] Flux RSS FR/EN
-- [x] Logos Infoblox et Stormshield dans le carrousel
+- [x] Logos Arista, NetBox, Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [ ] Composants `<Callout>` et `<CliOutput>`
 - [ ] Images Open Graph propres à chaque article (générées au build)
