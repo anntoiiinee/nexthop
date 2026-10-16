@@ -71,7 +71,7 @@ const runScript = [
 
 const h3 = 'mt-6 text-sm font-semibold text-slate-900 dark:text-white';
 ---
-<section class="not-prose my-10 overflow-hidden rounded-xl border border-emerald-300 dark:border-emerald-500/30">
+<section class="lab not-prose my-10 overflow-hidden rounded-xl border border-emerald-300 dark:border-emerald-500/30">
   <header class="flex items-center gap-3 border-b border-emerald-300 bg-emerald-50 px-6 py-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
     <span class="font-mono text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
       {copy.title}
@@ -120,3 +120,10 @@ const h3 = 'mt-6 text-sm font-semibold text-slate-900 dark:text-white';
     <Code code={runScript} lang="bash" />
   </div>
 </section>
+
+<style>
+  /* Hors de .prose, Expressive Code n'a aucune marge : on décolle chaque bloc de son titre */
+  .lab :global(.expressive-code) {
+    margin-top: 0.5rem;
+  }
+</style>
