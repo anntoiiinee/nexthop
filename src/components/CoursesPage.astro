@@ -3,6 +3,9 @@ import { getCollection } from 'astro:content';
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
+import { getCourses } from '@/lib/courses';
+import { courseDates } from '@/lib/dates';
+import ContentDates from './ContentDates.astro';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
@@ -19,6 +22,7 @@ const courses = entries
     ).length;
     return { course, slug, chapters };
   });
+const dates = Object.fromEntries((await getCourses(lang)).map((c) => [c.slug, courseDates(c)]));
 ---
 <BaseLayout title={`${t(lang, 'courses.title')} | Next Hop`} lang={lang} alternates={routes.courses}>
   <section class="mx-auto max-w-6xl px-4 py-16">
@@ -44,6 +48,7 @@ const courses = entries
               {course.data.title}
             </h2>
             <p class="mt-2 text-slate-600 dark:text-slate-400">{course.data.description}</p>
+            {dates[slug] && <ContentDates created={dates[slug].created} updated={dates[slug].updated} lang={lang} class="mt-4 text-xs" />}
           </a>
         ))}
       </div>

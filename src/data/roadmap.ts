@@ -76,4 +76,43 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'segmentation', title: { fr: 'Segmentation', en: 'Segmentation' } },
     ],
   },
+  {
+    course: 'proxy',
+    label: 'Proxy · LB',
+    title: { fr: 'Proxy et load balancing', en: 'Proxy and load balancing' },
+    text: { fr: 'Contrôler les flux sortants et publier les applications.', en: 'Controlling outbound traffic and publishing applications.' },
+    chapters: [
+      { slug: 'forward-proxy', title: { fr: 'Le proxy sortant', en: 'Forward proxy' } },
+      { slug: 'tls-pki', title: { fr: 'TLS, certificats et inspection', en: 'TLS, certificates and inspection' } },
+      { slug: 'reverse-proxy', title: { fr: 'Le reverse proxy', en: 'Reverse proxy' } },
+      { slug: 'load-balancing', title: { fr: 'Load balancing et F5 BIG-IP', en: 'Load balancing and F5 BIG-IP' } },
+      { slug: 'waf', title: { fr: 'WAF et protection applicative', en: 'WAF and application protection' } },
+    ],
+  },
+  {
+    course: 'operations',
+    label: 'DDI · Monitoring',
+    title: { fr: 'Services et observabilité', en: 'Services and observability' },
+    text: { fr: 'Servir, superviser et garder la main sur le réseau.', en: 'Serving, monitoring and keeping control of the network.' },
+    chapters: [
+      { slug: 'ddi', title: { fr: 'DDI : DNS, DHCP et IPAM', en: 'DDI: DNS, DHCP and IPAM' } },
+      { slug: 'oob', title: { fr: 'Management et accès hors bande', en: 'Management and out-of-band access' } },
+      { slug: 'monitoring', title: { fr: 'SNMP, syslog et NetFlow', en: 'SNMP, syslog and NetFlow' } },
+      { slug: 'telemetry', title: { fr: 'Télémétrie avec gNMI et gNMIc', en: 'Telemetry with gNMI and gNMIc' } },
+      { slug: 'prometheus-grafana', title: { fr: 'Prometheus et Grafana', en: 'Prometheus and Grafana' } },
+    ],
+  },
+  {
+    course: 'cloud',
+    label: 'Cloud · Hybride',
+    title: { fr: 'Le réseau dans le cloud', en: 'Cloud networking' },
+    text: { fr: 'Étendre le réseau de l’entreprise jusque dans le cloud.', en: 'Extending the corporate network into the cloud.' },
+    chapters: [
+      { slug: 'aws-vpc', title: { fr: 'Les bases du réseau AWS', en: 'AWS networking basics' } },
+      { slug: 'security-groups', title: { fr: 'Security groups et NACL', en: 'Security groups and NACLs' } },
+      { slug: 'transit-gateway', title: { fr: 'Interconnecter des VPC', en: 'Interconnecting VPCs' } },
+      { slug: 'hybrid-cloud', title: { fr: 'Le cloud hybride : VPN et Direct Connect', en: 'Hybrid cloud: VPN and Direct Connect' } },
+      { slug: 'terraform', title: { fr: 'Le réseau en code avec Terraform', en: 'Network as code with Terraform' } },
+    ],
+  },
 ];

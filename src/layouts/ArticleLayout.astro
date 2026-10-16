@@ -2,9 +2,11 @@
 import BaseLayout from './BaseLayout.astro';
 import type { CollectionEntry } from 'astro:content';
 import type { MarkdownHeading } from 'astro';
-import { t, formatDate, type Lang } from '@/i18n/ui';
+import { t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import SupportCard from '@/components/SupportCard.astro';
+import ContentDates from '@/components/ContentDates.astro';
+import { updatedDateOf } from '@/lib/dates';
 import { routes } from '@/i18n/ui';
 import { absoluteUrl, authorSchema, breadcrumbSchema, DEFAULT_IMAGE } from '@/lib/seo';
 
@@ -17,7 +19,8 @@ interface Props {
 }
 
 const { post, headings, lang, alternates, breadcrumbs } = Astro.props;
-const { title, description, pubDate, updatedDate, level, tags } = post.data;
+const { title, description, pubDate, level, tags } = post.data;
+const updatedDate = updatedDateOf(post);
 const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
 
 const path = Astro.url.pathname;
@@ -67,10 +70,7 @@ const jsonLd = [
         </div>
         <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
         <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
-        <p class="mt-4 text-sm text-slate-500">
-          {t(lang, 'article.published')} <time datetime={pubDate.toISOString()}>{formatDate(pubDate, lang)}</time>
-          {updatedDate && <> · {t(lang, 'article.updated')} {formatDate(updatedDate, lang)}</>}
-        </p>
+        <ContentDates created={pubDate} updated={updatedDate} lang={lang} class="mt-4 text-sm" />
       </header>
 
       <div class="prose prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-a:text-sky-600 dark:prose-a:text-sky-400">

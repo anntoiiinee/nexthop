@@ -1,0 +1,18 @@
+---
+// « Créé le X · mis à jour le Y » (la mise à jour n'apparaît que si elle existe).
+import { t, formatDate, type Lang } from '@/i18n/ui';
+
+interface Props { created: Date; updated?: Date; lang: Lang; class?: string }
+const { created, updated, lang, class: className } = Astro.props;
+---
+<p class:list={['text-slate-500', className]}>
+  {t(lang, 'article.published')} <time datetime={created.toISOString()}>{formatDate(created, lang)}</time>
+  {updated && (
+    <>
+      <span aria-hidden="true"> · </span>
+      <span class="text-emerald-700 dark:text-emerald-400">
+        {t(lang, 'article.updated')} <time datetime={updated.toISOString()}>{formatDate(updated, lang)}</time>
+      </span>
+    </>
+  )}
+</p>

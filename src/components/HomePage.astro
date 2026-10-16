@@ -10,7 +10,9 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { roadmap } from '@/data/roadmap';
-import { courseUrl, chapterUrl, getPublished } from '@/lib/courses';
+import { courseUrl, chapterUrl, getPublished, getCourses } from '@/lib/courses';
+import { courseDates } from '@/lib/dates';
+import ContentDates from './ContentDates.astro';
 import { getTutorials, slugOf, tutorialUrl } from '@/lib/content';
 import { profile } from '@/data/profile';
 import { coffeeUrl, coffeeIcon } from '@/lib/support';
@@ -25,6 +27,7 @@ const { lang } = Astro.props;
 const posts = await getTutorials(lang);
 const latest = posts.slice(0, 6);
 const published = await getPublished(lang);
+const courseDatesBySlug = Object.fromEntries((await getCourses(lang)).map((c) => [c.slug, courseDates(c)]));
 
 // Étapes « Par où commencer ? » : on ne garde que celles publiées dans cette langue
 const tutorialSlugs = new Set(posts.map((p) => slugOf(p.id)));
@@ -242,7 +245,7 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
       <h2 class={h2}>{copy.roadmapTitle}</h2>
       <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.roadmapIntro}</p>
 
-      <ol class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <ol class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {roadmap.map((step, i) => {
           const courseReady = published.courses.has(step.course);
           return (
@@ -257,6 +260,9 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
                 ) : step.title[lang]}
               </h3>
               <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{step.text[lang]}</p>
+              {courseDatesBySlug[step.course] && (
+                <ContentDates created={courseDatesBySlug[step.course].created} updated={courseDatesBySlug[step.course].updated} lang={lang} class="mt-2 text-xs" />
+              )}
 
               <ul class="mt-4 space-y-1.5 border-t border-slate-200 pt-4 text-sm dark:border-slate-800">
                 {step.chapters.map((chapter) =>
