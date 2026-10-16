@@ -14,6 +14,7 @@ import { courseUrl, chapterUrl, getPublished } from '@/lib/courses';
 import { getTutorials, slugOf, tutorialUrl } from '@/lib/content';
 import { profile } from '@/data/profile';
 import { coffeeUrl, coffeeIcon } from '@/lib/support';
+import { websiteSchema, authorSchema } from '@/lib/seo';
 import { tools, toolUrl } from '@/data/tools';
 import { glossary } from '@/data/glossary';
 import { startHere, type AudienceKey, type StartStep } from '@/data/startHere';
@@ -146,7 +147,7 @@ const stats = ([
 
 const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-white';
 ---
-<BaseLayout title={copy.title} lang={lang} alternates={routes.home}>
+<BaseLayout title={copy.title} lang={lang} alternates={routes.home} jsonLd={[websiteSchema(lang, t(lang, 'site.description')), authorSchema(lang)]}>
 
   <!-- Hero -->
   <section class="relative overflow-hidden">

@@ -13,6 +13,7 @@ export const ui = {
   fr: {
     'site.description': 'Tutoriels réseau et sécurité pour étudiants et personnes en reconversion.',
     'site.tagline': 'Votre prochain saut vers le réseau',
+    'nav.home': 'Accueil',
     'nav.tutorials': 'Tutoriels',
     'nav.courses': 'Formations',
     'nav.tools': 'Outils',
@@ -68,6 +69,7 @@ export const ui = {
   en: {
     'site.description': 'Networking and security tutorials for students and career changers.',
     'site.tagline': 'Your next hop into networking',
+    'nav.home': 'Home',
     'nav.tutorials': 'Tutorials',
     'nav.courses': 'Courses',
     'nav.tools': 'Tools',

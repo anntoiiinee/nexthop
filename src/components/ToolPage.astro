@@ -2,6 +2,7 @@
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { getTool, toolUrl } from '@/data/tools';
+import { absoluteUrl, authorSchema, breadcrumbSchema } from '@/lib/seo';
 
 interface Props { lang: Lang; slug: string; }
 const { lang, slug } = Astro.props;
@@ -12,8 +13,28 @@ if (!tool) throw new Error(`Outil inconnu : "${slug}" (voir src/data/tools.ts)`)
 const Tool = tool.component;
 const learnMore = tool.learnMore?.[lang];
 const alternates = { fr: toolUrl('fr', slug), en: toolUrl('en', slug) };
+
+const jsonLd = [
+  {
+    '@type': 'WebApplication',
+    name: tool.title[lang],
+    description: tool.description[lang],
+    url: absoluteUrl(toolUrl(lang, slug)),
+    applicationCategory: 'EducationalApplication',
+    operatingSystem: 'Any (web browser)',
+    inLanguage: lang,
+    isAccessibleForFree: true,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
+    author: authorSchema(lang),
+  },
+  breadcrumbSchema([
+    { name: t(lang, 'nav.home'), path: routes.home[lang] },
+    { name: t(lang, 'tools.title'), path: routes.tools[lang] },
+    { name: tool.title[lang], path: toolUrl(lang, slug) },
+  ]),
+];
 ---
-<BaseLayout title={`${tool.title[lang]} | Next Hop`} description={tool.description[lang]} lang={lang} alternates={alternates}>
+<BaseLayout title={`${tool.title[lang]} | Next Hop`} description={tool.description[lang]} lang={lang} alternates={alternates} jsonLd={jsonLd}>
   <div class="mx-auto max-w-4xl px-4 py-16">
     <a href={routes.tools[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
       ← {t(lang, 'tools.back')}
