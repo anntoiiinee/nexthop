@@ -1,0 +1,224 @@
+---
+title: "Sauvegardes GitOps des configurations"
+description: "Sauvegarder chaque jour la configuration de tous les équipements dans Git, en Python ou en Ansible, avec un pipeline GitLab CI planifié : historique, diff, alertes et restauration."
+pubDate: 2026-10-18
+level: intermediate
+tags: [gitops, backup, git, gitlab-ci, python, ansible]
+vendor: [arista]
+order: 3
+---
+
+Un switch qui meurt, une mauvaise manipulation, un changement fait « vite fait » un vendredi soir :
+sans sauvegarde à jour, on reconstruit la configuration de mémoire. Une sauvegarde par équipement dans
+un dossier partagé, c'est mieux que rien… mais elle ne dit ni **ce qui a changé**, ni **quand**. En
+stockant les configurations dans **Git**, on obtient tout cela gratuitement.
+
+## Pourquoi Git
+
+| Besoin | Ce que Git apporte |
+|---|---|
+| Restaurer une configuration | toutes les versions passées, pour chaque équipement |
+| Savoir ce qui a changé | `git diff` ligne par ligne entre deux sauvegardes |
+| Savoir quand | un commit horodaté à chaque changement détecté |
+| Être alerté | un commit = un changement : il suffit de surveiller le dépôt |
+| Auditer | un historique complet, impossible à réécrire discrètement si la branche est protégée |
+
+C'est une première marche vers le <Term id="gitops" /> : Git devient la **référence** de l'état du
+réseau. Ici, Git **constate** l'état réel des équipements ; au chapitre AVD, on ira plus loin, avec
+Git qui **décide** de l'état voulu.
+
+## L'architecture
+
+Chaque nuit, un pipeline <Term id="cicd" /> planifié se connecte à tous les équipements, récupère leur
+configuration, et commite ce qui a changé dans le dépôt :
+
+<Topology
+  width={760}
+  height={300}
+  groups={[{ x: 470, y: 30, w: 274, h: 255, label: 'Réseau de management', tone: 'sky' }]}
+  nodes={[
+    { id: 'gl', type: 'server', x: 90, y: 80, label: 'GitLab', sub: 'planification 2 h', tone: 'violet' },
+    { id: 'repo', type: 'server', x: 90, y: 230, label: 'Dépôt', sub: 'backups/*.cfg', tone: 'violet' },
+    { id: 'runner', type: 'server', x: 320, y: 150, label: 'Runner', sub: 'Python ou Ansible', tone: 'emerald' },
+    { id: 'sp', type: 'switch', x: 600, y: 90, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 530, y: 225, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 670, y: 225, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'gl', to: 'runner' }, { from: 'runner', to: 'repo' },
+    { from: 'runner', to: 'sp' }, { from: 'runner', to: 'l1' }, { from: 'runner', to: 'l2' },
+  ]}
+  flows={[
+    { from: 'gl', to: 'runner', label: '① lance le job', tone: 'violet' },
+    { from: 'runner', to: 'sp', label: '② show running-config', tone: 'sky', offset: -14 },
+    { from: 'runner', to: 'repo', label: '③ commit + push', tone: 'emerald' },
+  ]}
+  caption="Le runner, placé dans le réseau de management, interroge les équipements puis pousse les configurations dans le dépôt. Rien ne change sur les équipements : c'est de la lecture seule."
+/>
+
+Le job déroule toujours les mêmes étapes :
+
+<PacketFormat
+  cols={14}
+  rows={[
+    { fields: [
+      { label: 'Planification', sub: 'cron', span: 2, tone: 'violet' },
+      { label: 'Connexion', sub: 'compte de service', span: 2, tone: 'sky' },
+      { label: 'Lecture', sub: 'running-config', span: 2, tone: 'sky' },
+      { label: 'Nettoyage', sub: 'lignes volatiles', span: 2, tone: 'amber' },
+      { label: 'Commit', sub: 'si changement', span: 2, tone: 'emerald' },
+      { label: 'Push', sub: 'vers le dépôt', span: 2, tone: 'emerald' },
+      { label: 'Alerte', sub: 'job en échec', span: 2, tone: 'rose' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="Le cycle quotidien d'une sauvegarde GitOps. Sans changement de configuration, aucun commit n'est créé."
+/>
+
+## Le piège des lignes qui changent toute seules
+
+Si on enregistre la sortie brute de `show running-config`, certaines lignes changent à chaque lecture
+sans que la configuration change : un horodatage, un compteur. Résultat : un commit chaque nuit pour
+rien, et les vrais changements noyés dans le bruit. On les retire avant d'écrire le fichier :
+
+| Plateforme | Ligne volatile | Exemple |
+|---|---|---|
+| Arista EOS | en-têtes de la commande | `! Command: show running-config`, `! device: leaf1 (cEOSLab, EOS-4.32.0F)` |
+| Cisco IOS | horodatage des changements | `! Last configuration change at 02:00:13 UTC Sat Oct 18 2026` |
+
+<Callout type="tip">
+Testez votre nettoyage en lançant la sauvegarde deux fois de suite : la seconde fois, `git status`
+ne doit montrer **aucune** modification. Si un fichier change, une ligne volatile vous a échappé.
+</Callout>
+
+## La version Python
+
+Le script lit l'inventaire, interroge les équipements en parallèle, nettoie et écrit un fichier par
+équipement. Un équipement en échec n'empêche pas les autres d'être sauvegardés, mais le script se
+termine en erreur pour que le pipeline le signale.
+
+<CodeFile lab="netops" file="python/backup_configs.py" />
+
+```text title="python3 python/backup_configs.py"
+OK    leaf1
+OK    spine1
+OK    leaf2
+3/3 équipements sauvegardés dans backups/
+```
+
+## La version Ansible
+
+Même résultat avec un playbook. La running-config est récupérée par `eos_command`, et le fichier est
+écrit sur le nœud de contrôle (`delegate_to: localhost`) :
+
+<CodeFile lab="netops" file="ansible/backup.yml" />
+
+<Callout type="note">
+Le module `eos_config` dispose aussi d'une option `backup: yes`, qui enregistre une copie de la
+configuration. Récupérer la configuration explicitement, comme ici, permet de maîtriser le nom du
+fichier et le nettoyage des lignes volatiles : c'est ce qui rend les diffs Git exploitables.
+</Callout>
+
+## Le pipeline GitLab CI
+
+Le pipeline exécute le script (ou le playbook), puis commite et pousse les changements. Il se lance
+sur une **planification**, ou à la main depuis l'interface (bouton *Run pipeline*) :
+
+<CodeFile lab="netops" file="gitlab-ci.yml" />
+
+Pour le mettre en place :
+
+1. Créez un dépôt dédié aux sauvegardes, avec les fichiers du lab (`python/`, `ansible/`,
+   `inventory.yml`, `requirements.txt`…) et renommez `gitlab-ci.yml` en `.gitlab-ci.yml`.
+2. Dans *Settings > CI/CD > Variables*, créez `NET_USER`, `NET_PASSWORD` et `BACKUP_PUSH_TOKEN`,
+   cochées **Masked** et **Protected**.
+3. Créez un **jeton d'accès projet** (rôle Developer, scope `write_repository`) : c'est lui qui pousse.
+4. Dans *Build > Pipeline schedules*, planifiez le job, par exemple `0 2 * * *` (tous les jours à 2 h).
+5. Utilisez un **runner** installé dans le réseau de management : les runners partagés de GitLab.com
+   n'ont, heureusement, pas accès à vos équipements.
+
+## Le résultat
+
+Chaque matin, l'historique du dépôt raconte la vie du réseau :
+
+```text title="git log --oneline"
+8c41d2e backup 2026-10-21 : leaf1 leaf2
+3f2a1c9 backup 2026-10-19 : spine1
+b07e5a4 backup 2026-10-18 : leaf1 leaf2 spine1
+```
+
+Pas de commit le 20 : rien n'a changé ce jour-là. Et le 21, que s'est-il passé sur les leafs ?
+
+```text title="git show 8c41d2e -- backups/leaf1.cfg"
+--- a/backups/leaf1.cfg
++++ b/backups/leaf1.cfg
+@@ -14,6 +14,9 @@ vlan 30
+    name SERVERS
+ !
++vlan 40
++   name MANAGEMENT
++!
+ interface Ethernet1
+    description spine1
+```
+
+Quelqu'un a ajouté le VLAN 40. Si ce changement n'était pas prévu, on le sait le lendemain matin, avec
+le diff exact.
+
+<Callout type="field">
+En production, on ajoute une notification à chaque commit de sauvegarde (message dans le canal de
+l'équipe, mail) : un changement que personne n'annonce devient immédiatement visible. C'est souvent le
+premier pas qui fait adopter l'automatisation par une équipe, car il ne touche à rien et rend service
+dès le premier jour.
+</Callout>
+
+## Restaurer une configuration
+
+Sur Arista EOS, `configure replace` remplace **toute** la configuration par celle d'un fichier, en ne
+modifiant que les différences :
+
+```text title="Restauration sur leaf1"
+leaf1# copy scp:netops@172.20.30.1/home/netops/backups/leaf1.cfg flash:leaf1-restore.cfg
+leaf1# configure replace flash:leaf1-restore.cfg
+leaf1# write memory
+```
+
+Pour un équipement remplacé à neuf, la sauvegarde sert de configuration de démarrage. Et pour
+retrouver l'état d'une date précise : `git log -- backups/leaf1.cfg`, puis
+`git show <commit>:backups/leaf1.cfg`.
+
+## Bonnes pratiques
+
+- **Un dépôt dédié**, privé, avec une branche protégée où seul le compte du pipeline peut pousser.
+- **Un compte de service** en lecture seule pour la sauvegarde (rôle limité sur les équipements ou
+  dans TACACS+) : une sauvegarde n'a pas besoin des droits de configuration.
+- **Surveillez les échecs** : une sauvegarde qui échoue en silence depuis trois mois ne protège rien.
+
+<Callout type="warning">
+Une configuration contient des secrets : empreintes de mots de passe, clés TACACS+ ou RADIUS, clés
+SNMP. Certaines sont faciles à inverser (les mots de passe « type 7 » de Cisco notamment). Le dépôt
+de sauvegardes est donc **aussi sensible que les équipements eux-mêmes** : accès restreint, et jamais
+de copie sur un dépôt public.
+</Callout>
+
+## Dans le lab
+
+1. Déployez le lab `netops` et lancez `python3 python/backup_configs.py`.
+2. Faites du dossier un dépôt Git : `git init`, `git add backups/`, `git commit -m "première sauvegarde"`.
+3. Relancez la sauvegarde : `git status` ne doit rien montrer.
+4. Déployez les VLAN du chapitre précédent (`ansible-playbook ansible/vlans.yml`), relancez la
+   sauvegarde (version Ansible cette fois), et regardez `git diff`.
+5. Bonus : poussez le dossier sur un dépôt GitLab avec un runner local, et planifiez le pipeline.
+
+<Lab name="netops" lang="fr" />
+
+## À retenir
+
+- Sauvegarder dans **Git** donne l'historique, le diff, la date et l'alerte, gratuitement.
+- Un pipeline **planifié** se connecte en **lecture seule**, commite **seulement s'il y a un changement**.
+- **Retirez les lignes volatiles**, sinon chaque nuit produit un faux changement.
+- Un échec sur un équipement ne doit pas bloquer les autres, mais doit **faire échouer le job**.
+- Le dépôt de sauvegardes contient des **secrets** : protégez-le comme les équipements.
+
+Prochain chapitre : un deuxième script, qui lui **modifie** les équipements, la **rotation du compte
+de secours**.

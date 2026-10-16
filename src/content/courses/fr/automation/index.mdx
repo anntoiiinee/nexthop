@@ -1,0 +1,63 @@
+---
+title: "L'automatisation réseau"
+description: "Gérer son réseau comme du code : Python, Ansible, sauvegardes GitOps, rotation des comptes de secours, NetBox comme source de vérité et Arista AVD, avec un lab et des scripts prêts à l'emploi."
+pubDate: 2026-10-18
+level: intermediate
+tags: [automation, python, ansible, gitops, netbox, avd]
+vendor: [arista, netbox]
+order: 0
+---
+
+Configurer trois switches à la main, c'est rapide. En configurer trois cents, sans erreur, de
+façon identique, et savoir à tout moment ce qui a changé et pourquoi, c'est une autre histoire.
+L'automatisation réseau (on parle aussi de **NetOps** ou de **NetDevOps**) applique au réseau les
+méthodes des développeurs : du code versionné, des tâches répétables et des changements tracés.
+
+## Le fil rouge : l'équipe réseau s'outille
+
+L'entreprise des formations précédentes a grandi, son équipe réseau aussi. Elle veut arrêter de se
+connecter équipement par équipement, et se doter d'une chaîne d'outils complète :
+
+<Topology
+  width={760}
+  height={300}
+  groups={[{ x: 470, y: 40, w: 274, h: 245, label: 'Réseau de management', tone: 'sky' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 70, y: 70, label: 'Ingénieur', sub: 'commit' },
+    { id: 'git', type: 'server', x: 230, y: 64, label: 'GitLab', sub: 'dépôt + CI', tone: 'violet' },
+    { id: 'nb', type: 'server', x: 70, y: 220, label: 'NetBox', sub: 'source de vérité', tone: 'amber' },
+    { id: 'runner', type: 'server', x: 360, y: 154, label: 'Runner', sub: 'Ansible · Python', tone: 'emerald' },
+    { id: 'sp', type: 'switch', x: 600, y: 90, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 530, y: 220, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 670, y: 220, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'eng', to: 'git' }, { from: 'git', to: 'runner' }, { from: 'nb', to: 'runner', label: 'API' },
+    { from: 'runner', to: 'sp', label: 'SSH · eAPI' }, { from: 'runner', to: 'l1' }, { from: 'runner', to: 'l2' },
+    { from: 'sp', to: 'l1', style: 'dashed' }, { from: 'sp', to: 'l2', style: 'dashed' },
+  ]}
+  caption="La chaîne construite au fil des chapitres : le code et les configurations dans Git, les données dans NetBox, un runner qui exécute Ansible et Python vers les équipements."
+/>
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **1. Python pour le réseau** | Se connecter à des équipements avec Netmiko, exploiter des sorties JSON, travailler en parallèle |
+| **2. Ansible pour le réseau** | Écrire un inventaire et des playbooks, comprendre l'idempotence, protéger ses secrets avec Vault |
+| **3. Sauvegardes GitOps** | Sauvegarder chaque jour toutes les configurations dans Git avec un pipeline GitLab CI |
+| **4. Rotation du compte de secours** | Supprimer le compte admin par défaut, créer un compte de secours unique et le faire tourner automatiquement |
+| **5. NetBox, source de vérité** | Modéliser son réseau dans NetBox et en tirer inventaires et configurations |
+| **6. Arista AVD** | Générer, documenter et valider les configurations d'une fabric à partir d'un modèle YAML |
+
+## Prérequis
+
+- La formation [Fondamentaux](/formations/fundamentals) ; le [routage dynamique](/formations/routing) aide pour le chapitre AVD.
+- Être à l'aise avec un terminal Linux (`cd`, `ls`, éditer un fichier).
+- Aucune expérience de Python ni d'Ansible n'est nécessaire : on part des bases.
+
+<Callout type="note">
+Tous les scripts de la formation sont de vrais fichiers, regroupés dans le lab `netops` : trois
+switches Arista cEOS, un inventaire partagé par Python et Ansible, et les scripts des chapitres.
+Le code affiché dans les chapitres est exactement celui que vous téléchargez.
+</Callout>

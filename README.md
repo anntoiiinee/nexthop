@@ -81,7 +81,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -138,7 +138,8 @@ src/
   - `<PacketFormat rows cols />` : trame, en-tête ou champ de bits, sur une ou plusieurs lignes alignées ;
   - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
-  - `<OsiModel />`, `<Lab name="…" />`.
+  - `<OsiModel />`, `<Lab name="…" />` ;
+  - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé).
 - **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`). Mode sombre : variante `dark:`, pilotée par la classe `.dark` sur `<html>`.
 - **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
@@ -177,6 +178,9 @@ Mise en route (une seule fois) :
 - **Recherche vide en dev** : normal, l'index Pagefind n'existe qu'après `npm run build`. Tester avec `npm run preview`.
 - **`pagefind` dans `package.json`** : la commande doit être dans `scripts.build`, sinon l'index n'est jamais généré en production.
 - **Déploiement d'une PR qui échoue** (`missing a previews block`) : Cloudflare lance `wrangler preview` hors de `main`, ce qui exige `"previews": {}` dans `wrangler.jsonc`.
+- **Lien symbolique `node_modules` commité par erreur** : le motif `node_modules/` (avec barre finale) n'ignore que les
+  dossiers. Un lien du même nom a été commité, puis a remplacé le vrai dossier au `git pull` et cassé le build Cloudflare.
+  Le `.gitignore` utilise désormais `node_modules` ; toujours relire `git status` avant de commiter.
 - **Formulaires d'issue GitHub** : ils ne sont actifs qu'une fois `.github/` sur `main`. Les étiquettes `contenu` et `suggestion` doivent exister dans le dépôt.
 
 ---
@@ -198,11 +202,98 @@ Mise en route (une seule fois) :
 - [x] Formation Fondamentaux complète en FR (8 chapitres illustrés, dont ARP et LLDP/CDP, + lab `static-routing`)
 - [ ] Composant `<CliOutput>` (sortie CLI annotée)
 - [ ] Images Open Graph propres à chaque article (générées au build)
-- [ ] Traduction anglaise de la formation Fondamentaux
+- [x] Traduction anglaise des formations Fondamentaux et Routage dynamique
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
-- [ ] Formation suivante : le data center (VRF, spine/leaf, VXLAN, EVPN)
+- [x] Formation Automatisation en FR (6 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, NetBox, AVD + lab `netops`)
+- [ ] Formation Data center (VRF, spine/leaf, VXLAN, EVPN) : rédaction par Antoine
+- [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
+- [ ] Contenus à venir : OOB, Jinja2 en détail, Vault, installer ContainerLab et les images, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
+
+---
+
+## Contenus à venir
+
+Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couvrir, et les schémas ou le lab à prévoir.
+Proposition de nouvelle formation pour regrouper l'exploitation : **« Exploitation et supervision »** (OOB, DDI,
+télémétrie), à ajouter dans `src/data/roadmap.ts` le moment venu.
+
+### Monter son lab : ContainerLab et les images (tutoriel, prérequis de tous les labs)
+
+Le composant `<Lab>` suppose ContainerLab installé et l'image cEOS importée : un tutoriel dédié, lié depuis chaque lab.
+- Installer Docker puis ContainerLab (script officiel `bash -c "$(curl -sL https://get.containerlab.dev)"`), sous Linux
+  ou WSL2 ; ressources conseillées (RAM par nœud cEOS, CPU).
+- **Arista cEOS** : compte gratuit sur arista.com, page Software Downloads, archive `cEOS64-lab-<version>.tar.xz`,
+  `docker import … ceos:<version>` ; épingler la version dans les labs plutôt que `latest`.
+- **Pourquoi c'est plus compliqué chez Cisco** : pas d'image conteneur gratuite et libre d'accès comme cEOS ; les images
+  (IOL, IOS-XE CSR/Cat8000v, NX-OSv, XRd) passent par un abonnement (CML, contrat de support) et souvent par une machine
+  virtuelle emballée dans un conteneur (vrnetlab), plus lourde. Alternatives : Nokia SR Linux (libre), FRRouting, Cisco CML.
+- Commandes du quotidien : `deploy`, `destroy`, `inspect`, `graph`, se connecter (`docker exec`, SSH), sauvegarder une config.
+- Schéma : l'hôte, Docker, le réseau de management de ContainerLab et les liens veth entre nœuds.
+
+### Formation Fondamentaux ou Exploitation : le réseau de management et l'OOB
+
+- Pourquoi un **réseau de management séparé** (VRF de management, interface Management0) et pourquoi un accès
+  **hors bande** (out-of-band) : garder la main quand le réseau de production est cassé ou en cours de migration.
+- Les briques : serveurs de console (Opengear, Lantronix…), lien 4G/5G de secours, PDU pilotables, réseau OOB dédié.
+- Sécurité : bastion, MFA, segmentation, comptes de secours (renvoi vers le chapitre « Rotation du compte de secours »).
+- Schéma : production, management in-band et OOB côte à côte, avec le chemin d'accès quand le cœur est en panne.
+- Retour terrain : intervention sur un équipement isolé par une erreur de configuration, récupération par la console.
+
+### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
+
+- Syntaxe : variables `{{ }}`, blocs `{% %}`, commentaires, boucles, conditions, filtres (`default`, `join`, `ipaddr`
+  / `ansible.utils.ipaddr`, `upper`…), tests, macros, `include` et héritage de gabarits.
+- Maîtriser les espaces et les sauts de ligne (`trim_blocks`, `lstrip_blocks`, `{%-`) : le piège n°1 des configurations générées.
+- Séparer données (YAML, NetBox) et gabarits ; un gabarit par fonction (interfaces, BGP, SNMP…).
+- Tester un gabarit hors équipement (rendu local en Python, `ansible.builtin.template` vers un fichier, diff).
+- Fichiers d'exemple à ajouter au lab `netops` (`templates/`) et affichés avec `<CodeFile>`.
+
+### Formation Automatisation : les secrets et Vault (nouveau chapitre, ou approfondissement du chapitre Ansible)
+
+- Ansible Vault en détail : `create`, `edit`, `view`, `encrypt_string`, `rekey`, plusieurs coffres avec `--vault-id`,
+  fichier de mot de passe, intégration CI (variable de type File).
+- Les limites d'Ansible Vault (un mot de passe partagé, pas de journal d'accès) et les gestionnaires de secrets :
+  HashiCorp Vault (moteur KV, politiques, jetons, `community.hashi_vault`), CyberArk, Bitwarden.
+- Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
+- Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
+  le fichier produit commence bien par `$ANSIBLE_VAULT`.
+
+### Formation Automatisation : conventions de nommage et IPAM (nouveau chapitre, avant NetBox)
+
+- Pourquoi les conventions conditionnent l'automatisation : un nom ou une adresse qui ne suit pas la règle casse les scripts.
+- Nommage des équipements (site, rôle, numéro : `tls-dc1-leaf-01`), des interfaces et descriptions (format parsable :
+  `vers:<voisin>:<port>`), des VLAN, VRF, route-maps et prefix-lists (`RM-<VOISIN>-IN`, `PL-…`).
+- Plan d'adressage et IPAM : blocs par site et par usage, loopbacks, liens /31, management, réservations ; numérotation
+  des AS privés ; tout documenté dans NetBox.
+- Les conventions à **écrire et faire valider** avant de commencer : un document court, versionné, contrôlé par la CI
+  (lint des noms, vérification dans NetBox).
+- Lien avec le découpeur VLSM et la formation Fondamentaux.
+
+### Formation Exploitation : l'infrastructure DDI
+
+- DDI = **DNS, DHCP, IPAM** gérés ensemble : pourquoi les réunir (une adresse attribuée par DHCP est enregistrée dans
+  l'IPAM et le DNS automatiquement), et ce que coûte leur séparation (doublons, enregistrements périmés).
+- DNS : résolution, zones, enregistrements A/AAAA/PTR/CNAME, résolveurs internes, DNS split-horizon.
+- DHCP : DORA, étendues, réservations, options (passerelle, DNS), relais (`ip helper-address`), DHCP Snooping
+  (renvoi vers le chapitre ARP).
+- Les solutions : Infoblox (dans le carrousel), EfficientIP, BlueCat, Microsoft DNS/DHCP + IPAM, alternatives libres
+  (Kea, PowerDNS, NetBox pour l'IPAM).
+- Automatisation : API Infoblox (WAPI), collection Ansible, synchronisation avec NetBox.
+- Schémas : échange DHCP DORA, résolution DNS récursive, flux DDI intégré.
+
+### Formation Exploitation : télémétrie avec gNMIc, Prometheus et Grafana
+
+- Pourquoi la télémétrie en streaming plutôt que SNMP en interrogation : fréquence, volume, modèles OpenConfig, push.
+- gNMI et OpenConfig : abonnements (`sample`, `on-change`), chemins (`/interfaces/interface/state/counters`).
+- **gNMIc** : collecte depuis les équipements (activer `management api gnmi` sur EOS), fichier de configuration,
+  sortie vers Prometheus.
+- **Prometheus** : modèle de données (séries temporelles, labels), requêtes PromQL de base (`rate()` sur les compteurs
+  d'interfaces), alertes.
+- **Grafana** : tableaux de bord, variables, et une **weather map** du réseau (débit des liens en couleur).
+- Lab : ajouter gNMIc, Prometheus et Grafana au lab `netops` (conteneurs dans la même topologie ContainerLab).
+- Retour terrain : weather map temps réel d'une fabric, détection d'un lien saturé avant les utilisateurs.
 
 ---
 

@@ -1,0 +1,196 @@
+---
+title: "Ansible pour le réseau"
+description: "Ansible appliqué au réseau : inventaire et variables, collections Arista, premiers playbooks, idempotence et mode check, modules ressources et Ansible Vault."
+pubDate: 2026-10-18
+level: intermediate
+tags: [ansible, automation, yaml]
+vendor: [arista]
+order: 2
+---
+
+Avec Python, on écrit **comment** faire : se connecter, taper telle commande, lire la sortie.
+Avec **Ansible**, on décrit plutôt **ce qu'on veut obtenir** (« ces VLAN doivent exister sur ces
+leafs ») et Ansible se charge de comparer avec l'existant et de n'appliquer que la différence. C'est
+l'outil le plus répandu pour automatiser un réseau d'entreprise.
+
+## Comment fonctionne Ansible
+
+- **Sans agent** : rien à installer sur les équipements. Ansible tourne sur un **nœud de contrôle**
+  (votre machine, un runner de CI) et se connecte en SSH ou par API.
+- **Un inventaire** liste les équipements et les regroupe.
+- **Des playbooks** en YAML enchaînent des **tâches** ; chaque tâche appelle un **module**.
+- **Des collections** apportent les modules propres à chaque constructeur : `arista.eos`,
+  `cisco.ios`, `junipernetworks.junos`…
+
+<Topology
+  width={720}
+  height={250}
+  groups={[{ x: 300, y: 20, w: 405, h: 215, label: 'Équipements (aucun agent)', tone: 'sky' }]}
+  nodes={[
+    { id: 'ctl', type: 'server', x: 120, y: 120, label: 'Nœud de contrôle', sub: 'ansible-playbook', tone: 'emerald' },
+    { id: 'sp', type: 'switch', x: 500, y: 75, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 400, y: 185, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 600, y: 185, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'ctl', to: 'sp', label: 'network_cli (SSH)', tone: 'emerald' },
+    { from: 'ctl', to: 'l1', tone: 'emerald' }, { from: 'ctl', to: 'l2', tone: 'emerald' },
+  ]}
+  caption="Pour les équipements réseau, les modules s'exécutent sur le nœud de contrôle et pilotent l'équipement à distance (connexion network_cli en SSH, ou httpapi pour eAPI)."
+/>
+
+<Callout type="note">
+Sur un serveur Linux, Ansible copie un petit programme Python sur la machine et l'exécute. Sur un
+switch, c'est impossible : les modules réseau tournent donc **sur le nœud de contrôle**, et la
+connexion `network_cli` envoie les commandes en SSH. C'est ce que précise `ansible_connection`.
+</Callout>
+
+## Installation
+
+Dans le venv du chapitre précédent, `ansible-core` est déjà installé. Il reste les collections :
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+<CodeFile lab="netops" file="requirements.yml" />
+
+## Inventaire et variables
+
+L'inventaire est le même que celui des scripts Python. Les variables communes à tout le groupe `eos`
+sont dans `group_vars/eos.yml`, qu'Ansible charge automatiquement :
+
+<CodeFile lab="netops" file="group_vars/eos.yml" />
+
+Et `ansible.cfg`, lu dans le dossier courant, évite de répéter les options :
+
+<CodeFile lab="netops" file="ansible.cfg" />
+
+<Callout type="warning">
+`host_key_checking = False` évite de valider les clés SSH des switches du lab, recréés à chaque
+déploiement. **Ne le gardez pas en production** : la vérification des clés protège contre une
+usurpation d'équipement. Remplissez plutôt un fichier `known_hosts` maîtrisé.
+</Callout>
+
+## Un premier playbook
+
+Le même inventaire des versions qu'en Python, avec le module `eos_facts` :
+
+<CodeFile lab="netops" file="ansible/show_versions.yml" />
+
+```text title="ansible-playbook ansible/show_versions.yml (extrait)"
+TASK [Afficher le modèle et la version] ****************************************
+ok: [spine1] => {
+    "msg": "spine1 : cEOSLab · EOS 4.32.0F"
+}
+ok: [leaf1] => {
+    "msg": "leaf1 : cEOSLab · EOS 4.32.0F"
+}
+...
+PLAY RECAP *********************************************************************
+leaf1    : ok=2    changed=0    unreachable=0    failed=0
+leaf2    : ok=2    changed=0    unreachable=0    failed=0
+spine1   : ok=2    changed=0    unreachable=0    failed=0
+```
+
+Ansible a traité les trois switches **en parallèle** (5 par défaut, réglable avec `forks`) et résume
+le résultat de chacun dans le **PLAY RECAP**.
+
+## L'idempotence
+
+C'est la notion centrale d'Ansible. Une tâche <Term id="idempotence">idempotente</Term> décrit un
+**état** : elle ne modifie l'équipement que s'il n'est pas déjà dans cet état. On peut donc relancer
+un playbook autant de fois qu'on veut, sans effet de bord.
+
+Les VLAN voulus sont décrits dans un fichier de variables, séparé du playbook :
+
+<CodeFile lab="netops" file="ansible/vars/vlans.yml" />
+
+<CodeFile lab="netops" file="ansible/vlans.yml" />
+
+Avant d'appliquer, on demande à Ansible ce qu'il **ferait**, en mode simulation (`--check`).
+Avec `-v`, les modules ressources affichent la liste des commandes qu'ils enverraient :
+
+```text title="ansible-playbook ansible/vlans.yml --check -v (extrait)"
+TASK [Configurer les VLAN] *****************************************************
+changed: [leaf1] => {"before": [{"name": "default", "state": "active", "vlan_id": 1}],
+                     "commands": ["vlan 10", "name USERS", "vlan 20", "name GUEST-WIFI",
+                                  "vlan 30", "name SERVERS"], ...}
+```
+
+Ajouter `--diff` montre en plus l'état avant et après. La présentation exacte varie selon la version
+de la collection, mais l'idée reste la même : on voit **avant** d'appliquer.
+
+| Exécution | Résultat | Pourquoi |
+|---|---|---|
+| `--check` | `changed`, mais rien n'est appliqué | simulation : on voit les commandes qui seraient envoyées |
+| 1ʳᵉ exécution | `changed=1` sur chaque leaf | les VLAN n'existaient pas, ils sont créés |
+| 2ᵉ exécution | `changed=0` | l'état voulu est déjà atteint : rien à faire |
+
+<Callout type="tip">
+`--check --diff` est le meilleur réflexe avant tout changement en production : il montre exactement
+ce qui va changer. Dans un pipeline, on l'exécute sur la demande de fusion (merge request), et on
+n'applique qu'après relecture.
+</Callout>
+
+## Les modules à connaître
+
+| Module | Rôle | Idempotent ? |
+|---|---|---|
+| `eos_facts` | collecter des informations (modèle, version, interfaces…) | lecture seule |
+| `eos_command` | exécuter des commandes `show` | lecture seule (en principe) |
+| `eos_config` | envoyer des lignes de configuration, ou un gabarit <Term id="jinja" /> | oui, en comparant avec la running-config |
+| `eos_vlans`, `eos_interfaces`, `eos_l3_interfaces`, `eos_bgp_global`… | **modules ressources** : décrire une fonction sous forme de données | oui, avec `state` : `merged`, `replaced`, `overridden`, `deleted` |
+
+Les **modules ressources** sont à privilégier : on manipule des données (une liste de VLAN), pas des
+lignes de CLI, et le paramètre `state` dit précisément quoi faire de l'existant. Par exemple,
+`overridden` supprime les VLAN qui ne sont **pas** dans la liste : l'équipement devient le reflet
+exact des données.
+
+## Protéger les secrets : Ansible Vault
+
+Nos identifiants viennent de variables d'environnement. Pour stocker des secrets avec le code
+(mots de passe, clés TACACS+), Ansible fournit **Vault**, qui chiffre un fichier en AES-256 :
+
+```bash
+ansible-vault create group_vars/eos/vault.yml     # crée et ouvre un fichier chiffré
+ansible-vault view group_vars/eos/vault.yml       # le lire
+ansible-vault rekey group_vars/eos/vault.yml      # changer le mot de passe du coffre
+ansible-playbook site.yml --ask-vault-pass        # ou : ANSIBLE_VAULT_PASSWORD_FILE=…
+```
+
+Un fichier chiffré peut être commité dans Git : sans le mot de passe du coffre, il est illisible.
+On s'en sert au chapitre 4 pour stocker les mots de passe du compte de secours.
+
+## Python ou Ansible ?
+
+| | Python | Ansible |
+|---|---|---|
+| Approche | impérative : on écrit les étapes | déclarative : on décrit l'état voulu |
+| Idempotence | à programmer soi-même | fournie par les modules |
+| Logique complexe, calculs, API diverses | très à l'aise | vite laborieux |
+| Lisibilité pour l'équipe | demande de savoir coder | YAML lisible par tous |
+| Usage typique | outils sur mesure, collecte de données, intégrations | déploiement de configurations, opérations répétitives |
+
+Les deux se complètent : beaucoup d'équipes déploient avec Ansible et écrivent en Python les outils
+autour (rapports, contrôles, intégrations avec NetBox). Les deux chapitres suivants proposent chaque
+script dans les deux versions.
+
+## À vous de jouer
+
+1. Lancez `ansible-playbook ansible/show_versions.yml`.
+2. Déployez les VLAN avec `--check --diff`, puis pour de vrai, puis une seconde fois : comparez les
+   `changed` du PLAY RECAP.
+3. Ajoutez un VLAN 40 `MANAGEMENT` dans `vars/vlans.yml` et relancez : seul ce VLAN est ajouté.
+4. Passez `state: merged` à `state: overridden`, créez à la main un VLAN 99 sur leaf1, et relancez
+   le playbook : que devient le VLAN 99 ?
+
+## À retenir
+
+- Ansible est **sans agent** : pour le réseau, les modules tournent sur le nœud de contrôle (`network_cli`).
+- **Inventaire** + **group_vars** + **playbooks** ; les **collections** apportent les modules constructeur.
+- L'**idempotence** : décrire un état, n'appliquer que la différence ; `--check --diff` avant d'appliquer.
+- Privilégiez les **modules ressources** et leur paramètre `state`.
+- Les secrets vont dans **Ansible Vault** (ou un vrai coffre), jamais en clair dans le dépôt.
+
+Prochain chapitre : un premier usage concret, la **sauvegarde automatique des configurations dans Git**.

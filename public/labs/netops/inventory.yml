@@ -1,0 +1,11 @@
+# Inventaire partagé par Ansible et par les scripts Python (python/netops.py).
+all:
+  children:
+    eos:
+      hosts:
+        spine1:
+          ansible_host: 172.20.30.11
+        leaf1:
+          ansible_host: 172.20.30.12
+        leaf2:
+          ansible_host: 172.20.30.13

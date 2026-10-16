@@ -57,7 +57,9 @@ export const roadmap: RoadmapStep[] = [
     text: { fr: 'Gérer son réseau comme du code.', en: 'Managing your network as code.' },
     chapters: [
       { slug: 'python', title: { fr: 'Python pour le réseau', en: 'Python for networking' } },
-      { slug: 'ansible', title: { fr: 'Ansible', en: 'Ansible' } },
+      { slug: 'ansible', title: { fr: 'Ansible pour le réseau', en: 'Ansible for networking' } },
+      { slug: 'config-backup', title: { fr: 'Sauvegardes GitOps', en: 'GitOps backups' } },
+      { slug: 'breakglass-rotation', title: { fr: 'Rotation du compte de secours', en: 'Break-glass account rotation' } },
       { slug: 'netbox', title: { fr: 'NetBox, source de vérité', en: 'NetBox as source of truth' } },
       { slug: 'avd', title: { fr: 'Arista AVD', en: 'Arista AVD' } },
     ],

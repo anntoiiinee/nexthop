@@ -1,0 +1,31 @@
+---
+# Sauvegarde la running-config de chaque équipement dans backups/<nom>.cfg,
+# prête à être commitée dans Git (voir gitlab-ci.yml).
+# Usage (depuis la racine du lab) : ansible-playbook ansible/backup.yml
+
+- name: Sauvegarde des configurations
+  hosts: eos
+  gather_facts: false
+  vars:
+    backup_dir: "{{ playbook_dir }}/../backups"
+
+  tasks:
+    - name: Créer le dossier de sauvegarde
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0750"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Récupérer la running-config
+      arista.eos.eos_command:
+        commands: show running-config
+      register: running
+
+    - name: Écrire la configuration, sans les lignes qui changent à chaque lecture
+      ansible.builtin.copy:
+        content: "{{ running.stdout[0] | regex_replace('(?m)^! (Command|Time|device):.*\\n', '') | trim }}\n"
+        dest: "{{ backup_dir }}/{{ inventory_hostname }}.cfg"
+        mode: "0640"
+      delegate_to: localhost
