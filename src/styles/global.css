@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* Mode sombre piloté par la classe .dark sur <html> (posée par le script de BaseLayout) */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
@@ -19,8 +22,9 @@
   content: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  .prose :not(pre) > code {
-    background: var(--color-slate-800);
-  }
+.dark {
+  color-scheme: dark;
+}
+.dark .prose :not(pre) > code {
+  background: var(--color-slate-800);
 }

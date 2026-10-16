@@ -1,0 +1,26 @@
+name: Erreur dans un contenu / Content error
+description: Une coquille, une commande fausse, un lien cassé… / A typo, a wrong command, a broken link…
+title: "[Erreur] "
+labels: [contenu]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page concernée / Page
+      description: URL de la page (pré-remplie depuis le lien « Signaler une erreur »)
+      placeholder: https://nexthop.alcpt.network/tutoriels/...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Le problème / The problem
+      description: Ce qui est faux, et si possible la correction proposée.
+      placeholder: "Dans la section « Vérifier les sessions EVPN », la commande ... devrait être ..."
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Version / plateforme (optionnel)
+      description: Si c'est une commande ou un lab, la version testée (ex. cEOS 4.32, ContainerLab 0.60).

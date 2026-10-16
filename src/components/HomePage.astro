@@ -1,11 +1,22 @@
 ---
-import BaseLayout from '../layouts/BaseLayout.astro';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { Image } from 'astro:assets';
 import TutorialCard from './TutorialCard.astro';
-import { routes, t, type Lang } from '../i18n/ui';
-import { roadmap } from '../data/roadmap';
-import { courseUrl, chapterUrl, getPublished } from '../lib/courses';
-import { getTutorials } from '../lib/content';
-import { profile } from '../data/profile';
+import LogoMarquee from './LogoMarquee.astro';
+import ToolCard from './ToolCard.astro';
+import TermOfTheDay from './TermOfTheDay.astro';
+import Faq from './Faq.astro';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { roadmap } from '@/data/roadmap';
+import { courseUrl, chapterUrl, getPublished } from '@/lib/courses';
+import { getTutorials, slugOf, tutorialUrl } from '@/lib/content';
+import { profile } from '@/data/profile';
+import { coffeeUrl, coffeeIcon } from '@/lib/support';
+import { tools, toolUrl } from '@/data/tools';
+import { glossary } from '@/data/glossary';
+import { startHere, type AudienceKey, type StartStep } from '@/data/startHere';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
@@ -13,6 +24,26 @@ const { lang } = Astro.props;
 const posts = await getTutorials(lang);
 const latest = posts.slice(0, 6);
 const published = await getPublished(lang);
+
+// Étapes « Par où commencer ? » : on ne garde que celles publiées dans cette langue
+const tutorialSlugs = new Set(posts.map((p) => slugOf(p.id)));
+const toolSlugs = new Set(tools.map((tool) => tool.slug));
+function resolveStep(step: StartStep): { href: string; label: string } | null {
+  const label = step.label[lang];
+  switch (step.kind) {
+    case 'course': return published.courses.has(step.course) ? { href: courseUrl(lang, step.course), label } : null;
+    case 'chapter': return published.chapters.has(`${step.course}/${step.chapter}`) ? { href: chapterUrl(lang, step.course, step.chapter), label } : null;
+    case 'tutorial': return tutorialSlugs.has(step.slug) ? { href: tutorialUrl(lang, step.slug), label } : null;
+    case 'tool': return toolSlugs.has(step.slug) ? { href: toolUrl(lang, step.slug), label } : null;
+  }
+}
+const stepsFor = (key: AudienceKey) => startHere[key].map(resolveStep).filter((s) => s !== null);
+
+// Chiffres du site, calculés au build ; un compteur à 0 n'est pas affiché
+let labCount = 0;
+try {
+  labCount = readdirSync(join(process.cwd(), 'public/labs'), { withFileTypes: true }).filter((d) => d.isDirectory()).length;
+} catch {}
 
 const copy = {
   fr: {
@@ -24,10 +55,23 @@ const copy = {
     ctaTutorials: 'Voir les tutoriels',
     ctaCourses: 'Les formations',
     audienceTitle: 'Pour qui ?',
+    audienceIntro: 'Choisissez votre profil : voici par où commencer.',
+    startLabel: 'Par où commencer',
+    stats: {
+      tutorials: ['tutoriel', 'tutoriels'],
+      chapters: ['chapitre', 'chapitres'],
+      tools: ['outil interactif', 'outils interactifs'],
+      labs: ['lab ContainerLab', 'labs ContainerLab'],
+      terms: ['terme défini', 'termes définis'],
+    },
+    toolsTitle: 'Des outils pour s’entraîner',
+    toolsIntro: 'Calculer, découper, se tester : directement dans le navigateur, sans rien installer.',
+    toolsAll: 'Tous les outils →',
+    faqTitle: 'Questions fréquentes',
     audience: [
-      { icon: '🎓', title: 'Étudiants', text: "BTS SIO, BUT R&T, licence pro ou école : pour aller au-delà du cours et comprendre ce qu'on attend en entreprise." },
-      { icon: '🔀', title: 'Reconversion', text: "Vous venez d'un autre métier et visez le réseau ? On part des bases, sans jargon inutile, avec un fil conducteur clair." },
-      { icon: '🛠️', title: 'Admins & techs', text: "Vous faites déjà de l'IT et voulez passer au niveau suivant : BGP, EVPN, automatisation, firewalls." },
+      { key: 'students', icon: '🎓', title: 'Étudiants', text: "BTS SIO, BUT R&T, licence pro ou école : pour aller au-delà du cours et comprendre ce qu'on attend en entreprise." },
+      { key: 'careerChangers', icon: '🔀', title: 'Reconversion', text: "Vous venez d'un autre métier et visez le réseau ? On part des bases, sans jargon inutile, avec un fil conducteur clair." },
+      { key: 'admins', icon: '🛠️', title: 'Admins & techs', text: "Vous faites déjà de l'IT et voulez passer au niveau suivant : BGP, EVPN, automatisation, firewalls." },
     ],
     roadmapTitle: 'Le parcours, saut par saut',
     roadmapIntro: "Un chemin progressif, des fondamentaux jusqu'aux sujets rencontrés dans les data centers et les grandes entreprises.",
@@ -54,10 +98,23 @@ const copy = {
     ctaTutorials: 'Browse tutorials',
     ctaCourses: 'Courses',
     audienceTitle: 'Who is it for?',
+    audienceIntro: 'Pick your profile: here is where to start.',
+    startLabel: 'Where to start',
+    stats: {
+      tutorials: ['tutorial', 'tutorials'],
+      chapters: ['chapter', 'chapters'],
+      tools: ['interactive tool', 'interactive tools'],
+      labs: ['ContainerLab lab', 'ContainerLab labs'],
+      terms: ['defined term', 'defined terms'],
+    },
+    toolsTitle: 'Tools to practice',
+    toolsIntro: 'Calculate, split, test yourself: right in your browser, nothing to install.',
+    toolsAll: 'All tools →',
+    faqTitle: 'Frequently asked questions',
     audience: [
-      { icon: '🎓', title: 'Students', text: 'Networking students who want to go beyond the classroom and understand what companies actually expect.' },
-      { icon: '🔀', title: 'Career changers', text: 'Coming from another field and aiming for networking? We start from the basics, without unnecessary jargon.' },
-      { icon: '🛠️', title: 'Sysadmins & techs', text: 'Already in IT and ready for the next level: BGP, EVPN, automation, firewalls.' },
+      { key: 'students', icon: '🎓', title: 'Students', text: 'Networking students who want to go beyond the classroom and understand what companies actually expect.' },
+      { key: 'careerChangers', icon: '🔀', title: 'Career changers', text: 'Coming from another field and aiming for networking? We start from the basics, without unnecessary jargon.' },
+      { key: 'admins', icon: '🛠️', title: 'Sysadmins & techs', text: 'Already in IT and ready for the next level: BGP, EVPN, automation, firewalls.' },
     ],
     roadmapTitle: 'The path, hop by hop',
     roadmapIntro: 'A progressive path, from the fundamentals to the topics you meet in data centers and large companies.',
@@ -76,6 +133,16 @@ const copy = {
     authorCta: 'Learn more',
   },
 }[lang];
+
+const stats = ([
+  ['tutorials', posts.length],
+  ['chapters', published.chapters.size],
+  ['tools', tools.length],
+  ['labs', labCount],
+  ['terms', Object.keys(glossary).length],
+] as const)
+  .filter(([, value]) => value > 0)
+  .map(([key, value]) => ({ value, label: copy.stats[key][value > 1 ? 1 : 0] }));
 
 const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-white';
 ---
@@ -104,6 +171,15 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
             {copy.ctaCourses}
           </a>
         </div>
+
+        <dl class="mt-10 flex flex-wrap gap-x-8 gap-y-4">
+          {stats.map((stat) => (
+            <div class="flex flex-col-reverse">
+              <dt class="text-xs text-slate-500">{stat.label}</dt>
+              <dd class="font-mono text-2xl font-bold text-slate-900 dark:text-white">{stat.value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
 
       <div class="hidden overflow-hidden rounded-xl border border-slate-800 bg-slate-900 shadow-2xl lg:block">
@@ -123,17 +199,39 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
     </div>
   </section>
 
+  <!-- Technologies -->
+  <LogoMarquee lang={lang} />
+
   <!-- Pour qui -->
   <section class="mx-auto max-w-6xl px-4 py-16">
     <h2 class={h2}>{copy.audienceTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.audienceIntro}</p>
     <div class="mt-8 grid gap-6 md:grid-cols-3">
-      {copy.audience.map((a) => (
-        <div class="rounded-xl border border-slate-200 p-6 dark:border-slate-800">
-          <p class="text-3xl">{a.icon}</p>
-          <h3 class="mt-4 font-semibold text-slate-900 dark:text-white">{a.title}</h3>
-          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{a.text}</p>
-        </div>
-      ))}
+      {copy.audience.map((a) => {
+        const steps = stepsFor(a.key as AudienceKey);
+        return (
+          <div class="flex flex-col rounded-xl border border-slate-200 p-6 dark:border-slate-800">
+            <p class="text-3xl">{a.icon}</p>
+            <h3 class="mt-4 font-semibold text-slate-900 dark:text-white">{a.title}</h3>
+            <p class="mt-2 flex-1 text-sm text-slate-600 dark:text-slate-400">{a.text}</p>
+            {steps.length > 0 && (
+              <div class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+                <p class="font-mono text-xs text-slate-500">{copy.startLabel}</p>
+                <ol class="mt-2 space-y-1.5 text-sm">
+                  {steps.map((step, i) => (
+                    <li>
+                      <a href={step.href} class="group flex gap-2 font-medium text-slate-700 transition hover:text-sky-600 dark:text-slate-300 dark:hover:text-sky-400">
+                        <span class="font-mono text-sky-500">{i + 1}.</span>
+                        <span>{step.label} <span class="inline-block transition group-hover:translate-x-0.5">→</span></span>
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   </section>
 
@@ -185,6 +283,22 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
     </div>
   </section>
 
+  <!-- Outils -->
+  {tools.length > 0 && (
+    <section class="mx-auto max-w-6xl px-4 pt-16">
+      <div class="flex items-end justify-between gap-4">
+        <div>
+          <h2 class={h2}>{copy.toolsTitle}</h2>
+          <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.toolsIntro}</p>
+        </div>
+        <a href={routes.tools[lang]} class="shrink-0 text-sm font-medium text-sky-600 hover:underline dark:text-sky-400">{copy.toolsAll}</a>
+      </div>
+      <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {tools.slice(0, 3).map((tool) => <ToolCard tool={tool} lang={lang} />)}
+      </div>
+    </section>
+  )}
+
   <!-- Méthode -->
   <section class="mx-auto max-w-6xl px-4 py-16">
     <h2 class={h2}>{copy.methodTitle}</h2>
@@ -222,10 +336,20 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
     </div>
   </section>
 
+  <!-- Terme du jour -->
+  <section class="border-y border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40">
+    <div class="mx-auto max-w-3xl px-4 py-16">
+      <TermOfTheDay lang={lang} />
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <Faq lang={lang} title={copy.faqTitle} />
+
   <!-- Auteur -->
   <section class="mx-auto max-w-6xl px-4 pb-20">
     <div class="flex flex-col items-start gap-6 rounded-2xl border border-slate-200 bg-slate-50 p-8 sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-900/40">
-      <img src={profile.avatar} alt={profile.name} width="96" height="96" class="size-24 shrink-0 rounded-full ring-4 ring-sky-500/20" />
+      <Image src={profile.avatar} alt={profile.name} width={192} height={192} class="size-24 shrink-0 rounded-full ring-4 ring-sky-500/20" />
       <div class="flex-1">
         <p class="font-mono text-xs text-sky-600 dark:text-sky-400">{copy.authorTitle}</p>
         <p class="mt-2 text-slate-700 dark:text-slate-300">{copy.authorText}</p>
@@ -235,9 +359,17 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
           ))}
         </div>
       </div>
-      <a href={routes.whoami[lang]} class="shrink-0 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
-        {copy.authorCta}
-      </a>
+      <div class="flex shrink-0 flex-col gap-2">
+        <a href={routes.whoami[lang]} class="rounded-lg bg-slate-900 px-5 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
+          {copy.authorCta}
+        </a>
+        {coffeeUrl && (
+          <a href={coffeeUrl} target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 rounded-lg bg-[#FFDD00] px-5 py-2.5 text-sm font-semibold text-slate-900 transition hover:brightness-95">
+            <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d={coffeeIcon} /></svg>
+            {t(lang, 'support.coffee')}
+          </a>
+        )}
+      </div>
     </div>
   </section>
 

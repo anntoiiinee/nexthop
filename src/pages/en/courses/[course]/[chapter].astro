@@ -1,6 +1,6 @@
 ---
-import ChapterPage from '../../../../components/ChapterPage.astro';
-import { getChapterPaths } from '../../../../lib/courses';
+import ChapterPage from '@/components/ChapterPage.astro';
+import { getChapterPaths } from '@/lib/courses';
 
 export const getStaticPaths = () => getChapterPaths('en');
 ---

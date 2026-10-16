@@ -1,0 +1,160 @@
+---
+// Terme technique avec infobulle de définition.
+// Dans un MDX : <Term id="nat" /> ou <Term id="nat">traduction d'adresses</Term>
+// Pas besoin d'import : le composant est fourni à <Content /> (ChapterPage, CoursePage, routes des tutoriels).
+import { glossary, type TermId } from '@/data/glossary';
+import type { Lang } from '@/i18n/ui';
+
+interface Props {
+  id: TermId;
+  lang?: Lang;
+}
+
+const { id } = Astro.props;
+const lang = (Astro.props.lang ?? Astro.currentLocale ?? 'fr') as Lang;
+
+const entry = glossary[id];
+if (!entry) throw new Error(`<Term id="${id}"> : terme absent de src/data/glossary.ts`);
+
+const tipId = `term-${id}-${Math.random().toString(36).slice(2, 8)}`;
+---
+<span class="term not-prose" tabindex="0" aria-describedby={tipId} data-term>{
+  Astro.slots.has('default') ? <slot /> : entry.term
+}<span role="tooltip" id={tipId} class="term-tip" data-pagefind-ignore>
+    {entry.expansion && <span class="term-tip-title">{entry.expansion}</span>}
+    <span class="term-tip-body">{entry.definition[lang]}</span>
+  </span></span>
+
+<style>
+  .term {
+    position: relative;
+    cursor: help;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-thickness: 2px;
+    text-decoration-color: var(--color-sky-500);
+    text-underline-offset: 4px;
+    border-radius: 0.125rem;
+  }
+  .term:focus-visible {
+    outline: 2px solid var(--color-sky-500);
+    outline-offset: 2px;
+  }
+
+  .term-tip {
+    --shift: 0px;
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 0.5rem);
+    z-index: 30;
+    display: block;
+    width: max-content;
+    max-width: min(18rem, calc(100vw - 2rem));
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--color-slate-900);
+    color: var(--color-slate-200);
+    box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.25);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    font-style: normal;
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    cursor: auto;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(calc(-50% + var(--shift)), 4px);
+    transition: opacity 150ms, transform 150ms, visibility 150ms;
+  }
+  /* Petite flèche, qui reste centrée sur le terme même si l'infobulle est décalée */
+  .term-tip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: calc(50% - var(--shift));
+    translate: -50% 0;
+    border: 6px solid transparent;
+    border-top-color: var(--color-slate-900);
+  }
+  .term[data-placement='bottom'] .term-tip {
+    bottom: auto;
+    top: calc(100% + 0.5rem);
+    transform: translate(calc(-50% + var(--shift)), -4px);
+  }
+  .term[data-placement='bottom'] .term-tip::after {
+    top: auto;
+    bottom: 100%;
+    border-top-color: transparent;
+    border-bottom-color: var(--color-slate-900);
+  }
+
+  .term:hover .term-tip,
+  .term:focus .term-tip {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate(calc(-50% + var(--shift)), 0);
+  }
+  .term.is-dismissed .term-tip {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .term-tip-title {
+    display: block;
+    margin-bottom: 0.125rem;
+    font-weight: 600;
+    color: white;
+  }
+
+  :global(.dark) .term-tip {
+    background: var(--color-slate-800);
+    border: 1px solid var(--color-slate-700);
+  }
+  :global(.dark) .term-tip::after { border-top-color: var(--color-slate-800); }
+  :global(.dark) .term[data-placement='bottom'] .term-tip::after { border-bottom-color: var(--color-slate-800); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .term-tip { transition: none; }
+  }
+</style>
+
+<script>
+  // Garde l'infobulle dans l'écran : décalage horizontal près des bords,
+  // et affichage sous le terme s'il est collé au header sticky.
+  const MARGIN = 12;
+  const HEADER = 72;
+
+  function place(term: HTMLElement) {
+    const tip = term.querySelector<HTMLElement>('.term-tip');
+    if (!tip) return;
+    term.classList.remove('is-dismissed');
+    tip.style.setProperty('--shift', '0px');
+    delete term.dataset.placement;
+
+    const rect = term.getBoundingClientRect();
+    const width = tip.offsetWidth;
+    const center = rect.left + rect.width / 2;
+    const left = center - width / 2;
+    const right = center + width / 2;
+    let shift = 0;
+    if (left < MARGIN) shift = MARGIN - left;
+    else if (right > window.innerWidth - MARGIN) shift = window.innerWidth - MARGIN - right;
+    tip.style.setProperty('--shift', `${shift}px`);
+
+    if (rect.top - tip.offsetHeight - 8 < HEADER) term.dataset.placement = 'bottom';
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-term]').forEach((term) => {
+    term.addEventListener('mouseenter', () => place(term));
+    term.addEventListener('focus', () => place(term));
+    term.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        term.classList.add('is-dismissed');
+        term.blur();
+      }
+    });
+  });
+</script>

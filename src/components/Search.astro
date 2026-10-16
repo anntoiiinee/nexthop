@@ -1,0 +1,164 @@
+---
+// Recherche Pagefind : bouton dans le header + fenêtre modale.
+// L'index est généré par `npm run build` (pagefind --site dist) : il n'existe pas en `npm run dev`.
+// Pagefind choisit l'index selon <html lang> : on ne cherche que dans la langue de la page.
+import { t, type Lang } from '@/i18n/ui';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+---
+<button
+  type="button"
+  data-search-open
+  aria-label={t(lang, 'search.open')}
+  class="inline-flex h-8 items-center gap-2 rounded-md border border-slate-300 px-2 text-sm text-slate-500 transition hover:border-sky-400 hover:text-sky-500 dark:border-slate-700"
+>
+  <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+  </svg>
+  <span class="hidden lg:inline">{t(lang, 'search.open')}</span>
+  <kbd class="hidden rounded border border-slate-300 px-1.5 font-mono text-[10px] lg:inline dark:border-slate-700">Ctrl K</kbd>
+</button>
+
+<dialog
+  data-search-dialog
+  aria-label={t(lang, 'search.open')}
+  data-i18n={JSON.stringify({
+    empty: t(lang, 'search.empty'),
+    hint: t(lang, 'search.hint'),
+    unavailable: t(lang, 'search.unavailable'),
+  })}
+  class="mx-auto mt-[10vh] w-[calc(100%-2rem)] max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-900/50 backdrop:backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+>
+  <div class="flex items-center gap-3 border-b border-slate-200 px-4 dark:border-slate-800">
+    <svg class="size-5 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+    </svg>
+    <input
+      type="search"
+      data-search-input
+      placeholder={t(lang, 'search.placeholder')}
+      aria-label={t(lang, 'search.placeholder')}
+      autocomplete="off"
+      spellcheck="false"
+      class="h-14 w-full bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400 dark:text-white"
+    />
+    <button type="button" data-search-close class="rounded border border-slate-300 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 transition hover:text-sky-500 dark:border-slate-700">
+      <span aria-hidden="true">Esc</span><span class="sr-only">{t(lang, 'search.close')}</span>
+    </button>
+  </div>
+
+  <div class="max-h-[60vh] overflow-y-auto p-2">
+    <p data-search-status class="px-3 py-6 text-center text-sm text-slate-500">{t(lang, 'search.hint')}</p>
+    <ul data-search-results class="space-y-1"></ul>
+  </div>
+</dialog>
+
+<script>
+  type PagefindResult = { url: string; excerpt: string; meta: { title?: string } };
+  type Pagefind = {
+    init: () => Promise<void>;
+    debouncedSearch: (q: string, opts?: object, ms?: number) =>
+      Promise<{ results: { data: () => Promise<PagefindResult> }[] } | null>;
+  };
+
+  const dialog = document.querySelector<HTMLDialogElement>('[data-search-dialog]')!;
+  const input = dialog.querySelector<HTMLInputElement>('[data-search-input]')!;
+  const status = dialog.querySelector<HTMLElement>('[data-search-status]')!;
+  const list = dialog.querySelector<HTMLUListElement>('[data-search-results]')!;
+  const i18n = JSON.parse(dialog.dataset.i18n!) as Record<'empty' | 'hint' | 'unavailable', string>;
+
+  let pagefind: Pagefind | null | undefined; // undefined = pas encore chargé, null = indisponible
+
+  async function load() {
+    if (pagefind !== undefined) return pagefind;
+    try {
+      const path = '/pagefind/pagefind.js';
+      pagefind = (await import(/* @vite-ignore */ path)) as Pagefind;
+      await pagefind.init();
+    } catch {
+      pagefind = null;
+    }
+    return pagefind;
+  }
+
+  function showStatus(text: string) {
+    list.replaceChildren();
+    status.textContent = text;
+    status.hidden = false;
+  }
+
+  function render(items: PagefindResult[]) {
+    status.hidden = true;
+    list.replaceChildren(
+      ...items.map((item) => {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = item.url;
+        a.className = 'block rounded-lg px-3 py-2.5 outline-none transition hover:bg-slate-100 focus:bg-slate-100 dark:hover:bg-slate-800 dark:focus:bg-slate-800';
+
+        const title = document.createElement('p');
+        title.className = 'font-medium text-slate-900 dark:text-white';
+        title.textContent = item.meta.title ?? item.url;
+
+        const excerpt = document.createElement('p');
+        excerpt.className = 'mt-0.5 line-clamp-2 text-sm text-slate-500 [&_mark]:bg-transparent [&_mark]:font-semibold [&_mark]:text-sky-600 dark:[&_mark]:text-sky-400';
+        excerpt.innerHTML = item.excerpt; // HTML généré par Pagefind depuis notre propre contenu (<mark>)
+
+        a.append(title, excerpt);
+        li.append(a);
+        return li;
+      })
+    );
+  }
+
+  async function search() {
+    const query = input.value.trim();
+    if (query.length < 2) return showStatus(i18n.hint);
+
+    const pf = await load();
+    if (!pf) return showStatus(i18n.unavailable);
+
+    const res = await pf.debouncedSearch(query, {}, 150);
+    if (res === null) return; // une frappe plus récente a remplacé cette recherche
+    if (res.results.length === 0) return showStatus(`${i18n.empty} « ${query} »`);
+    render(await Promise.all(res.results.slice(0, 8).map((r) => r.data())));
+  }
+
+  function open() {
+    if (dialog.open) return;
+    dialog.showModal();
+    input.select();
+    load(); // précharge l'index pendant que l'utilisateur tape
+  }
+
+  document.querySelectorAll('[data-search-open]').forEach((b) => b.addEventListener('click', open));
+  dialog.querySelector('[data-search-close]')!.addEventListener('click', () => dialog.close());
+  input.addEventListener('input', search);
+
+  // Clic sur le fond assombri = fermeture
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+
+  // Flèches haut/bas pour parcourir les résultats
+  dialog.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const links = [...list.querySelectorAll<HTMLAnchorElement>('a')];
+    if (links.length === 0) return;
+    e.preventDefault();
+    const current = links.indexOf(document.activeElement as HTMLAnchorElement);
+    const next = e.key === 'ArrowDown' ? current + 1 : current - 1;
+    if (next < 0) input.focus();
+    else links[Math.min(next, links.length - 1)].focus();
+  });
+
+  // Ctrl/⌘ + K, ou « / » hors d'un champ de saisie
+  document.addEventListener('keydown', (e) => {
+    const typing = (e.target as HTMLElement).closest('input, textarea, [contenteditable]');
+    if ((e.key === 'k' && (e.ctrlKey || e.metaKey)) || (e.key === '/' && !typing)) {
+      e.preventDefault();
+      open();
+    }
+  });
+</script>

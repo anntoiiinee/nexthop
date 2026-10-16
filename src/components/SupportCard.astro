@@ -1,0 +1,40 @@
+---
+// Encart de fin d'article : soutenir le blog (si Buy Me a Coffee est configuré) et signaler une erreur.
+import { t, type Lang } from '@/i18n/ui';
+import { coffeeUrl, coffeeIcon, reportUrl } from '@/lib/support';
+
+interface Props { lang: Lang; title: string; }
+const { lang, title } = Astro.props;
+
+const pageUrl = new URL(Astro.url.pathname, Astro.site).toString();
+---
+<aside data-pagefind-ignore class="mt-16 rounded-2xl border border-slate-200 bg-slate-50 p-6 sm:p-8 dark:border-slate-800 dark:bg-slate-900/40">
+  <p class="font-semibold text-slate-900 dark:text-white">{t(lang, 'support.title')}</p>
+  <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
+    {coffeeUrl ? t(lang, 'support.text') : t(lang, 'support.textNoCoffee')}
+  </p>
+  <div class="mt-5 flex flex-wrap gap-3">
+    {coffeeUrl && (
+      <a
+        href={coffeeUrl}
+        target="_blank"
+        rel="noopener"
+        class="inline-flex items-center gap-2 rounded-lg bg-[#FFDD00] px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-95"
+      >
+        <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d={coffeeIcon} /></svg>
+        {t(lang, 'support.coffee')}
+      </a>
+    )}
+    <a
+      href={reportUrl({ url: pageUrl, title })}
+      target="_blank"
+      rel="noopener"
+      class="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400"
+    >
+      <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 9v4M12 17h.01" /><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      </svg>
+      {t(lang, 'support.report')} ↗
+    </a>
+  </div>
+</aside>

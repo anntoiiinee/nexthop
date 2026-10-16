@@ -1,0 +1,25 @@
+name: Suggestion de sujet / Topic suggestion
+description: Un tutoriel, un chapitre ou un outil que vous aimeriez voir / A tutorial, chapter or tool you'd like to see
+title: "[Sujet] "
+labels: [suggestion]
+body:
+  - type: textarea
+    id: topic
+    attributes:
+      label: Le sujet / The topic
+      description: Ce que vous aimeriez apprendre ou comprendre.
+    validations:
+      required: true
+  - type: dropdown
+    id: level
+    attributes:
+      label: Niveau / Level
+      options:
+        - Débutant / Beginner
+        - Intermédiaire / Intermediate
+        - Avancé / Advanced
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexte (optionnel) / Context (optional)
+      description: Examen préparé, projet en cours, équipement utilisé…

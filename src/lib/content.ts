@@ -1,10 +1,16 @@
-import { getCollection } from 'astro:content';
-import type { Lang } from '../i18n/ui';
+import { getCollection, type CollectionEntry } from 'astro:content';
+import { routes, type Lang } from '@/i18n/ui';
 
 export const slugOf = (id: string) => id.split('/').slice(1).join('/');
 
 export const tutorialUrl = (lang: Lang, slug: string) =>
   lang === 'fr' ? `/tutoriels/${slug}` : `/en/tutorials/${slug}`;
+
+/** Technologies d'un tutoriel : constructeurs (`vendor`) + tags, pour le filtre ?tech= */
+export const techsOf = (post: CollectionEntry<'tutorials'>) => [...post.data.vendor, ...post.data.tags];
+
+/** Liste des tutoriels filtrée sur une technologie (logo du carrousel, puces de filtre). */
+export const techUrl = (lang: Lang, tech: string) => `${routes.tutorials[lang]}?tech=${encodeURIComponent(tech)}`;
 
 export async function getTutorials(lang: Lang) {
   const posts = await getCollection('tutorials',
