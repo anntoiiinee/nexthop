@@ -57,8 +57,17 @@ const rows: { label: string; items: Brand[]; reverse?: boolean }[] = [
                     >
                       {brand.path && (
                         <svg viewBox={brand.viewBox ?? '0 0 24 24'} class="size-5 shrink-0" fill="currentColor" aria-hidden="true">
-                          {[brand.path].flat().map((d) => <path d={d} />)}
+                          <g transform={brand.transform}>
+                            {[brand.path].flat().map((d) => <path d={d} />)}
+                          </g>
                         </svg>
+                      )}
+                      {brand.mask && (
+                        <span
+                          class="size-5 shrink-0 bg-current"
+                          style={`mask: url(${brand.mask}) center / contain no-repeat; -webkit-mask: url(${brand.mask}) center / contain no-repeat;`}
+                          aria-hidden="true"
+                        ></span>
                       )}
                       <span class="whitespace-nowrap text-sm font-semibold tracking-tight">{brand.name}</span>
                       {count > 0 && (

@@ -32,6 +32,7 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 - **Glossaire** : `<Term id="nat" />` souligne le terme en pointillés et affiche sa définition au survol.
 - **Labs ContainerLab** : topologies dans `public/labs/`, schéma généré automatiquement, commande `curl` prête à copier.
 - **Recherche** Pagefind (Ctrl/⌘+K), limitée à la langue de la page.
+- **Flux RSS** FR (`/rss.xml`) et EN (`/en/rss.xml`) : tutoriels et chapitres de formation.
 - **Thème clair/sombre** : suit le système par défaut, choix mémorisé, sans flash au chargement.
 - **Accueil** : chiffres du site, « par où commencer » par profil, carrousel des technologies, terme du jour, FAQ.
 - **Référencement** : sitemap, `robots.txt`, canonical, hreflang, Open Graph, données structurées schema.org.
@@ -50,8 +51,9 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 | Images | `astro:assets` (WebP au build) | `sharp` 0.35.5 |
 | Recherche | Pagefind, index généré après le build | `pagefind` 1.5.2 |
 | Sitemap | `@astrojs/sitemap` (FR/EN) | 3.7.4 |
+| Flux RSS | `@astrojs/rss` (FR/EN) | 4.0.19 |
 | Labs | Fichiers ContainerLab parsés avec `yaml` | `yaml` 2.9.1 |
-| Logos | [Simple Icons](https://simpleicons.org) (CC0) + logo ContainerLab (BSD-3, © Nokia) | Simple Icons 16.35.0 |
+| Logos | [Simple Icons](https://simpleicons.org) (CC0) + logos officiels ContainerLab (BSD-3, © Nokia), Infoblox, Stormshield | Simple Icons 16.35.0 |
 | Runtime | Node.js (voir `.nvmrc`) | 22.23.1 |
 | Hébergement | Cloudflare Workers (static assets), déploiement auto à chaque push sur `main` | Wrangler 4.151 |
 
@@ -78,6 +80,7 @@ wrangler.jsonc                     # Cloudflare : assets, 404, bloc "previews" (
 public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
+├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
 └── labs/<lab>/topology.clab.yml + configs/*.cfg
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
@@ -109,12 +112,13 @@ src/
 │   ├── seo.ts                     # URLs absolues, schémas schema.org
 │   ├── mdx.ts                     # composants disponibles dans tous les MDX (Term)
 │   ├── support.ts                 # liens Buy Me a Coffee et issues GitHub
+│   ├── rss.ts                     # construction des flux RSS par langue
 │   └── levels.ts
 ├── styles/global.css
 └── pages/
-    ├── index, 404, whoami, robots.txt.ts
+    ├── index, 404, whoami, robots.txt.ts, rss.xml.ts
     ├── tutoriels/{index, [...slug]}   formations/{index, [course]/index, [course]/[chapter]}   outils/{index, [tool]}
-    └── en/ (même structure : tutorials, courses, tools)
+    └── en/ (même structure : tutorials, courses, tools, rss.xml.ts)
 ```
 
 ---
@@ -138,7 +142,7 @@ src/
 
 Déjà en place :
 
-- `sitemap-index.xml` (généré au build) et `robots.txt` qui le déclare.
+- `sitemap-index.xml` (généré au build) et `robots.txt` qui le déclare. Flux RSS déclarés dans le `<head>` de chaque page.
 - URL canonique avec slash final sur chaque page (les paramètres comme `?tech=` sont ignorés), `hreflang` FR/EN + `x-default`.
 - Open Graph et Twitter Card : `public/og-default.png` par défaut, ou image propre à la page via la prop `image` de `BaseLayout`.
 - Données structurées (JSON-LD) : `WebSite` + `Person` (accueil), `TechArticle` + `BreadcrumbList` (tutoriels, chapitres), `Course` (formations), `WebApplication` (outils), `FAQPage`, `ProfilePage` (whoami).
@@ -178,8 +182,9 @@ Mise en route (une seule fois) :
 - [x] Open Graph / partage LinkedIn, données structurées, `robots.txt`
 - [x] Accueil : carrousel des technologies, chiffres, par où commencer, terme du jour, FAQ
 - [x] Favicon, Buy Me a Coffee, signalement d'erreur via GitHub
+- [x] Flux RSS FR/EN
+- [x] Logos Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
-- [ ] Flux RSS FR/EN
 - [ ] Composants `<Callout>` et `<CliOutput>`
 - [ ] Images Open Graph propres à chaque article (générées au build)
 - [ ] Traduction anglaise de la formation Fondamentaux
