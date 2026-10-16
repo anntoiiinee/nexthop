@@ -200,8 +200,8 @@ Mise en route (une seule fois) :
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
 - [x] Formation Fondamentaux complète en FR (8 chapitres illustrés, dont ARP et LLDP/CDP, + lab `static-routing`)
-- [ ] Composant `<CliOutput>` (sortie CLI annotée)
-- [ ] Images Open Graph propres à chaque article (générées au build)
+- [ ] Composant `<CliOutput>` (sortie CLI annotée) 
+- [ ] Images Open Graph propres à chaque article (générées au build) + option partage direct sur différentes plteforme
 - [x] Traduction anglaise des formations Fondamentaux et Routage dynamique
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
