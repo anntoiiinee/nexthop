@@ -5,6 +5,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import { chapterUrl, chapterSlugOf, type Course } from '@/lib/courses';
+import { absoluteUrl, authorSchema, breadcrumbSchema } from '@/lib/seo';
 
 interface Props {
   lang: Lang;
@@ -16,8 +17,31 @@ const { lang, course, alternates } = Astro.props;
 const { Content } = await render(course.landing);
 const { title, description, level } = course.landing.data;
 const first = course.chapters[0];
+
+const jsonLd = [
+  {
+    '@type': 'Course',
+    name: title,
+    description,
+    inLanguage: lang,
+    url: absoluteUrl(Astro.url.pathname),
+    provider: authorSchema(lang),
+    isAccessibleForFree: true,
+    educationalLevel: t(lang, `level.${level}`),
+    hasPart: course.chapters.map((ch) => ({
+      '@type': 'LearningResource',
+      name: ch.data.title,
+      url: absoluteUrl(chapterUrl(lang, course.slug, chapterSlugOf(ch))),
+    })),
+  },
+  breadcrumbSchema([
+    { name: t(lang, 'nav.home'), path: routes.home[lang] },
+    { name: t(lang, 'courses.title'), path: routes.courses[lang] },
+    { name: title, path: Astro.url.pathname },
+  ]),
+];
 ---
-<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates}>
+<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates} jsonLd={jsonLd}>
   <div class="mx-auto max-w-4xl px-4 py-16">
     <a href={routes.courses[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
       ← {t(lang, 'courses.title')}

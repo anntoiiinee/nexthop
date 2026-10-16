@@ -5,19 +5,52 @@ import type { MarkdownHeading } from 'astro';
 import { t, formatDate, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import SupportCard from '@/components/SupportCard.astro';
+import { routes } from '@/i18n/ui';
+import { absoluteUrl, authorSchema, breadcrumbSchema, DEFAULT_IMAGE } from '@/lib/seo';
 
 interface Props {
   post: CollectionEntry<'tutorials'> | CollectionEntry<'courses'>;
   headings: MarkdownHeading[];
   lang: Lang;
   alternates: Partial<Record<Lang, string>>;
+  breadcrumbs?: { name: string; path: string }[]; // fil d'Ariane (données structurées), sans la page elle-même
 }
 
-const { post, headings, lang, alternates } = Astro.props;
+const { post, headings, lang, alternates, breadcrumbs } = Astro.props;
 const { title, description, pubDate, updatedDate, level, tags } = post.data;
 const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
+
+const path = Astro.url.pathname;
+const trail = breadcrumbs ?? [
+  { name: t(lang, 'nav.home'), path: routes.home[lang] },
+  { name: t(lang, 'nav.tutorials'), path: routes.tutorials[lang] },
+];
+const jsonLd = [
+  {
+    '@type': 'TechArticle',
+    headline: title,
+    description,
+    datePublished: pubDate.toISOString(),
+    dateModified: (updatedDate ?? pubDate).toISOString(),
+    inLanguage: lang,
+    keywords: tags.join(', '),
+    proficiencyLevel: { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Expert' }[level],
+    image: absoluteUrl(DEFAULT_IMAGE),
+    mainEntityOfPage: absoluteUrl(path),
+    author: authorSchema(lang),
+    publisher: { '@id': 'https://nexthop.alcpt.network/#author' },
+  },
+  breadcrumbSchema([...trail, { name: title, path }]),
+];
 ---
-<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates}>
+<BaseLayout
+  title={`${title} | Next Hop`}
+  description={description}
+  lang={lang}
+  alternates={alternates}
+  article={{ published: pubDate, modified: updatedDate, tags }}
+  jsonLd={jsonLd}
+>
   <div class="mx-auto grid max-w-6xl gap-12 px-4 py-12 lg:grid-cols-[minmax(0,1fr)_14rem]">
     <article>
       <slot name="before"/>

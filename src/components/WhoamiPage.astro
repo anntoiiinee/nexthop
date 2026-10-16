@@ -4,6 +4,7 @@ import { Image } from 'astro:assets';
 import { routes, type Lang } from '@/i18n/ui';
 import { profile } from '@/data/profile';
 import { coffeeUrl, coffeeIcon } from '@/lib/support';
+import { authorSchema } from '@/lib/seo';
 import { t } from '@/i18n/ui';
 
 interface Props { lang: Lang; }
@@ -11,7 +12,7 @@ const { lang } = Astro.props;
 
 const copy = {
   fr: {
-    ddescription: 'Antoine Lecarpentier, IT Network Specialist, auteur de Next Hop.',
+    description: 'Antoine Lecarpentier, IT Network Specialist, auteur de Next Hop.',
     role: 'IT Network Specialist · Toulouse',
     aboutTitle: 'En bref',
     about: [
@@ -57,7 +58,7 @@ const copy = {
 const h2 = 'text-xl font-bold tracking-tight text-slate-900 dark:text-white';
 const linkBtn = 'rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400';
 ---
-<BaseLayout title="whoami | Next Hop" description={copy.description} lang={lang} alternates={routes.whoami}>
+<BaseLayout title={`whoami · ${profile.name} | Next Hop`} description={copy.description} lang={lang} alternates={routes.whoami} jsonLd={[{ '@type': 'ProfilePage', mainEntity: authorSchema(lang) }]}>
   <div class="mx-auto max-w-4xl px-4 py-16">
 
     <!-- En-tête -->

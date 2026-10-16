@@ -20,7 +20,17 @@ const prev = course.chapters[index - 1];
 const next = course.chapters[index + 1];
 const card = 'group rounded-xl border border-slate-200 p-4 transition hover:border-sky-400 dark:border-slate-800 dark:hover:border-sky-500/60';
 ---
-<ArticleLayout post={chapter} headings={headings} lang={lang} alternates={alternates}>
+<ArticleLayout
+  post={chapter}
+  headings={headings}
+  lang={lang}
+  alternates={alternates}
+  breadcrumbs={[
+    { name: t(lang, 'nav.home'), path: routes.home[lang] },
+    { name: t(lang, 'courses.title'), path: routes.courses[lang] },
+    { name: course.landing.data.title, path: courseUrl(lang, course.slug) },
+  ]}
+>
   <nav slot="before" class="mb-6 flex flex-wrap items-center gap-2 text-sm text-slate-500">
     <a href={routes.courses[lang]} class="transition hover:text-sky-500">{t(lang, 'courses.title')}</a>
     <span>/</span>
