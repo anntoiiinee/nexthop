@@ -217,9 +217,9 @@ Mise en route (une seule fois) :
 
 Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couvrir, et les schémas ou le lab à prévoir.
 
-Le parcours compte **7 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
-4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`).
-Les sauts 6 et 7 apparaissent déjà sur l'accueil, avec leurs chapitres marqués « bientôt ».
+Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
+4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
+**8 Le réseau dans le cloud** (`cloud`). Les sauts 6 à 8 apparaissent déjà sur l'accueil, avec leurs chapitres marqués « bientôt ».
 
 ### Monter son lab : ContainerLab et les images (tutoriel, prérequis de tous les labs)
 
@@ -320,6 +320,27 @@ avec un client et deux serveurs web.
   haute disponibilité, GSLB.
 - **WAF et protection applicative** (`waf`) : OWASP Top 10, signatures et modèle positif, faux positifs et mode
   apprentissage, limitation de débit, protection DDoS applicative.
+
+### Saut 8 · Le réseau dans le cloud
+
+Le dernier saut ferme le parcours « du câble au cloud » et réutilise les précédents (routage, BGP, IPsec, Terraform).
+Exemples sur **AWS**, avec les équivalents Azure et GCP signalés. Le lab ne peut pas être un lab ContainerLab : prévoir
+du Terraform à appliquer sur un compte gratuit (offre Free Tier), avec un `terraform destroy` rappelé à chaque fois, et
+une mise en garde sur les coûts (NAT Gateway, Transit Gateway et VPN sont facturés à l'heure).
+
+- **Les bases du réseau AWS** (`aws-vpc`) : régions et zones de disponibilité, VPC et plan d'adressage (lien avec le
+  chapitre IPv4 et le découpeur VLSM), sous-réseaux publics et privés, tables de routage, Internet Gateway, NAT Gateway,
+  adresses Elastic IP ; ce qui change par rapport à un réseau classique (pas de broadcast, pas de VLAN, routeur implicite).
+- **Security groups et NACL** (`security-groups`) : firewall avec état (security group, attaché à l'interface) et sans
+  état (NACL, attachée au sous-réseau), référencer un groupe plutôt qu'une adresse, VPC Flow Logs pour le dépannage.
+- **Interconnecter des VPC** (`transit-gateway`) : VPC peering (non transitif) puis Transit Gateway (hub, tables de
+  routage par attachement), PrivateLink pour exposer un service sans router tout le VPC ; architecture hub and spoke.
+- **Le cloud hybride : VPN et Direct Connect** (`hybrid-cloud`) : VPN site à site IPsec avec BGP vers le data center
+  (renvoi aux sauts 2 et 5), Direct Connect pour un lien dédié, redondance et choix du chemin (LOCAL_PREF, AS-path
+  prepending, comme au chapitre sur les attributs BGP).
+- **Le réseau en code avec Terraform** (`terraform`) : fournisseurs, ressources, état (`terraform.tfstate`, à stocker
+  à distance et à protéger), `plan` / `apply` / `destroy`, modules ; un VPC complet décrit en code et déployé par un
+  pipeline, dans la continuité du saut Automatisation.
 
 ---
 

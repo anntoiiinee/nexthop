@@ -102,4 +102,17 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'prometheus-grafana', title: { fr: 'Prometheus et Grafana', en: 'Prometheus and Grafana' } },
     ],
   },
+  {
+    course: 'cloud',
+    label: 'Cloud · Hybride',
+    title: { fr: 'Le réseau dans le cloud', en: 'Cloud networking' },
+    text: { fr: 'Étendre le réseau de l’entreprise jusque dans le cloud.', en: 'Extending the corporate network into the cloud.' },
+    chapters: [
+      { slug: 'aws-vpc', title: { fr: 'Les bases du réseau AWS', en: 'AWS networking basics' } },
+      { slug: 'security-groups', title: { fr: 'Security groups et NACL', en: 'Security groups and NACLs' } },
+      { slug: 'transit-gateway', title: { fr: 'Interconnecter des VPC', en: 'Interconnecting VPCs' } },
+      { slug: 'hybrid-cloud', title: { fr: 'Le cloud hybride : VPN et Direct Connect', en: 'Hybrid cloud: VPN and Direct Connect' } },
+      { slug: 'terraform', title: { fr: 'Le réseau en code avec Terraform', en: 'Network as code with Terraform' } },
+    ],
+  },
 ];
