@@ -1,0 +1,330 @@
+---
+title: "OSPF basics"
+description: "OSPF step by step: router ID, adjacencies and states, point-to-point networks and DR/BDR, cost and shortest path, areas and LSAs, configuration and lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [ospf, igp, routing]
+vendor: [arista, cisco]
+order: 2
+---
+
+<Term id="ospf" /> (Open Shortest Path First) is the most widely used IGP in the enterprise. It is a
+**link-state** protocol: each router describes its own links, all routers share the same map of the
+network, and each one computes its best paths with Dijkstra's algorithm. Here we deploy it on the
+company's internal network.
+
+## The example network
+
+Four routers in a **ring**: there are always two paths between two sites, and OSPF has to pick the
+best one, then fail over when something breaks.
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 60, y: 80, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 230, y: 80, label: 'R1', sub: '10.255.0.1' },
+    { id: 'r2', type: 'router', x: 530, y: 80, label: 'R2', sub: '10.255.0.2' },
+    { id: 'r4', type: 'router', x: 230, y: 250, label: 'R4', sub: '10.255.0.4' },
+    { id: 'r3', type: 'router', x: 530, y: 250, label: 'R3', sub: '10.255.0.3' },
+    { id: 'srv', type: 'server', x: 700, y: 244, label: 'HQ', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc1', to: 'r1' },
+    { from: 'r1', to: 'r2', label: '10.0.12.0/31' },
+    { from: 'r2', to: 'r3', label: '10.0.23.0/31' },
+    { from: 'r3', to: 'r4', label: '10.0.34.0/31' },
+    { from: 'r4', to: 'r1', label: '10.0.14.0/31' },
+    { from: 'r3', to: 'srv' },
+  ]}
+  caption="Four routers in a ring, each with a loopback (10.255.0.x/32) used as its identifier. Branch A is behind R1, headquarters behind R3."
+/>
+
+## The router ID
+
+Each OSPF router is identified by a 32-bit **router ID**, written like an IPv4 address. It is picked
+in this order:
+
+1. the value configured with `router-id`;
+2. otherwise, the highest IP address of a loopback interface;
+3. otherwise, the highest IP address of an active interface.
+
+<Callout type="tip">
+Always configure the router ID explicitly, with the same value as the loopback address. A router ID
+that changes on reboot, or two routers sharing the same one, cause behaviors that are very hard to
+diagnose.
+</Callout>
+
+## Adjacencies
+
+OSPF routers discover each other by sending **Hello** packets every **10 seconds**, as multicast
+(`224.0.0.5`), on every interface where OSPF is enabled. To become neighbors, two routers must agree
+on several parameters:
+
+| Parameter | Must match | Default |
+|---|---|---|
+| Area | yes | — |
+| Hello / dead interval | yes | 10 s / 40 s |
+| Subnet and mask | yes (except on point-to-point) | — |
+| Authentication | yes | none |
+| Area type (stub…) | yes | normal |
+| MTU | yes, otherwise stuck while exchanging databases | 1500 |
+| Router ID | **different** | — |
+
+An adjacency then goes through several **states** before it is complete:
+
+<PacketFormat
+  cols={7}
+  rows={[
+    { fields: [
+      { label: 'Down', sub: 'nothing received' },
+      { label: 'Init', sub: 'Hello received' },
+      { label: '2-Way', sub: 'I see myself in its Hello', tone: 'sky' },
+      { label: 'ExStart', sub: 'who leads the exchange', tone: 'amber' },
+      { label: 'Exchange', sub: 'database summary', tone: 'amber' },
+      { label: 'Loading', sub: 'missing LSAs', tone: 'amber' },
+      { label: 'Full', sub: 'identical databases', tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="The states of an OSPF adjacency. In 2-Way, the routers know each other; in Full, they have synchronized their topology databases."
+/>
+
+<Callout type="field">
+An adjacency stuck in **ExStart** or **Exchange** is almost always an **MTU** mismatch between the two
+ends. Stuck in **Init**: the Hello only gets through in one direction (ACL, filtering). Missing
+entirely: check the area, the timers and the mask.
+</Callout>
+
+## Point-to-point or DR/BDR
+
+On an Ethernet segment shared by several routers (a switch in the middle), if each one had to
+synchronize its database with every other one, the number of adjacencies would explode. OSPF therefore
+elects a **DR** (Designated Router) and a **BDR** (its backup): the other routers are Full only with
+them, and stay in 2-Way with each other.
+
+<Topology
+  width={700}
+  height={300}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 350, y: 140, label: 'Switch' },
+    { id: 'a', type: 'router', x: 130, y: 60, label: 'RA', sub: 'DR', tone: 'emerald' },
+    { id: 'b', type: 'router', x: 570, y: 60, label: 'RB', sub: 'BDR', tone: 'sky' },
+    { id: 'c', type: 'router', x: 130, y: 230, label: 'RC', sub: 'DROTHER', tone: 'slate' },
+    { id: 'd', type: 'router', x: 570, y: 230, label: 'RD', sub: 'DROTHER', tone: 'slate' },
+  ]}
+  links={[{ from: 'sw', to: 'a' }, { from: 'sw', to: 'b' }, { from: 'sw', to: 'c' }, { from: 'sw', to: 'd' }]}
+  caption="On a shared segment, RC and RD synchronize their database only with the DR and BDR (highest priority, then highest router ID)."
+/>
+
+Between two directly connected routers (our `/31` links), this election is pointless and slows down
+the adjacency. The link is therefore declared as **point-to-point**: `ip ospf network point-to-point`.
+This is the best practice on every link between routers.
+
+## The topology database and LSAs
+
+Each router describes its links in an **LSA** (<Term id="lsa" />, *Link State Advertisement*) and floods
+it throughout the area. All the LSAs together form the **LSDB** (link-state database), **identical on
+every router in the area**. From this map, each router runs Dijkstra with itself as the root, and gets
+its shortest-path tree.
+
+| LSA type | Sent by | Describes |
+|---|---|---|
+| 1 · Router | every router | its links and their cost, within its area |
+| 2 · Network | the DR | the routers present on a shared segment |
+| 3 · Summary | an ABR | the networks of another area |
+| 5 · External | an ASBR | routes coming from elsewhere (static, BGP…) |
+
+## The cost
+
+OSPF picks the path with the lowest **sum of costs**. By default, an interface's cost is computed as:
+
+**cost = reference bandwidth / interface bandwidth**
+
+The trap: the default reference is **100 Mb/s**. Any link of 100 Mb/s or more therefore costs **1**,
+and OSPF can no longer tell 1 Gb/s from 100 Gb/s. Raise the reference on **every** router, to the same
+value:
+
+| Speed | Cost (100 Mb/s reference) | Cost (100 Gb/s reference) |
+|---|---|---|
+| 100 Mb/s | 1 | 1000 |
+| 1 Gb/s | 1 | 100 |
+| 10 Gb/s | 1 | 10 |
+| 100 Gb/s | 1 | 1 |
+
+You can also set an interface's cost by hand with `ip ospf cost`, to steer traffic.
+
+In our ring, every link is 10 Gb/s, so cost 10. From R1, headquarters is **30** away via R2 (10 + 10 +
+10 for the LAN) and **30** via R4: a tie. OSPF then installs **both paths** and load-balances traffic
+(ECMP, *Equal-Cost Multi-Path*).
+
+<Topology
+  width={760}
+  height={300}
+  nodes={[
+    { id: 'r1', type: 'router', x: 230, y: 70, label: 'R1', tone: 'emerald' },
+    { id: 'r2', type: 'router', x: 530, y: 70, label: 'R2' },
+    { id: 'r4', type: 'router', x: 230, y: 240, label: 'R4' },
+    { id: 'r3', type: 'router', x: 530, y: 240, label: 'R3' },
+    { id: 'srv', type: 'server', x: 700, y: 234, label: 'HQ', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: 'cost 10', tone: 'emerald' },
+    { from: 'r2', to: 'r3', label: 'cost 10', tone: 'emerald' },
+    { from: 'r3', to: 'r4', label: 'cost 10', tone: 'emerald' },
+    { from: 'r4', to: 'r1', label: 'cost 10', tone: 'emerald' },
+    { from: 'r3', to: 'srv', label: '10' },
+  ]}
+  flows={[
+    { from: 'r1', to: 'r2', tone: 'emerald', offset: -16 },
+    { from: 'r2', to: 'r3', tone: 'emerald', offset: -16 },
+    { from: 'r1', to: 'r4', tone: 'emerald', offset: 16 },
+    { from: 'r4', to: 'r3', tone: 'emerald', offset: 16 },
+  ]}
+  caption="Two paths of cost 30 to headquarters: OSPF installs both and load-balances traffic (ECMP)."
+/>
+
+If you want the path through R4 to be backup only, just raise its cost, for example
+`ip ospf cost 100` on the interfaces of the R1-R4 link. The path through R2 (30) becomes the only
+winner, and the one through R4 (120) will only be used if the R1-R2 link fails.
+
+## Areas
+
+In a large network, a single topology database would become huge, and every change would force every
+router to recompute. OSPF therefore splits the network into **areas**:
+
+- **area 0** (the backbone) is mandatory, and every other area attaches to it;
+- a router straddling two areas is an **ABR** (Area Border Router): it summarizes one area into the
+  other with type 3 LSAs;
+- a router injecting external routes (static, BGP) is an **ASBR**.
+
+<Topology
+  width={760}
+  height={260}
+  groups={[
+    { x: 16, y: 40, w: 200, h: 200, label: 'Area 10', tone: 'amber' },
+    { x: 240, y: 40, w: 280, h: 200, label: 'Area 0 · backbone', tone: 'sky' },
+    { x: 544, y: 40, w: 200, h: 200, label: 'Area 20', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'a', type: 'router', x: 110, y: 140, label: 'R-branch', tone: 'amber' },
+    { id: 'abr1', type: 'router', x: 290, y: 140, label: 'ABR1', sub: 'areas 10 + 0' },
+    { id: 'abr2', type: 'router', x: 470, y: 140, label: 'ABR2', sub: 'areas 0 + 20' },
+    { id: 'b', type: 'router', x: 650, y: 140, label: 'R-plant', tone: 'violet' },
+  ]}
+  links={[{ from: 'a', to: 'abr1' }, { from: 'abr1', to: 'abr2' }, { from: 'abr2', to: 'b' }]}
+  caption="Areas 10 and 20 attach to area 0 through ABRs. A failure in area 20 only makes area 20's routers recompute."
+/>
+
+<Callout type="note">
+A network of a few dozen routers works perfectly well as a **single area 0**. Areas become useful from a
+few hundred routers, or to isolate unstable sites. Don't split "on principle": every area boundary
+makes troubleshooting harder.
+</Callout>
+
+## Configuration
+
+Enable OSPF interface by interface, declare the links between routers as point-to-point, and make the
+LAN interface **passive**: its network is advertised, but no Hello is sent on it, so that no machine
+can bring up an adjacency.
+
+```text title="R1 · Arista EOS"
+router ospf 1
+   router-id 10.255.0.1
+   auto-cost reference-bandwidth 100000
+   passive-interface Ethernet3
+   max-lsa 12000
+!
+interface Ethernet1
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet2
+   ip ospf network point-to-point
+   ip ospf area 0.0.0.0
+!
+interface Ethernet3
+   ip ospf area 0.0.0.0
+!
+interface Loopback0
+   ip ospf area 0.0.0.0
+```
+
+```text title="R1 · Cisco IOS"
+router ospf 1
+ router-id 10.255.0.1
+ auto-cost reference-bandwidth 100000
+ passive-interface GigabitEthernet0/3
+!
+interface GigabitEthernet0/1
+ ip ospf network point-to-point
+ ip ospf 1 area 0
+!
+interface GigabitEthernet0/2
+ ip ospf network point-to-point
+ ip ospf 1 area 0
+!
+interface GigabitEthernet0/3
+ ip ospf 1 area 0
+!
+interface Loopback0
+ ip ospf 1 area 0
+```
+
+## Verifying
+
+```text title="R1#show ip ospf neighbor"
+Neighbor ID     Instance VRF      Pri State                  Dead Time   Address         Interface
+10.255.0.2      1        default  0   FULL                   00:00:35    10.0.12.1       Ethernet1
+10.255.0.4      1        default  0   FULL                   00:00:31    10.0.14.1       Ethernet2
+```
+
+```text title="R1#show ip route ospf"
+ O        10.0.23.0/31 [110/20] via 10.0.12.1, Ethernet1
+ O        10.0.34.0/31 [110/20] via 10.0.14.1, Ethernet2
+ O        172.16.20.0/24 [110/30] via 10.0.12.1, Ethernet1
+                                  via 10.0.14.1, Ethernet2
+```
+
+- `[110/30]`: OSPF's administrative distance (110) and total cost (30).
+- Two `via` lines for headquarters: that's ECMP.
+- The other routers' loopbacks show up too (not displayed here): their cost depends on the vendor, as
+  they don't all assign the same value to a loopback interface.
+
+Other useful commands: `show ip ospf interface brief` (cost, state, network type of each interface),
+`show ip ospf database` (the LSDB).
+
+## The lab
+
+The four routers boot with their addresses, but **without OSPF**:
+
+1. Deploy the lab. From `pc1`, `ping 172.16.20.10` fails: R1 doesn't know headquarters.
+2. Configure OSPF on all four routers (template above). Follow the adjacencies with
+   `show ip ospf neighbor` until they reach the FULL state.
+3. The ping works. Look at `show ip route ospf` on R1: is headquarters reached through ECMP?
+4. Raise the cost of the R1-R4 link (`ip ospf cost 100` on both ends). What happens to the route?
+5. Shut down the R1-R2 link (`shutdown` on R1's Et1) while `ping` keeps running on `pc1`: how many
+   packets do you lose? Bring the link back up.
+6. Bonus: set one interface to `ip ospf network broadcast` on one end only. What happens to the
+   adjacency?
+
+<Lab name="ospf-basic" lang="en" />
+
+<Callout type="tip" title="Solution">
+On each router: `router ospf 1` with its `router-id` (its loopback) and
+`auto-cost reference-bandwidth 100000`, then `ip ospf area 0.0.0.0` on every interface,
+`ip ospf network point-to-point` on links between routers, and `passive-interface` for the LANs
+(Ethernet3 on R1 and R3).
+</Callout>
+
+## Key takeaways
+
+- OSPF is a **link-state** protocol: each router has the full map of its area (LSDB) and computes the
+  shortest path with Dijkstra.
+- An adjacency requires the **same area, timers, mask, authentication and MTU**, and different router
+  IDs; it must reach the **Full** state.
+- On links between routers: **point-to-point**, no DR/BDR.
+- **Cost = reference / bandwidth**: raise the reference everywhere. With equal costs, **ECMP**.
+- **Area 0** is the backbone; other areas attach to it through ABRs.
+
+OSPF carries routes inside the company. To exchange them with the rest of the world, you need **BGP**.

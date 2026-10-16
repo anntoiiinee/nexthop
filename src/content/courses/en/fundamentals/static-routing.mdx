@@ -1,0 +1,347 @@
+---
+title: "Static routing"
+description: "Default gateway, routing table, longest prefix match, hop by hop (next hop), default route and floating routes, with a ContainerLab lab."
+pubDate: 2026-10-17
+level: beginner
+tags: [routing, static, ipv4, arp]
+vendor: [arista, cisco]
+order: 8
+---
+
+The previous chapters gave us neatly split networks: VLANs, each with its own IP subnet. What's left
+is to **connect them together** and to headquarters. That is the router's job, and it is also what
+gave this site its name: at each step, a router doesn't know the whole path, only **the next hop**.
+
+## The example network
+
+We start from the branch office network, connected to headquarters through an intermediate router:
+
+<Topology
+  width={760}
+  height={250}
+  groups={[
+    { x: 16, y: 20, w: 250, h: 210, label: 'Branch · 192.168.10.0/26', tone: 'sky' },
+    { x: 494, y: 20, w: 250, h: 210, label: 'HQ · 172.16.20.0/24', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 120, label: 'PC1', sub: '.10' },
+    { id: 'r1', type: 'router', x: 210, y: 120, label: 'R1', sub: '.1' },
+    { id: 'r2', type: 'router', x: 380, y: 120, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 550, y: 120, label: 'R3', sub: '.1', tone: 'violet' },
+    { id: 'app', type: 'server', x: 680, y: 114, label: 'App', sub: '.10', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc', to: 'r1' },
+    { from: 'r1', to: 'r2', label: '192.168.10.120/31' },
+    { from: 'r2', to: 'r3', label: '10.0.23.0/31' },
+    { from: 'r3', to: 'app' },
+  ]}
+  caption="PC1 (192.168.10.10) needs to reach the headquarters application (172.16.20.10), three routers away."
+/>
+
+| Device | Interface | Address |
+|---|---|---|
+| PC1 | eth1 | 192.168.10.10/26, gateway 192.168.10.1 |
+| R1 | Et1 / Et2 | 192.168.10.1/26 · 192.168.10.120/31 |
+| R2 | Et1 / Et2 | 192.168.10.121/31 · 10.0.23.0/31 |
+| R3 | Et1 / Et2 | 10.0.23.1/31 · 172.16.20.1/24 |
+| App | eth1 | 172.16.20.10/24, gateway 172.16.20.1 |
+
+## On the host side: the default gateway
+
+Before even sending a packet, PC1 asks itself one question: **is the destination in my network?** It
+applies its mask to its own address and to the destination's:
+
+- `192.168.10.10/26` → network **192.168.10.0**;
+- `172.16.20.10` with the same mask → network 172.16.20.0: **not my network**.
+
+The rule is simple:
+
+1. **same network** → it sends the frame directly to the destination machine;
+2. **another network** → it sends the frame to its **default gateway** (192.168.10.1, R1), which will
+   take care of the rest.
+
+In both cases, it needs the **MAC address** of the next device. It asks for it with
+<Term id="arp" />, covered in detail in the [previous chapter](/en/courses/fundamentals/arp):
+
+<Topology
+  width={640}
+  height={230}
+  nodes={[
+    { id: 'pc', type: 'host', x: 120, y: 110, label: 'PC1', sub: '192.168.10.10' },
+    { id: 'r1', type: 'router', x: 520, y: 110, label: 'R1', sub: '192.168.10.1' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }]}
+  flows={[
+    { from: 'pc', to: 'r1', label: '① broadcast: "Who has 192.168.10.1?"', tone: 'amber', offset: -20 },
+    { from: 'r1', to: 'pc', label: '② unicast: "That\'s me, my MAC is 001c.73…"', tone: 'emerald', offset: -20 },
+  ]}
+  caption="The ARP request is a broadcast (the whole VLAN receives it), the reply a unicast. PC1 caches the result for a few minutes."
+/>
+
+<Callout type="warning">
+A missing or wrong gateway is the most common mistake on a workstation or a server: the machine reaches
+its own network perfectly, but nothing beyond. First reflex: `ip route` (Linux) or `ipconfig`
+(Windows).
+</Callout>
+
+## The routing table
+
+A router decides where to send each packet using its **routing table**: a list of destination networks,
+each with its exit interface and next hop.
+
+At boot, R1 only knows its **directly connected** networks: those of its interfaces.
+
+```text title="R1#show ip route"
+VRF: default
+Codes: C - connected, S - static, K - kernel, B - BGP, O - OSPF
+
+Gateway of last resort is not set
+
+ C        192.168.10.0/26 is directly connected, Ethernet1
+ C        192.168.10.120/31 is directly connected, Ethernet2
+```
+
+The headquarters network isn't there: a packet to 172.16.20.10 would be **dropped**. For R1 to know it,
+there are two options: tell it by hand (**static routing**), or have it learn it through a protocol
+(**dynamic routing**: OSPF, BGP… in the next course).
+
+## Configuring a static route
+
+A static route boils down to: "to reach **this network**, send to **this next hop**".
+
+```text title="Arista EOS"
+ip route 172.16.20.0/24 192.168.10.121
+```
+
+```text title="Cisco IOS"
+ip route 172.16.20.0 255.255.255.0 192.168.10.121
+```
+
+The next hop must be **directly reachable**, on a connected network: here, R2's address on the R1-R2
+link.
+
+## The default route
+
+R1 is a branch router: everything that isn't local goes to R2. Rather than writing one route per
+headquarters network, we use the **default route**, `0.0.0.0/0`, which matches **every** destination:
+
+```text title="R1 · Arista EOS"
+ip route 0.0.0.0/0 192.168.10.121
+```
+
+It is the router equivalent of a PC's default gateway. It shows up as the **Gateway of last resort** in
+the table.
+
+## The longest prefix wins
+
+A destination can match several routes. Picture this table on R2, and a packet for **172.16.20.10**:
+
+| Route | Matches 172.16.20.10? | Length |
+|---|---|---|
+| `0.0.0.0/0` via 10.0.23.1 | yes (every address) | 0 bits |
+| `172.16.0.0/16` via 10.0.23.1 | yes | 16 bits |
+| `172.16.20.0/24` via 10.0.23.1 | yes | **24 bits** ✓ |
+| `172.16.30.0/24` via 10.0.23.1 | no | |
+
+The router picks **the most specific route**, the one with the longest prefix: the /24. The default
+route is therefore only used when **no other route** matches.
+
+<Callout type="tip">
+This rule is fundamental and applies to every protocol: static, OSPF, BGP. It lets you, for example,
+have a broad route to all of headquarters (`172.16.0.0/16`) and a more specific exception for one site.
+</Callout>
+
+## Hop by hop: the next hop
+
+Let's add the routes needed on each router:
+
+```text title="R1"
+ip route 0.0.0.0/0 192.168.10.121           ! everything else: to R2
+```
+
+```text title="R2"
+ip route 192.168.10.0/24 192.168.10.120     ! the branch: to R1
+ip route 172.16.20.0/24 10.0.23.1           ! headquarters: to R3
+```
+
+```text title="R3"
+ip route 192.168.10.0/24 10.0.23.0          ! the branch: to R2
+```
+
+On R2, a single `/24` route covers **all** the branch networks (users, Wi-Fi, servers…): that is the
+benefit of carving every VLSM subnet out of the same block.
+
+Now let's follow the packet. Each router decides **on its own**, without knowing the full path:
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'pc', type: 'host', x: 55, y: 100, label: 'PC1' },
+    { id: 'r1', type: 'router', x: 220, y: 100, label: 'R1' },
+    { id: 'r2', type: 'router', x: 385, y: 100, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 550, y: 100, label: 'R3', tone: 'violet' },
+    { id: 'app', type: 'server', x: 705, y: 94, label: 'App', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }, { from: 'r1', to: 'r2' }, { from: 'r2', to: 'r3' }, { from: 'r3', to: 'app' }]}
+  flows={[
+    { from: 'pc', to: 'r1', label: 'gateway', tone: 'sky', offset: -18 },
+    { from: 'r1', to: 'r2', label: '0.0.0.0/0', tone: 'sky', offset: -18 },
+    { from: 'r2', to: 'r3', label: '172.16.20.0/24', tone: 'sky', offset: -18 },
+    { from: 'r3', to: 'app', label: 'connected', tone: 'sky', offset: -18 },
+  ]}
+  caption="Each router picks the next hop from its own table. None of them knows the end-to-end path."
+/>
+
+And at each hop, what happens to the packet? The **IP addresses don't change**: they identify the
+final source and destination. However, each router strips the Ethernet frame and **builds a new one**
+for the next link, with new MAC addresses. It also decrements the <Term id="ttl" />:
+
+<PacketFormat
+  cols={13}
+  rows={[
+    { label: 'PC1 → R1', fields: [
+      { label: 'R1 Et1 MAC', sub: 'destination', span: 3, tone: 'amber' },
+      { label: 'PC1 MAC', sub: 'source', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', sub: 'source IP', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', sub: 'destination IP', span: 3, tone: 'emerald', mono: true },
+      { label: '64', sub: 'TTL', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R1 → R2', fields: [
+      { label: 'R2 Et1 MAC', span: 3, tone: 'amber' },
+      { label: 'R1 Et2 MAC', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '63', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R2 → R3', fields: [
+      { label: 'R3 Et1 MAC', span: 3, tone: 'amber' },
+      { label: 'R2 Et2 MAC', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '62', span: 1, tone: 'violet', mono: true },
+    ] },
+    { label: 'R3 → App', fields: [
+      { label: 'App MAC', span: 3, tone: 'amber' },
+      { label: 'R3 Et2 MAC', span: 3, tone: 'amber' },
+      { label: '192.168.10.10', span: 3, tone: 'emerald', mono: true },
+      { label: '172.16.20.10', span: 3, tone: 'emerald', mono: true },
+      { label: '61', span: 1, tone: 'violet', mono: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="MAC addresses change at every hop (layer 2, local to each link), IP addresses stay the same end to end (layer 3)."
+/>
+
+That sums up this whole course: **layer 2 delivers from one device to the next, layer 3 decides the
+path all the way to the final destination.**
+
+## The return-path trap
+
+A ping is a round trip: **there and back**. The application's reply goes from 172.16.20.10 to
+192.168.10.10: every router on the path must also know how to **get back** to the branch.
+
+<Topology
+  width={640}
+  height={210}
+  nodes={[
+    { id: 'pc', type: 'host', x: 70, y: 100, label: 'PC1' },
+    { id: 'r1', type: 'router', x: 240, y: 100, label: 'R1' },
+    { id: 'r3', type: 'router', x: 410, y: 100, label: 'R3', sub: 'no return route', tone: 'rose' },
+    { id: 'app', type: 'server', x: 570, y: 94, label: 'App', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'r1' }, { from: 'r1', to: 'r3', style: 'dashed' }, { from: 'r3', to: 'app' }]}
+  flows={[
+    { from: 'r1', to: 'r3', label: 'request: OK', tone: 'emerald', offset: -16 },
+    { from: 'app', to: 'r3', label: 'reply', tone: 'amber', offset: 16 },
+  ]}
+  notes={[{ x: 410, y: 180, text: 'R3 cannot reach 192.168.10.0/24: reply dropped', tone: 'rose' }]}
+  caption="If R3 has no route to the branch, the request arrives but the reply is dropped: the ping fails even though the forward path works."
+/>
+
+<Callout type="field">
+"The ping doesn't go through, yet my route is right": nine times out of ten, it's the **return route**
+that is missing, on a router or a firewall along the path. Check both directions, at every hop.
+</Callout>
+
+## Floating routes
+
+You can configure **two routes to the same destination**, for example a primary link and a 4G backup
+link. To choose between them, each route source has an **administrative distance** (AD): the lowest
+wins.
+
+| Source | Administrative distance (Cisco) |
+|---|---|
+| Connected network | 0 |
+| Static route | 1 |
+| eBGP | 20 |
+| OSPF | 110 |
+| iBGP | 200 |
+
+<Callout type="note">
+These are Cisco's values. They vary between vendors: on Arista EOS, for example, BGP uses 200 by
+default for both eBGP and iBGP. What matters is the principle: for an equal prefix, the lowest distance
+wins.
+</Callout>
+
+A **floating route** is a static route deliberately given a higher distance. It stays in reserve, and
+only shows up in the table if the primary route disappears:
+
+```text title="R1 · Arista EOS"
+ip route 0.0.0.0/0 192.168.10.121          ! primary, AD 1
+ip route 0.0.0.0/0 192.0.2.1 250           ! 4G backup, AD 250: used only if the primary goes away
+```
+
+## Troubleshooting
+
+Three commands cover most cases:
+
+- `show ip route` (or `show ip route 172.16.20.10`): does the router have a route, and which one?
+- `ping`: does the destination answer? It uses <Term id="icmp" />.
+- `traceroute`: which routers do we go through, and where does it stop?
+
+`traceroute` takes advantage of the TTL: it sends packets with a TTL of 1, then 2, then 3… Each router
+that brings the TTL down to 0 sends back an ICMP error message, which reveals its address:
+
+```text title="pc1:~# traceroute 172.16.20.10"
+traceroute to 172.16.20.10 (172.16.20.10), 30 hops max, 46 byte packets
+ 1  192.168.10.1 (192.168.10.1)  0.512 ms  0.271 ms  0.236 ms
+ 2  192.168.10.121 (192.168.10.121)  0.874 ms  0.611 ms  0.583 ms
+ 3  10.0.23.1 (10.0.23.1)  1.102 ms  0.947 ms  0.902 ms
+ 4  172.16.20.10 (172.16.20.10)  1.215 ms  1.033 ms  1.011 ms
+```
+
+If the trace stops at a hop (`* * *`), the problem is on that router or just after it: a route missing
+on the way there, or on the way back.
+
+## The lab
+
+Rebuild this network at home. The three routers boot **without any static route**:
+
+1. Deploy the lab, connect to `pc1` (`docker exec -it clab-static-routing-pc1 sh`) and run
+   `ping 172.16.20.10`: it fails.
+2. Look at `show ip route` on R1: it only knows its connected networks.
+3. Add the routes, router by router, re-running the ping at each step. Notice that it only works once
+   **the return route** is configured on R3.
+4. Run `traceroute 172.16.20.10` from `pc1` and compare with the output above.
+5. Bonus: replace R2's two routes with a single default route. What happens, and why?
+
+<Lab name="static-routing" lang="en" />
+
+<Callout type="tip" title="Solution">
+The routes to add are exactly those of the "Hop by hop" section: a default route on R1, two routes on
+R2, one route to the branch on R3. To enter configuration mode: `enable`, then `configure`, then the
+`ip route` commands.
+</Callout>
+
+## Key takeaways
+
+- A machine sends directly if the destination is **in its network**, otherwise to its **gateway**.
+- A router picks the route with the **longest prefix**; `0.0.0.0/0` is the default route.
+- Each router only knows **the next hop**: MACs change at every hop, IPs don't.
+- Always think about the **return route**.
+- **Administrative distance** decides between route sources; a floating route acts as a backup.
+
+Well done, you have finished the fundamentals! The logical next step: teaching routers to discover the
+network on their own with [dynamic routing](/en/courses/routing) (OSPF, then BGP).

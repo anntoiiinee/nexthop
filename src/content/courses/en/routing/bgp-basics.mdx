@@ -1,0 +1,277 @@
+---
+title: "BGP basics"
+description: "Autonomous systems, BGP session over TCP 179, messages and states, eBGP and iBGP, advertising a prefix, AS_PATH and loop prevention, with a dual-ISP lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [bgp, ebgp, ibgp, routing]
+vendor: [arista, cisco]
+order: 3
+---
+
+The Internet isn't one network, it is an **interconnection of tens of thousands of independent
+networks**: ISPs, hosting providers, large companies, universities. Each one runs its network as it
+sees fit, but they all need to exchange their routes. The protocol that makes this possible is
+<Term id="bgp" /> (Border Gateway Protocol), and it is also at the heart of modern data centers.
+
+## Autonomous systems
+
+An **autonomous system** (<Term id="as" />) is a set of networks run by a single organization, with a
+common routing policy. Each AS has a number (ASN):
+
+| Range | Use |
+|---|---|
+| 1 to 64,495 | public 2-byte ASNs, assigned by the registries (RIPE in Europe) |
+| **64,512 to 65,534** | **private** 2-byte: free to use internally, never advertised on the Internet |
+| 4,200,000,000 to 4,294,967,294 | private 4-byte |
+
+In our example, the company uses AS **65010**. It is connected to two ISPs, AS 65100 and 65200, which
+are themselves connected to the rest of the Internet (here AS 65300).
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 'host', type: 'host', x: 70, y: 160, label: 'host1', sub: '198.51.100.10' },
+    { id: 'ce1', type: 'router', x: 230, y: 160, label: 'CE1', sub: 'AS 65010', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 450, y: 70, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'router', x: 450, y: 250, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 670, y: 160, label: 'Internet', sub: 'AS 65300', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'host', to: 'ce1' },
+    { from: 'ce1', to: 'ispa', label: '192.0.2.0/31', tone: 'emerald' },
+    { from: 'ce1', to: 'ispb', label: '192.0.2.2/31', tone: 'emerald' },
+    { from: 'ispa', to: 'inet', label: '192.0.2.4/31' },
+    { from: 'ispb', to: 'inet', label: '192.0.2.6/31' },
+  ]}
+  caption="The company (AS 65010) owns the 198.51.100.0/24 prefix and makes it known to the Internet through its two ISPs."
+/>
+
+The company wants two things: **advertise its prefix** `198.51.100.0/24` to the Internet (otherwise
+nobody will know how to reply), and **learn the Internet's routes** to know which ISP to go out through.
+
+## A BGP session
+
+Unlike OSPF, BGP doesn't discover its neighbors: each neighbor (called a **peer**) is **configured
+explicitly**, with its address and AS number. The two routers open a **TCP connection on port 179**,
+and the whole exchange goes through it. TCP guarantees delivery: BGP doesn't need to repeat its
+announcements, it only sends **changes**.
+
+The session goes through several states:
+
+<PacketFormat
+  cols={6}
+  rows={[
+    { fields: [
+      { label: 'Idle', sub: 'nothing' },
+      { label: 'Connect', sub: 'opening TCP', tone: 'amber' },
+      { label: 'Active', sub: 'TCP failed, retrying', tone: 'rose' },
+      { label: 'OpenSent', sub: 'OPEN sent', tone: 'amber' },
+      { label: 'OpenConfirm', sub: 'OPEN received and accepted', tone: 'amber' },
+      { label: 'Established', sub: 'exchanging routes', tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="The states of a BGP session. Only Established allows routes to be exchanged."
+/>
+
+<Callout type="field">
+A session stuck in **Active** doesn't mean "active": TCP can't be established. The usual causes: wrong
+neighbor address, no route to it, port 179 filtered, or an AS number different from what the other side
+expects (the session then drops right after the OPEN, with an explicit error message in the logs).
+</Callout>
+
+Four message types travel through the session:
+
+| Message | Role |
+|---|---|
+| **OPEN** | introduce yourself: AS number, router ID, timer, capabilities (IPv6, EVPN…) |
+| **UPDATE** | advertise new routes with their attributes, or withdraw some |
+| **KEEPALIVE** | "I'm still here", every **60 s**; with no news for **180 s** (hold time), the session drops |
+| **NOTIFICATION** | report an error, right before closing the session |
+
+## eBGP and iBGP
+
+- **eBGP** (<Term id="ebgp" />): a session between two **different** ASes, here CE1 and each ISP. The
+  peers are usually directly connected.
+- **iBGP** (<Term id="ibgp" />): a session between two routers of the **same** AS, for example the
+  company's two edge routers, to share what each one learned from its ISP.
+
+<Topology
+  width={760}
+  height={260}
+  groups={[{ x: 16, y: 16, w: 330, h: 228, label: 'AS 65010', tone: 'emerald' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 200, y: 70, label: 'CE1', tone: 'emerald' },
+    { id: 'ce2', type: 'router', x: 200, y: 190, label: 'CE2', tone: 'emerald' },
+    { id: 'ispa', type: 'cloud', x: 540, y: 70, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'cloud', x: 540, y: 190, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ce2', label: 'iBGP', tone: 'emerald', style: 'dashed' },
+    { from: 'ce1', to: 'ispa', label: 'eBGP' },
+    { from: 'ce2', to: 'ispb', label: 'eBGP' },
+  ]}
+  caption="With two edge routers, each one speaks eBGP to its ISP, and iBGP to the other to share what it learned."
+/>
+
+The two types don't behave the same:
+
+| | eBGP | iBGP |
+|---|---|---|
+| Administrative distance (Cisco) | 20 | 200 |
+| AS_PATH | you prepend your own AS when advertising | unchanged |
+| Next hop | replaced by your own address | **kept** (hence `next-hop-self`) |
+| Re-advertisement | an eBGP route is advertised to every peer | a route learned over iBGP is **not** re-advertised to another iBGP peer |
+
+The last rule prevents loops inside an AS, but requires every iBGP router to be connected to every other
+one (full mesh) or to go through **route reflectors**. We'll come back to this in the data center course,
+where it is the foundation of EVPN fabrics.
+
+## Advertising a prefix
+
+BGP **only advertises what you ask it to**. The cleanest method is the `network` statement, which
+advertises a prefix **if it is present, exactly, in the routing table**:
+
+- here, `198.51.100.0/24` is the connected network of CE1's LAN interface: it is in the table;
+- if the advertised prefix is broader than the actual networks (a `/22` split into internal `/24`s), you
+  add a static route to `Null0` so that it exists in the table.
+
+```text title="Arista EOS: advertising an aggregate"
+ip route 198.51.100.0/22 Null0
+!
+router bgp 65010
+   network 198.51.100.0/22
+```
+
+<Callout type="warning">
+On the Internet, you advertise **only prefixes that belong to you** (assigned by a registry or by your
+ISP). Advertising someone else's prefix, even by mistake, can divert their traffic: this is a BGP
+*hijack*, and they regularly make the news.
+</Callout>
+
+## AS_PATH and loop prevention
+
+Every time a route goes from one AS to another over eBGP, the advertising AS **prepends its number** to
+the **AS_PATH** attribute. When the company's prefix reaches the Internet, it therefore carries the full
+list of ASes it went through:
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 90, y: 100, label: 'CE1', sub: 'AS 65010', tone: 'emerald' },
+    { id: 'ispa', type: 'router', x: 380, y: 100, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'inet', type: 'router', x: 670, y: 100, label: 'inet', sub: 'AS 65300', tone: 'violet' },
+  ]}
+  links={[{ from: 'ce1', to: 'ispa' }, { from: 'ispa', to: 'inet' }]}
+  flows={[
+    { from: 'ce1', to: 'ispa', label: '198.51.100.0/24 · AS_PATH: 65010', tone: 'emerald', offset: -20 },
+    { from: 'ispa', to: 'inet', label: 'AS_PATH: 65100 65010', tone: 'emerald', offset: -20 },
+  ]}
+  caption="Each AS prepends its number to the AS_PATH. Read the path from right (the origin) to left (the last AS crossed)."
+/>
+
+This list serves two purposes:
+
+1. **preventing loops**: a router that receives a route whose AS_PATH **already contains its own AS
+   number** rejects it. A route can therefore never come back into the AS that originated it;
+2. **choosing**: when nothing else decides, BGP prefers the path that crosses **the fewest ASes**. The
+   next chapter covers all the criteria.
+
+## Configuration
+
+On CE1, declare both ISPs and advertise the company's prefix:
+
+```text title="CE1 · Arista EOS"
+router bgp 65010
+   router-id 10.255.0.10
+   neighbor 192.0.2.0 remote-as 65100
+   neighbor 192.0.2.0 description ISP-A
+   neighbor 192.0.2.2 remote-as 65200
+   neighbor 192.0.2.2 description ISP-B
+   network 198.51.100.0/24
+   !
+   address-family ipv4
+      neighbor 192.0.2.0 activate
+      neighbor 192.0.2.2 activate
+```
+
+```text title="CE1 · Cisco IOS"
+router bgp 65010
+ bgp router-id 10.255.0.10
+ neighbor 192.0.2.0 remote-as 65100
+ neighbor 192.0.2.0 description ISP-A
+ neighbor 192.0.2.2 remote-as 65200
+ neighbor 192.0.2.2 description ISP-B
+ !
+ address-family ipv4
+  network 198.51.100.0 mask 255.255.255.0
+  neighbor 192.0.2.0 activate
+  neighbor 192.0.2.2 activate
+```
+
+<Callout type="warning">
+This minimal configuration **works but isn't safe**: CE1 accepts everything the ISPs send, and
+re-advertises to each one what it learns from the other. Chapter 5 adds the filters you need before
+going to production.
+</Callout>
+
+## Verifying
+
+```text title="CE1#show ip bgp summary"
+BGP summary information for VRF default
+Router identifier 10.255.0.10, local AS number 65010
+  Description  Neighbor    V AS     MsgRcvd MsgSent InQ OutQ  Up/Down State   PfxRcd PfxAcc
+  ISP-A        192.0.2.0   4 65100       12      14   0    0 00:05:12 Estab   1      1
+  ISP-B        192.0.2.2   4 65200       11      13   0    0 00:04:58 Estab   1      1
+```
+
+Both sessions are **Established**, and each ISP sends one prefix: the route to the Internet. The
+company's prefix doesn't come back: its AS_PATH would contain AS 65010.
+
+```text title="CE1#show ip bgp"
+          Network                Next Hop         Metric  LocPref Weight  Path
+ * >      198.51.100.0/24        -                -       -       0       i
+ * >      203.0.113.0/24         192.0.2.0        0       100     0       65100 65300 i
+ *        203.0.113.0/24         192.0.2.2        0       100     0       65200 65300 i
+```
+
+- `*`: the route is **valid** (its next hop is reachable); `>`: it is the **best** one, installed in the
+  routing table.
+- The Internet (`203.0.113.0/24`) is known through both ISPs, with AS_PATHs of the same length. BGP
+  picked ISP-A thanks to a tie-breaker; the next chapter explains which one, and how to choose yourself.
+- The trailing `i` is the **ORIGIN** attribute: the prefix was injected with `network`.
+
+## The lab
+
+The ISPs and the "Internet" are already configured. Only **CE1** is left to do:
+
+1. Deploy the lab. On `host1`, `ping 203.0.113.1` fails.
+2. On CE1, configure both eBGP sessions **without** the `network` statement. Check that they reach
+   Established and that you receive `203.0.113.0/24`.
+3. The ping still fails: the request goes out, but the Internet doesn't know `198.51.100.0/24`, so the
+   reply has no way back. Add `network 198.51.100.0/24`: the ping works.
+4. On `inet`, look at `show ip bgp 198.51.100.0/24`: which AS_PATHs do you see?
+5. Try advertising a prefix that isn't yours (`network 10.99.0.0/16` with a route to Null0). Do the ISPs
+   accept it? Why? Look at their configuration.
+
+<Lab name="bgp-basic" lang="en" />
+
+<Callout type="tip" title="Solution">
+The CE1 configuration from the "Configuration" section is enough. In step 5, the ISPs only accept
+`198.51.100.0/24` from CE1 (a prefix-list filter on their inbound session): that is exactly what real
+ISPs do with their customers.
+</Callout>
+
+## Key takeaways
+
+- An **AS** is a network with a single policy; ASNs **64,512 to 65,534** are private.
+- BGP exchanges routes over a **TCP 179** session between **explicitly configured** peers; only an
+  **Established** session exchanges routes.
+- **eBGP** between different ASes, **iBGP** within an AS (next hop kept, no iBGP→iBGP re-advertisement).
+- You only advertise what you ask for with `network`, provided the prefix is **in the routing table**.
+- The **AS_PATH** lists the ASes crossed: it prevents loops and serves as a selection criterion.
+
+Next chapter: how BGP chooses between several paths, and how to **decide for yourself** which ISP to
+use for inbound and outbound traffic.

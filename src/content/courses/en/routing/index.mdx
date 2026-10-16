@@ -1,0 +1,67 @@
+---
+title: "Dynamic routing"
+description: "Teaching routers the network: how routing protocols work, OSPF, then BGP from the session to routing policies, with two labs."
+pubDate: 2026-10-17
+level: intermediate
+tags: [routing, ospf, bgp]
+vendor: [arista, cisco]
+order: 0
+---
+
+In the [Fundamentals](/en/courses/fundamentals) course, we wrote every route by hand. That works for
+three routers. With thirty, or as soon as a link fails, it becomes unmanageable: routers need to
+**learn the network on their own** and **adapt to failures**. That is the role of dynamic routing
+protocols.
+
+## The running example: the company grows
+
+The branch office and headquarters from the first course are now part of a larger network. Internally,
+routers exchange their routes with **OSPF**. Towards the outside, headquarters is connected to **two
+ISPs** with **BGP**, so the Internet never goes down.
+
+<Topology
+  width={760}
+  height={320}
+  groups={[
+    { x: 16, y: 16, w: 440, h: 288, label: 'Internal network · OSPF · AS 65010', tone: 'sky' },
+    { x: 486, y: 16, w: 258, h: 288, label: 'Internet · BGP', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'r1', type: 'router', x: 90, y: 90, label: 'R1', sub: 'branch A' },
+    { id: 'r2', type: 'router', x: 250, y: 90, label: 'R2', sub: 'core' },
+    { id: 'r4', type: 'router', x: 90, y: 230, label: 'R4', sub: 'branch B' },
+    { id: 'r3', type: 'router', x: 250, y: 230, label: 'R3', sub: 'HQ' },
+    { id: 'ce', type: 'router', x: 390, y: 160, label: 'CE1', sub: 'edge', tone: 'emerald' },
+    { id: 'ispa', type: 'cloud', x: 580, y: 90, label: 'ISP A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'cloud', x: 580, y: 230, label: 'ISP B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 690, y: 160, label: 'Internet', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2' }, { from: 'r2', to: 'r3' }, { from: 'r3', to: 'r4' }, { from: 'r4', to: 'r1' },
+    { from: 'r3', to: 'ce' },
+    { from: 'ce', to: 'ispa', label: 'eBGP', tone: 'emerald' }, { from: 'ce', to: 'ispb', label: 'eBGP', tone: 'emerald' },
+    { from: 'ispa', to: 'inet' }, { from: 'ispb', to: 'inet' },
+  ]}
+  caption="OSPF carries routes inside the company, BGP exchanges them with the ISPs."
+/>
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **1. Why dynamic routing** | Tell IGP from EGP, distance vector from link state, understand metrics and convergence |
+| **2. OSPF basics** | Bring up adjacencies, read the topology database, tune costs, split into areas |
+| **3. BGP basics** | Establish an eBGP session, advertise a prefix, read a BGP table |
+| **4. Attributes and best path** | Explain BGP's choice, prefer one ISP for inbound and outbound traffic |
+| **5. Routing policies** | Filter with prefix-lists and route-maps, use communities, never become a transit |
+
+## Prerequisites
+
+The [Fundamentals](/en/courses/fundamentals) course, especially **IPv4 addressing** and **static
+routing**: routing table, longest prefix match, next hop and administrative distance.
+
+<Callout type="note">
+Two ContainerLab labs come with the course: `ospf-basic` (four routers in a ring) and `bgp-basic` (a
+company connected to two ISPs). In both, you configure the protocol yourself: the solution is given at
+the end of each chapter.
+</Callout>

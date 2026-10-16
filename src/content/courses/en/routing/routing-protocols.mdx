@@ -1,0 +1,236 @@
+---
+title: "Why dynamic routing"
+description: "The limits of static routing, protocol families (distance vector, link state, path vector), IGP and EGP, metrics, control plane and convergence."
+pubDate: 2026-10-17
+level: intermediate
+tags: [routing, igp, egp]
+order: 1
+---
+
+Static routing has two major flaws: you have to **write everything by hand**, and it **doesn't react
+to failures**. A dynamic routing protocol solves both: routers share what they know, build their table
+themselves and recompute it when the network changes.
+
+## The problem with static routing
+
+Take a ring of four routers. With static routing, R1 has a route to headquarters via R2. If the R1-R2
+link fails, the route stays in the table… and traffic goes nowhere, even though another path exists
+through R4.
+
+<Topology
+  width={720}
+  height={280}
+  nodes={[
+    { id: 'r1', type: 'router', x: 110, y: 80, label: 'R1', sub: 'branch A' },
+    { id: 'r2', type: 'router', x: 380, y: 80, label: 'R2' },
+    { id: 'r3', type: 'router', x: 380, y: 220, label: 'R3', sub: 'HQ' },
+    { id: 'r4', type: 'router', x: 110, y: 220, label: 'R4' },
+    { id: 'srv', type: 'server', x: 600, y: 214, label: 'HQ', sub: '172.16.20.0/24', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: 'failure', style: 'dashed', tone: 'rose' },
+    { from: 'r2', to: 'r3' }, { from: 'r3', to: 'r4' }, { from: 'r4', to: 'r1' }, { from: 'r3', to: 'srv' },
+  ]}
+  flows={[
+    { from: 'r1', to: 'r4', label: 'backup path ignored', tone: 'slate', offset: -16 },
+  ]}
+  notes={[{ x: 245, y: 30, text: 'static route to R2: traffic is lost', tone: 'rose' }]}
+  caption="The static route still points to R2: without a dynamic protocol, R1 doesn't discover the path through R4."
+/>
+
+You could add floating routes everywhere, but the number of combinations explodes as the network grows.
+A dynamic protocol recomputes everything automatically within seconds.
+
+## What a routing protocol does
+
+Whatever the protocol, you find the same steps:
+
+1. **Discover neighbors**: directly connected routers speaking the same protocol.
+2. **Exchange information**: the known networks, and at what "price".
+3. **Compute the best path** to each network.
+4. **Install** these routes in the routing table.
+5. **Monitor**: if a neighbor disappears or a link changes, compute again.
+
+## Control plane and data plane
+
+A router does two very different jobs, which are kept clearly separate:
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Control', fields: [
+      { label: 'Protocols', sub: 'OSPF · BGP · static', span: 4, tone: 'violet' },
+      { label: 'RIB', sub: 'routing table: every known route', span: 4, tone: 'sky' },
+      { label: 'Best routes', sub: 'one per destination', span: 4, tone: 'sky' },
+    ] },
+    { label: 'Data', fields: [
+      { label: 'FIB', sub: 'forwarding table, in hardware', span: 4, start: 9, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="The control plane computes (slowly, on the CPU), the data plane forwards (very fast, on dedicated chips)."
+/>
+
+- The **control plane**: the protocols, the calculations, the <Term id="rib" />. It runs on the
+  router's CPU and takes its time.
+- The **data plane**: forwarding each packet, using the <Term id="fib" />, a copy of the best routes
+  programmed into specialized chips. It handles billions of packets per second.
+
+<Callout type="tip">
+This separation explains a lot: a router whose CPU is maxed out can keep forwarding traffic, and a route
+visible in `show ip route` but missing from the hardware is a real failure case (known as RIB and FIB
+being out of sync).
+</Callout>
+
+## IGP and EGP
+
+Protocols are first classified by **where** they are used:
+
+- an **IGP** (<Term id="igp" />) works **inside** an organization, within a single **autonomous
+  system** (<Term id="as" />). Goal: find the fastest path, converge quickly. Examples: OSPF, IS-IS,
+  (EIGRP, RIP).
+- an **EGP** works **between** organizations. Goal: apply **policies** (who may go through whom, at
+  what commercial price), at Internet scale. Only one is left: **BGP**.
+
+<Topology
+  width={720}
+  height={240}
+  groups={[
+    { x: 16, y: 30, w: 300, h: 190, label: 'AS 65010 · company', tone: 'sky' },
+    { x: 404, y: 30, w: 300, h: 190, label: 'AS 65100 · ISP', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'a1', type: 'router', x: 80, y: 120, label: 'R1' },
+    { id: 'a2', type: 'router', x: 250, y: 120, label: 'CE1' },
+    { id: 'b1', type: 'router', x: 470, y: 120, label: 'PE1', tone: 'violet' },
+    { id: 'b2', type: 'router', x: 640, y: 120, label: 'P1', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'a1', to: 'a2', label: 'IGP (OSPF)', tone: 'sky' },
+    { from: 'a2', to: 'b1', label: 'EGP (BGP)', tone: 'emerald', style: 'trunk' },
+    { from: 'b1', to: 'b2', label: 'IGP (IS-IS)', tone: 'violet' },
+  ]}
+  caption="Each organization picks its own IGP internally. Between organizations, everybody speaks BGP."
+/>
+
+## Three protocol families
+
+### Distance vector: "routing by rumor"
+
+Each router sends its **routing table** to its neighbors: "I know such network, at such distance".
+The neighbor adds 1 and passes it on. Nobody has the big picture: you believe what your neighbors say.
+This is how **RIP** works.
+
+<Topology
+  width={720}
+  height={180}
+  nodes={[
+    { id: 'net', type: 'server', x: 60, y: 80, label: '10.1.0.0/16', tone: 'violet' },
+    { id: 'a', type: 'router', x: 220, y: 86, label: 'RA' },
+    { id: 'b', type: 'router', x: 420, y: 86, label: 'RB' },
+    { id: 'c', type: 'router', x: 620, y: 86, label: 'RC' },
+  ]}
+  links={[{ from: 'net', to: 'a' }, { from: 'a', to: 'b' }, { from: 'b', to: 'c' }]}
+  flows={[
+    { from: 'a', to: 'b', label: '"10.1/16 at 1 hop"', tone: 'sky', offset: -18 },
+    { from: 'b', to: 'c', label: '"10.1/16 at 2 hops"', tone: 'sky', offset: -18 },
+  ]}
+  caption="Each router repeats what it heard, adding its own distance. Simple, but slow to react and prone to loops."
+/>
+
+Simple, but **slow**: bad news spreads from neighbor to neighbor, and temporary loops can appear. RIP
+has all but disappeared from enterprise networks.
+
+### Link state: everyone has the full map
+
+Each router describes **its own links** ("I am R1, connected to R2 with a cost of 10") and floods this
+description **to every router** in the area. Each one thus gets the **full map** of the network,
+identical everywhere, and computes the shortest path itself with **Dijkstra's** algorithm (SPF,
+*Shortest Path First*). This is how **OSPF** and **IS-IS** work.
+
+<Topology
+  width={720}
+  height={290}
+  nodes={[
+    { id: 'r1', type: 'router', x: 120, y: 80, label: 'R1', tone: 'emerald' },
+    { id: 'r2', type: 'router', x: 360, y: 80, label: 'R2' },
+    { id: 'r3', type: 'router', x: 600, y: 80, label: 'R3' },
+    { id: 'r4', type: 'router', x: 120, y: 230, label: 'R4' },
+    { id: 'r5', type: 'router', x: 360, y: 230, label: 'R5' },
+    { id: 'r6', type: 'router', x: 600, y: 230, label: 'R6', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'r1', to: 'r2', label: '10', tone: 'emerald' },
+    { from: 'r2', to: 'r3', label: '10' },
+    { from: 'r1', to: 'r4', label: '10' },
+    { from: 'r2', to: 'r5', label: '10', tone: 'emerald' },
+    { from: 'r3', to: 'r6', label: '50' },
+    { from: 'r4', to: 'r5', label: '30' },
+    { from: 'r5', to: 'r6', label: '10', tone: 'emerald' },
+  ]}
+  caption="R1 knows every link and its cost. To reach R6, it computes: via R2, R3 = 70; via R4, R5 = 50; via R2, R5 = 30. The green path wins."
+/>
+
+More computation for each router, but **fast** and **loop-free** convergence, since everyone works on
+the same map. This is the family of modern IGPs.
+
+### Path vector: BGP
+
+**BGP** looks like distance vector (you advertise networks to your neighbors), but instead of a simple
+distance, each route carries **the list of ASes it went through** (the AS_PATH) and many other
+attributes. This list prevents loops (an AS rejects a route that already contains its own number) and
+allows very fine-grained **policies**. Chapters 3 to 5 are dedicated to it.
+
+| Family | Principle | Protocols | Where |
+|---|---|---|---|
+| Distance vector | you pass your table to your neighbors | RIP, (EIGRP) | legacy |
+| Link state | everyone has the full map and computes | **OSPF**, **IS-IS** | internal networks, ISPs, data centers |
+| Path vector | you pass routes with the list of ASes | **BGP** | Internet, interconnections, EVPN fabrics |
+
+## The metric
+
+To decide between several paths to the same destination **within one protocol**, each one uses its
+**metric**:
+
+- RIP counts **hops**, ignoring bandwidth: it will prefer 2 hops at 10 Mb/s over 3 hops at 10 Gb/s;
+- OSPF uses a **cost** tied to link bandwidth: the faster the link, the lower the cost;
+- BGP has no single metric, but a **list of attributes** compared in a precise order.
+
+And between **two different protocols** offering the same destination? The **administrative
+distance**, seen in the static routing chapter, decides: for an equal prefix, the most trusted source
+wins (static 1, eBGP 20, OSPF 110 on Cisco). The **longest prefix** rule still takes priority over
+everything else.
+
+<Callout type="warning">
+Never compare an OSPF metric with a BGP metric: they have nothing in common. The full decision order
+is: 1) the longest prefix, 2) the lowest administrative distance, 3) the best metric, within the chosen
+protocol.
+</Callout>
+
+## Convergence
+
+**Convergence** is the time between a change (a link going down) and the moment **all** routers have a
+consistent table. During that time, traffic can be lost. It breaks down into:
+
+1. **detecting** the failure: immediate if the physical link goes down, several seconds if you wait
+   for the neighbor to stop answering (hence the value of **BFD**, which detects a failure in under a
+   second);
+2. **propagating** the information to the other routers;
+3. **recomputing** the best paths;
+4. **updating** the FIB in hardware.
+
+<Callout type="field">
+In production, protocol timers themselves are rarely tuned. Instead, **BFD** is enabled on important
+links: detection drops from 40 seconds (OSPF's default dead interval) to a few hundred milliseconds, and
+everything else follows.
+</Callout>
+
+## Key takeaways
+
+- Dynamic routing **discovers** neighbors, **exchanges** routes, **computes** and **reacts** to failures.
+- **IGP** inside an AS (OSPF, IS-IS), **EGP** between ASes (BGP).
+- **Link state**: each router has the full map and computes the shortest path (Dijkstra).
+- Decision order: **longest prefix**, then **administrative distance**, then **metric**.
+- The **control plane** (RIB, computation) and the **data plane** (FIB, forwarding) are separate.
+
+Time for practice with the first link-state protocol: **OSPF**.

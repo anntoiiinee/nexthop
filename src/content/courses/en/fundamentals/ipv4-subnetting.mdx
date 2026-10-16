@@ -1,0 +1,210 @@
+---
+title: "IPv4 addressing and subnetting"
+description: "The IPv4 address in binary, masks and CIDR prefixes, computing network and broadcast addresses, private ranges and a VLSM addressing plan."
+pubDate: 2026-10-15
+updatedDate: 2026-10-17
+level: beginner
+tags: [ipv4, subnetting, cidr, vlsm]
+order: 6
+---
+
+So far, we have delivered frames inside a local network using MAC addresses. To go **from one network
+to another**, we need an address that says not only "who" but also "where": the IP address, at
+layer 3. Like a postal address (a street and a number), it contains a **network part** and a **host
+part**.
+
+## The IPv4 address
+
+An IPv4 address is **32 bits** long, split into 4 bytes written in decimal and separated by dots:
+`192.168.10.37`. Each byte therefore ranges from 0 to 255.
+
+To work with it, you need to convert between decimal and binary. Each bit in a byte has a weight:
+
+<PacketFormat
+  cols={8}
+  rows={[
+    { label: 'Weight', fields: [
+      { label: '128', mono: true }, { label: '64', mono: true }, { label: '32', mono: true }, { label: '16', mono: true },
+      { label: '8', mono: true }, { label: '4', mono: true }, { label: '2', mono: true }, { label: '1', mono: true },
+    ] },
+    { label: '37 =', fields: [
+      { label: '0', mono: true }, { label: '0', mono: true }, { label: '1', mono: true, tone: 'sky' }, { label: '0', mono: true },
+      { label: '0', mono: true }, { label: '1', mono: true, tone: 'sky' }, { label: '0', mono: true }, { label: '1', mono: true, tone: 'sky' },
+    ] },
+  ]}
+  minWidth="28rem"
+  caption="37 = 32 + 4 + 1, so 00100101 in binary."
+/>
+
+To convert, start from the highest weight: does 37 contain 128? No → 0. 64? No → 0. 32? Yes → 1, 5
+left. 16? No. 8? No. 4? Yes → 1, 1 left. 2? No. 1? Yes → 1.
+
+## The mask and the prefix
+
+An address alone doesn't say where the network part ends. That is the job of the **mask**: a series of
+bits set to 1 (the network part) followed by bits set to 0 (the host part). It is written either in
+decimal (`255.255.255.0`) or in <Term id="cidr" /> notation, counting the bits set to 1: `/24`.
+
+<Bits ip="192.168.10.37" prefix={24} mask caption="192.168.10.37/24: the first 24 bits identify the network, the last 8 the machine." />
+
+Two machines are **in the same network** if their network bits are identical. They can then talk
+directly, at layer 2; otherwise, they have to go through a router.
+
+## Network, broadcast and hosts
+
+In every network, two addresses are reserved:
+
+- the **network address**: all host bits set to **0**. It identifies the network itself (it is the one
+  written in a routing table);
+- the **broadcast address**: all host bits set to **1**. A packet sent to this address is received by
+  every machine in the network.
+
+With *n* host bits, a network contains 2<sup>n</sup> addresses, of which **2<sup>n</sup> − 2 are
+usable** by machines.
+
+| Prefix | Mask | Addresses | Usable hosts | Typical use |
+|---|---|---|---|---|
+| /24 | 255.255.255.0 | 256 | 254 | a classic user network |
+| /25 | 255.255.255.128 | 128 | 126 | |
+| /26 | 255.255.255.192 | 64 | 62 | a floor, a department |
+| /27 | 255.255.255.224 | 32 | 30 | |
+| /28 | 255.255.255.240 | 16 | 14 | a few servers |
+| /29 | 255.255.255.248 | 8 | 6 | management devices |
+| /30 | 255.255.255.252 | 4 | 2 | link between two routers (old method) |
+| /31 | 255.255.255.254 | 2 | 2 | link between two routers (RFC 3021) |
+| /32 | 255.255.255.255 | 1 | 1 | a single address (loopback) |
+
+Each extra prefix bit **halves the network**.
+
+### A complete example
+
+Take `192.168.10.37/26`. The `/26` mask leaves **6 host bits**:
+
+<Bits ip="192.168.10.37" prefix={26} mask caption="With a /26, the network/host boundary falls in the middle of the last byte." />
+
+- **network address**: set the 6 host bits to 0 → `00000000` → **192.168.10.0**;
+- **broadcast**: set them to 1 → `00111111` = 63 → **192.168.10.63**;
+- **usable hosts**: from **192.168.10.1** to **192.168.10.62**, that is 2<sup>6</sup> − 2 = **62** machines.
+
+## The magic number method
+
+Going through binary always works, but there is a shortcut to compute in your head. Take
+`172.16.45.130/27`:
+
+1. **Find the interesting byte**: the one where the mask is neither 255 nor 0. A /27 gives
+   `255.255.255.224`: it is the 4th byte.
+2. **Compute the magic number**: 256 − 224 = **32**. Networks go up in steps of 32: 0, 32, 64, 96,
+   **128**, 160…
+3. **Bracket the value**: 130 sits between **128** and 159.
+4. **Conclude**: network `172.16.45.128`, broadcast `172.16.45.159` (the next network minus 1), hosts
+   from `.129` to `.158`.
+
+<Bits ip="172.16.45.130" prefix={27} caption="Binary check: 130 = 100 00010. The first 3 bits (100 = 128) belong to the network." />
+
+<Callout type="tip">
+The magic number is the **block size** in the interesting byte. With a little practice, it is the
+fastest method on exam day. The [subnetting quiz](/en/tools/subnetting-quiz) walks through this
+reasoning with every answer.
+</Callout>
+
+## Special addresses
+
+Some ranges have a reserved use, worth knowing by heart:
+
+| Range | Use |
+|---|---|
+| `10.0.0.0/8` | **private** (RFC 1918) |
+| `172.16.0.0/12` (172.16 to 172.31) | **private** (RFC 1918) |
+| `192.168.0.0/16` | **private** (RFC 1918) |
+| `127.0.0.0/8` | loopback: the machine itself (`127.0.0.1`) |
+| `169.254.0.0/16` | link-local: self-assigned address when DHCP doesn't answer |
+| `100.64.0.0/10` | CGNAT, shared by ISPs (RFC 6598) |
+| `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` | documentation and examples (RFC 5737) |
+| `224.0.0.0/4` | multicast |
+
+**Private** addresses can be used freely in any company, but are not routed on the Internet. To get
+out, they go through <Term id="nat" />, which translates them into a public address.
+
+<Callout type="field">
+A `169.254.x.x` address on a workstation is an excellent clue: the machine got no DHCP answer. Check
+the cable, the port's VLAN, then the DHCP server, in that order.
+</Callout>
+
+## Splitting a network
+
+**Subnetting** means splitting a block into smaller subnets by lengthening the prefix. Each bit
+borrowed from the host part doubles the number of subnets. A `/24` split into `/26`s (2 borrowed bits)
+gives **4 subnets of 62 hosts**:
+
+<AddressSpace
+  base="192.168.10.0/24"
+  subnets={[
+    { cidr: '192.168.10.0/26', label: 'Subnet 1' },
+    { cidr: '192.168.10.64/26', label: 'Subnet 2' },
+    { cidr: '192.168.10.128/26', label: 'Subnet 3' },
+    { cidr: '192.168.10.192/26', label: 'Subnet 4' },
+  ]}
+  caption="A /24 split into four /26s of identical size."
+/>
+
+## VLSM: subnets made to measure
+
+Splitting into equal parts wastes addresses: a link between two routers doesn't need 62 addresses.
+**VLSM** (Variable Length Subnet Mask) gives each network **the size it needs**. Here is our branch
+office's addressing plan, from the `192.168.10.0/24` block:
+
+| Need | Hosts | Prefix | Network | Gateway |
+|---|---|---|---|---|
+| VLAN 10 · Users | 60 | /26 | 192.168.10.0/26 | 192.168.10.1 |
+| VLAN 20 · Guest Wi-Fi | 28 | /27 | 192.168.10.64/27 | 192.168.10.65 |
+| VLAN 30 · Servers | 12 | /28 | 192.168.10.96/28 | 192.168.10.97 |
+| VLAN 40 · Management | 5 | /29 | 192.168.10.112/29 | 192.168.10.113 |
+| R1-R2 link | 2 | /31 | 192.168.10.120/31 | — |
+
+<AddressSpace
+  base="192.168.10.0/24"
+  subnets={[
+    { cidr: '192.168.10.0/26', label: 'Users' },
+    { cidr: '192.168.10.64/27', label: 'Guest Wi-Fi' },
+    { cidr: '192.168.10.96/28', label: 'Servers' },
+    { cidr: '192.168.10.112/29', label: 'Management' },
+    { cidr: '192.168.10.120/31', label: 'R1-R2 link' },
+  ]}
+  caption="The branch office's VLSM plan: less than half of the /24 is used, the rest is available for later."
+/>
+
+The golden rule: **allocate from largest to smallest**. Each subnet then naturally starts on a valid
+boundary (a multiple of its size), with no overlap.
+
+<Callout type="tip">
+Plan for headroom: sizing for 60 users when you have 45 today saves you from renumbering everything in
+a year. The [VLSM planner](/en/tools/vlsm-planner) computes this plan for you, and you can share the
+result as a link.
+</Callout>
+
+## Special cases: /31 and /32
+
+- **/31**: normally unusable (2 addresses: network and broadcast). RFC 3021 allows it on a
+  **point-to-point link** between two routers: each end takes one of the two addresses. You save half
+  the addresses compared to a /30, and it is the norm between spines and leaves in a data center.
+- **/32**: a single address. It is used for router **loopback** interfaces, which serve as a stable
+  identifier.
+
+## Your turn
+
+- Check your calculations with the [subnet calculator](/en/tools/subnet-calculator): its binary view
+  shows the network/host boundary. Try `10.0.1.0/31`, for example.
+- Practice with the [subnetting quiz](/en/tools/subnetting-quiz), starting with the Beginner level.
+- Rebuild the branch office plan in the [VLSM planner](/en/tools/vlsm-planner), then add a 40-phone
+  voice VLAN: does it still fit in the /24?
+
+## Key takeaways
+
+- An IPv4 address is **32 bits**; the mask (or CIDR prefix) separates **network** and **host**.
+- Network address = host bits at **0**, broadcast = host bits at **1**, **2<sup>n</sup> − 2** usable hosts.
+- Magic number = **256 − mask byte**: it is the step between two networks.
+- The **private** ranges: `10/8`, `172.16/12`, `192.168/16`.
+- **VLSM**: each network gets its own size, allocating from largest to smallest.
+
+Next chapter: every machine has its IP address, but to send a frame it still needs a MAC address. That
+is the job of **ARP**.

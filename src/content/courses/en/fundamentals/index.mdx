@@ -1,0 +1,76 @@
+---
+title: "Networking fundamentals"
+description: "The essential foundations: OSI model, Ethernet, VLANs, Spanning Tree, LLDP, IPv4 addressing, ARP and static routing, with diagrams and a lab."
+pubDate: 2026-10-15
+updatedDate: 2026-10-17
+level: beginner
+tags: [osi, ethernet, vlan, stp, lldp, ipv4, arp, routing]
+vendor: [arista, cisco]
+order: 0
+---
+
+This course lays the foundations that every other topic on this site builds on: BGP,
+EVPN-VXLAN, firewalls or automation. **No prerequisites**: we start from scratch, and each
+chapter builds on the previous one.
+
+## The running example: a branch office network
+
+Rather than isolated examples, we build the network of a small branch office connected to its
+headquarters, chapter after chapter. By the end of the course, you will be able to explain every
+frame and every packet that crosses it.
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 16, y: 16, w: 430, h: 268, label: 'Branch office', tone: 'sky' },
+    { x: 560, y: 16, w: 144, h: 268, label: 'Headquarters', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'pc1', type: 'host', x: 70, y: 230, label: 'PC', sub: 'VLAN 10' },
+    { id: 'wifi', type: 'host', x: 170, y: 230, label: 'Wi-Fi', sub: 'VLAN 20' },
+    { id: 'srv', type: 'server', x: 270, y: 222, label: 'Server', sub: 'VLAN 30' },
+    { id: 'sw1', type: 'switch', x: 120, y: 110, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 270, y: 110, label: 'SW2' },
+    { id: 'r1', type: 'router', x: 390, y: 110, label: 'R1' },
+    { id: 'r2', type: 'router', x: 500, y: 200, label: 'R2', tone: 'slate' },
+    { id: 'r3', type: 'router', x: 632, y: 110, label: 'R3', tone: 'violet' },
+    { id: 'srv2', type: 'server', x: 632, y: 222, label: 'App', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc1', to: 'sw1' },
+    { from: 'wifi', to: 'sw1' },
+    { from: 'srv', to: 'sw2' },
+    { from: 'sw1', to: 'sw2', label: 'trunk', style: 'trunk' },
+    { from: 'sw2', to: 'r1', style: 'trunk' },
+    { from: 'r1', to: 'r2' },
+    { from: 'r2', to: 'r3' },
+    { from: 'r3', to: 'srv2' },
+  ]}
+  caption="The network built throughout the chapters: VLANs on two switches, a branch router and static routing all the way to headquarters."
+/>
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **1. The OSI model** | Place a problem or a device in the layers, understand encapsulation |
+| **2. Ethernet and MAC addresses** | Read a frame, explain how a switch learns and forwards |
+| **3. VLANs** | Segment a network, configure access ports and 802.1Q trunks |
+| **4. Spanning Tree** | Understand why a loop is fatal and how STP prevents it |
+| **5. LLDP and CDP** | Know what is plugged into each port, check the cabling |
+| **6. IPv4 addressing and subnetting** | Compute network, broadcast and host range, build a VLSM addressing plan |
+| **7. ARP** | Explain how an IP becomes a MAC, read an ARP cache, spot spoofing |
+| **8. Static routing** | Read a routing table, configure routes and troubleshoot with ping and traceroute |
+
+## How to follow the course
+
+- **Read in order**: each chapter reuses the concepts of the previous one.
+- **Hover over dotted-underlined terms** (like <Term id="vlan" />): their definition shows up.
+- **Practice** with the [tools](/en/tools): subnet calculator, VLSM planner and quiz.
+- **Rebuild the lab** of the last chapter: all it takes is a PC, Docker and ContainerLab.
+
+<Callout type="note">
+Configuration examples are given for **Arista EOS** and **Cisco IOS**: both syntaxes are very
+close, and they are the ones you will meet most often in the enterprise.
+</Callout>

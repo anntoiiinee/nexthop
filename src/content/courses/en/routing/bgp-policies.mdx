@@ -1,0 +1,286 @@
+---
+title: "BGP routing policies"
+description: "Never become a transit, filter inbound and outbound with prefix-lists, AS-path lists and route-maps, cap the number of routes, use communities, and a word on RPKI."
+pubDate: 2026-10-17
+level: intermediate
+tags: [bgp, route-map, prefix-list, community, rpki]
+vendor: [arista, cisco]
+order: 5
+---
+
+A BGP session with no filters is a door wide open in both directions: you can **advertise anything** to
+the whole world, and **accept anything** from your neighbors. Almost all of the biggest Internet outages
+come from there. A **routing policy** decides, for each neighbor, what you accept, what you advertise and
+with which attributes.
+
+## The trap: becoming a transit
+
+Back to the minimal configuration from chapter 3. CE1 receives ISP-A's routes… and, since BGP advertises
+its best routes to all its eBGP peers by default, it **re-advertises them to ISP-B**. Result: the company
+presents itself as a possible path between its two ISPs.
+
+<Topology
+  width={760}
+  height={310}
+  groups={[{ x: 30, y: 90, w: 230, h: 120, label: 'AS 65010', tone: 'rose' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 145, y: 150, label: 'CE1', sub: 'company', tone: 'rose' },
+    { id: 'ispa', type: 'router', x: 450, y: 60, label: 'ISP-A', sub: 'AS 65100', tone: 'violet' },
+    { id: 'ispb', type: 'router', x: 450, y: 240, label: 'ISP-B', sub: 'AS 65200', tone: 'violet' },
+    { id: 'cust', type: 'cloud', x: 670, y: 60, label: 'ISP-A customers', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'ispa' }, { from: 'ce1', to: 'ispb' }, { from: 'ispa', to: 'cust' },
+    { from: 'ispa', to: 'ispb', style: 'dashed', label: 'interconnection links' },
+  ]}
+  flows={[
+    { from: 'ispa', to: 'ce1', label: 'ISP-A routes', tone: 'violet', offset: -22 },
+    { from: 'ce1', to: 'ispb', label: 're-advertised to ISP-B', tone: 'rose', offset: 22 },
+  ]}
+  caption="Without an outbound filter, CE1 re-advertises to ISP-B what it learns from ISP-A. If ISP-B prefers this path, traffic between the two ISPs crosses the company's small link."
+/>
+
+If ISP-B picks this path (because it prefers its customers' routes, which is the rule among ISPs), part of
+the Internet's traffic goes **through the company's link**, which saturates. This kind of **route leak**
+has already taken down major services for hours.
+
+<Callout type="warning">
+Golden rule for a company: **advertise only your own prefixes to your ISPs**. Everything else must be
+filtered outbound, on every session, without exception.
+</Callout>
+
+## The filtering tools
+
+Three tools, which combine:
+
+| Tool | What it matches | Example |
+|---|---|---|
+| **Prefix-list** | the prefix and its length | "exactly 198.51.100.0/24", "anything inside 10.0.0.0/8" |
+| **AS-path list** | the AS_PATH, with a regular expression | `^$`: routes originated in my AS · `^65100_`: received directly from ISP-A |
+| **Route-map** | the conductor: `match` clauses (prefix-list, AS-path, community…) and `set` actions | "if the prefix is in PL-X, set LOCAL_PREF to 200" |
+
+### Prefix-lists
+
+A prefix-list matches the prefix **and its length**. The `ge` (greater or equal) and `le` (less or
+equal) keywords widen the match:
+
+| Entry | Matches |
+|---|---|
+| `permit 198.51.100.0/24` | exactly 198.51.100.0/24, not a /25 inside it |
+| `permit 10.0.0.0/8 le 32` | 10.0.0.0/8 and every subnet inside it, down to /32s |
+| `permit 0.0.0.0/0` | only the default route |
+| `permit 0.0.0.0/0 le 24` | every route from /0 to /24 (more specific ones are refused) |
+
+### Route-maps
+
+A route-map is a series of **numbered clauses**, evaluated in order. Each clause is a `permit` or a
+`deny` with conditions (`match`) and optionally modifications (`set`):
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Clause 10', fields: [
+      { label: 'deny', span: 2, tone: 'rose', mono: true },
+      { label: 'match: prefix in PL-BOGONS', span: 6 },
+      { label: '→ route rejected', span: 4, tone: 'rose' },
+    ] },
+    { label: 'Clause 20', fields: [
+      { label: 'permit', span: 2, tone: 'emerald', mono: true },
+      { label: 'match: nothing (all the others)', span: 6 },
+      { label: 'set local-preference 200', span: 4, tone: 'emerald', mono: true },
+    ] },
+    { label: 'End', fields: [
+      { label: 'implicit deny: anything that matched no clause is rejected', span: 12, dashed: true },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="A route is compared clause by clause; the first one that matches decides. With no match, the route is rejected (implicit deny)."
+/>
+
+<Callout type="tip">
+The **implicit deny** at the end of a route-map is the classic trap: a route-map containing a single
+`permit` clause with a `match` silently rejects everything else. To "accept everything while modifying
+some routes", end with a `permit` clause without `match`.
+</Callout>
+
+## CE1's policy
+
+### Outbound: only our prefixes
+
+```text title="CE1 · Arista EOS"
+ip prefix-list PL-OUR-PREFIXES seq 10 permit 198.51.100.0/24
+!
+route-map RM-ISP-A-OUT permit 10
+   match ip address prefix-list PL-OUR-PREFIXES
+!
+route-map RM-ISP-B-OUT permit 10
+   match ip address prefix-list PL-OUR-PREFIXES
+   set as-path prepend 65010 65010
+```
+
+Thanks to the implicit deny, anything that isn't `198.51.100.0/24` is refused outbound: no more transit.
+Belt and braces: you can also filter on the AS_PATH, with `^$`, which only matches routes **originated in
+our AS** (empty AS_PATH before sending).
+
+```text title="Arista EOS: AS-path filter"
+ip as-path access-list AS-LOCAL permit ^$ any
+```
+
+### Inbound: nothing suspicious, and not too much
+
+Inbound, refuse what no ISP should ever send us: **our own prefixes** (coming back), **private** and
+reserved ranges (*bogons*), and overly specific prefixes.
+
+```text title="CE1 · Arista EOS"
+ip prefix-list PL-BOGONS seq 10 permit 10.0.0.0/8 le 32
+ip prefix-list PL-BOGONS seq 20 permit 172.16.0.0/12 le 32
+ip prefix-list PL-BOGONS seq 30 permit 192.168.0.0/16 le 32
+ip prefix-list PL-BOGONS seq 40 permit 100.64.0.0/10 le 32
+ip prefix-list PL-BOGONS seq 50 permit 127.0.0.0/8 le 32
+ip prefix-list PL-BOGONS seq 60 permit 198.51.100.0/24 le 32
+ip prefix-list PL-BOGONS seq 70 permit 0.0.0.0/0 ge 25
+!
+route-map RM-ISP-A-IN deny 10
+   match ip address prefix-list PL-BOGONS
+route-map RM-ISP-A-IN permit 20
+   set local-preference 200
+!
+route-map RM-ISP-B-IN deny 10
+   match ip address prefix-list PL-BOGONS
+route-map RM-ISP-B-IN permit 20
+```
+
+The `0.0.0.0/0 ge 25` line catches every prefix longer than a /24: by convention, the Internet doesn't
+accept more specific routes. The `198.51.100.0/24 le 32` line refuses our own prefix.
+
+### Capping the number of routes
+
+If an ISP suddenly starts sending us hundreds of thousands of routes (a mistake on their side), our
+router can be overwhelmed. Set a **ceiling** per session:
+
+```text title="CE1 · Arista EOS: the full session"
+router bgp 65010
+   router-id 10.255.0.10
+   neighbor 192.0.2.0 remote-as 65100
+   neighbor 192.0.2.0 description ISP-A
+   neighbor 192.0.2.0 route-map RM-ISP-A-IN in
+   neighbor 192.0.2.0 route-map RM-ISP-A-OUT out
+   neighbor 192.0.2.0 maximum-routes 1000
+   neighbor 192.0.2.2 remote-as 65200
+   neighbor 192.0.2.2 description ISP-B
+   neighbor 192.0.2.2 route-map RM-ISP-B-IN in
+   neighbor 192.0.2.2 route-map RM-ISP-B-OUT out
+   neighbor 192.0.2.2 maximum-routes 1000
+   network 198.51.100.0/24
+   !
+   address-family ipv4
+      neighbor 192.0.2.0 activate
+      neighbor 192.0.2.2 activate
+```
+
+<Callout type="note">
+On Cisco, the equivalent of `maximum-routes` is `neighbor … maximum-prefix`. With the full Internet
+table (over a million IPv4 and IPv6 routes today), the ceiling is of course set accordingly; many
+companies simply receive a **default route** from each ISP, which is enough to pick a primary and a
+backup exit.
+</Callout>
+
+## Communities
+
+A **community** is a 32-bit tag attached to a route, written `ASN:value`, for example `65010:100`. By
+itself it changes nothing in routing: it is used to **convey an intention** that routers, at home or at
+the neighbor's, turn into an action.
+
+| Community | Meaning |
+|---|---|
+| `no-export` (65535:65281) | don't advertise this route outside the AS that receives it |
+| `no-advertise` (65535:65282) | don't advertise it to any other peer |
+| `blackhole` (65535:666, RFC 7999) | ask the ISP to drop traffic to this prefix (DDoS defense) |
+| An ISP's communities | defined and published by each ISP, for example "65100:80 = set my LOCAL_PREF to 80" |
+
+The last use is very powerful: instead of tinkering with prepending, you directly ask the ISP to lower
+your route's preference **on their side**, by tagging your announcements with the community they
+document.
+
+```text title="Arista EOS: tagging our announcements to ISP-B"
+route-map RM-ISP-B-OUT permit 10
+   match ip address prefix-list PL-OUR-PREFIXES
+   set community 65200:80
+!
+router bgp 65010
+   neighbor 192.0.2.2 send-community
+```
+
+<Callout type="warning">
+Communities are **not sent by default** on Arista EOS or Cisco IOS: without `send-community` on the
+session, your tags never reach the neighbor.
+</Callout>
+
+## Applying a change
+
+BGP only sends changes: modifying a route-map doesn't always immediately re-evaluate routes already
+received. Depending on the platform, you trigger a **soft reset**, without tearing down the session:
+
+```text
+clear ip bgp 192.0.2.0 soft in     ! re-evaluate routes received from this neighbor
+clear ip bgp 192.0.2.0 soft out    ! resend our announcements with the new policy
+```
+
+And always check what you actually receive and send:
+
+```text
+show ip bgp neighbors 192.0.2.0 received-routes      ! before the inbound policy (see below)
+show ip bgp neighbors 192.0.2.0 routes               ! after the inbound policy
+show ip bgp neighbors 192.0.2.0 advertised-routes    ! what we actually advertise
+```
+
+To see routes **before** filtering, the router has to keep them: that is the
+`neighbor … rib-in pre-policy retain` option on Arista EOS, and `neighbor … soft-reconfiguration inbound`
+on Cisco IOS. Without it, `received-routes` may stay empty.
+
+## RPKI: checking who may advertise what
+
+Filters protect us from our own mistakes, but how do you know whether a received prefix is advertised by
+its **real owner**? That is the role of **RPKI** (<Term id="rpki" />): each holder publishes a
+cryptographically signed **ROA** that says "this prefix may be advertised by this AS". Routers compare
+every received route against these ROAs and reject invalid announcements.
+
+<Callout type="field">
+RPKI validation and strict filtering are part of the **MANRS** best practices (Mutually Agreed Norms for
+Routing Security), adopted by most large ISPs. For a company, the bare minimum is to create the ROAs of
+its own prefixes with its registry: it's free and protects it against hijacks.
+</Callout>
+
+## The lab
+
+Still the `bgp-basic` lab, with the configuration from the previous chapter (no filters):
+
+1. On `isp-b`, `show ip bgp`: do you see `203.0.113.0/24` **learned from CE1** (AS_PATH
+   `65010 65100 65300`)? That's the leak. (Here ISP-B refuses it thanks to its own customer filter: look
+   at `show ip bgp neighbors 192.0.2.3 received-routes` on ISP-B to see it arrive.)
+2. Apply CE1's outbound policy and check with `advertised-routes` that only `198.51.100.0/24` is
+   advertised now.
+3. Apply the inbound policy with LOCAL_PREF on ISP-A. Compare `received-routes` with `routes`.
+4. Add the `65200:80` community towards ISP-B, first without then with `send-community`, and look at
+   what ISP-B receives (`show ip bgp 198.51.100.0/24` on isp-b).
+
+<Lab name="bgp-basic" lang="en" />
+
+<Callout type="tip" title="Solution">
+CE1's full configuration is the one from the "Outbound", "Inbound" and "Capping the number of routes"
+sections. Don't forget the `route-map … in` and `… out` on each neighbor: a route-map that is defined but
+not applied does nothing.
+</Callout>
+
+## Key takeaways
+
+- A company advertises **only its own prefixes** to its ISPs: otherwise, it becomes a **transit**.
+- **Prefix-list** (prefixes), **AS-path list** (paths), **route-map** (match + set, ordered clauses,
+  **implicit deny** at the end).
+- Inbound: refuse **bogons**, your own prefixes, prefixes longer than /24, and **cap** the number of
+  routes.
+- **Communities** convey intentions; remember `send-community`.
+- **RPKI** checks that an AS is allowed to advertise a prefix: create the ROAs of your prefixes.
+
+Congratulations, you have finished dynamic routing! Next up: the **data center** course, where OSPF and
+BGP are the foundation of **spine/leaf EVPN-VXLAN** fabrics.
