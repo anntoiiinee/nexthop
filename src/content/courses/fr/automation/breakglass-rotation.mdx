@@ -1,0 +1,255 @@
+---
+title: "Rotation du compte de secours"
+description: "Supprimer le compte admin par défaut, créer un compte local de secours unique par équipement, et faire tourner son mot de passe automatiquement tous les 4 mois ou au départ d'un membre de l'équipe, en Python ou en Ansible."
+pubDate: 2026-10-18
+level: intermediate
+tags: [security, aaa, tacacs, ansible-vault, python, ansible]
+vendor: [arista]
+order: 4
+---
+
+Sur beaucoup de réseaux, on se connecte encore aux équipements avec **le même compte local pour
+tout le monde**, souvent nommé `admin`, avec un mot de passe qui n'a pas changé depuis des années.
+C'est l'une des failles les plus courantes, et l'une des plus simples à corriger. Ce chapitre met en
+place la bonne pratique, et l'automatise.
+
+## Pourquoi le compte admin partagé est un problème
+
+- **Son nom est connu** : `admin`, `cisco`, `root`… Les robots qui balayent Internet et les attaquants
+  déjà dans le réseau essaient ces comptes en premier. Il ne leur reste qu'à deviner le mot de passe.
+- **Son mot de passe est partagé** : tout le monde le connaît, il circule dans des fichiers, des
+  messages, des documentations.
+- **Il n'y a aucune traçabilité** : quand `admin` a supprimé un VLAN à 3 h du matin, impossible de
+  savoir qui était derrière.
+- **Il survit aux départs** : un collègue qui quitte l'entreprise le connaît toujours. Le changer à la
+  main sur des centaines d'équipements, personne ne le fait vraiment.
+
+## Le modèle cible
+
+On sépare clairement trois usages :
+
+| Usage | Compte | Où il est défini |
+|---|---|---|
+| Le travail quotidien des ingénieurs | un **compte nominatif** par personne, avec MFA | serveur <Term id="tacacs" /> ou RADIUS (<Term id="aaa" />) |
+| L'automatisation (sauvegardes, déploiements) | un **compte de service**, aux droits limités | serveur TACACS+ |
+| Le dernier recours, si les serveurs AAA sont injoignables | **un compte local de secours** (*break-glass*), un mot de passe **unique par équipement** | sur l'équipement, mot de passe dans un **coffre** |
+
+<Topology
+  width={760}
+  height={320}
+  groups={[{ x: 440, y: 30, w: 304, h: 270, label: 'Équipements', tone: 'sky' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 100, y: 90, label: 'Ingénieure', sub: 'compte nominatif' },
+    { id: 'tac', type: 'server', x: 290, y: 90, label: 'TACACS+', sub: 'authentification + journal', tone: 'emerald' },
+    { id: 'vault', type: 'server', x: 110, y: 250, label: 'Coffre', sub: 'mots de passe de secours', tone: 'amber' },
+    { id: 'sp', type: 'switch', x: 590, y: 90, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 520, y: 235, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 660, y: 235, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'eng', to: 'tac', tone: 'emerald' }, { from: 'tac', to: 'sp', tone: 'emerald' },
+    { from: 'eng', to: 'vault', style: 'dashed', tone: 'amber' }, { from: 'vault', to: 'l1', style: 'dashed', tone: 'amber' },
+  ]}
+  flows={[
+    { from: 'eng', to: 'tac', label: 'au quotidien', tone: 'emerald' },
+    { from: 'vault', to: 'l1', label: 'si TACACS+ est injoignable', tone: 'amber' },
+  ]}
+  caption="Au quotidien, chacun se connecte avec son propre compte, vérifié et journalisé par TACACS+. Le compte local de secours ne sert que si les serveurs AAA sont injoignables."
+/>
+
+Côté équipement, la configuration AAA s'appuie sur TACACS+ et ne bascule sur les comptes **locaux**
+que si aucun serveur ne répond :
+
+```text title="Arista EOS : TACACS+ d'abord, comptes locaux en secours"
+tacacs-server host 192.0.2.50 key <clé-partagée>
+tacacs-server host 192.0.2.51 key <clé-partagée>
+!
+aaa group server tacacs+ TACACS
+   server 192.0.2.50
+   server 192.0.2.51
+!
+aaa authentication login default group TACACS local
+aaa authorization exec default group TACACS local
+aaa authorization commands all default group TACACS local
+aaa accounting commands all default start-stop group TACACS
+```
+
+<Callout type="note">
+`local` n'est consulté que si **aucun serveur TACACS+ ne répond**. Un utilisateur refusé par TACACS+
+n'est pas réessayé en local : un ancien collègue dont le compte TACACS+ est supprimé ne peut donc pas
+se rabattre sur un compte local… à condition qu'il n'en connaisse aucun. D'où l'importance du compte
+de secours unique et de sa rotation.
+</Callout>
+
+## Les règles du compte de secours
+
+1. **Un nom non devinable**, propre à l'entreprise, jamais `admin`. Le lab utilise `nh-breakglass`.
+2. **Un mot de passe long et aléatoire** (32 caractères), **différent sur chaque équipement** :
+   un mot de passe compromis n'ouvre qu'une seule porte.
+3. **Personne ne le connaît par cœur** : il est généré par un script et stocké dans un **coffre**,
+   dont chaque consultation est journalisée.
+4. **Une rotation régulière** : **tous les 4 mois**.
+5. **Une rotation immédiate** :
+   - au **départ d'un membre de l'équipe** qui avait accès au coffre ;
+   - **après chaque utilisation** du compte (le mot de passe a été vu) ;
+   - au moindre doute de compromission.
+
+## Supprimer le compte admin… sans s'enfermer dehors
+
+Supprimer `admin` en premier, c'est risquer de perdre tout accès si le compte de secours ne fonctionne
+pas. L'**ordre des opérations** est donc essentiel, et nos scripts le respectent strictement :
+
+<PacketFormat
+  cols={14}
+  rows={[
+    { fields: [
+      { label: '1. Générer', sub: 'un mot de passe par équipement', span: 2, tone: 'violet' },
+      { label: '2. Mettre au coffre', sub: 'chiffré, « en attente »', span: 2, tone: 'amber' },
+      { label: '3. Appliquer', sub: 'compte de secours', span: 2, tone: 'sky' },
+      { label: '4. Vérifier', sub: 'nouvelle connexion', span: 2, tone: 'emerald' },
+      { label: '5. Supprimer admin', sub: 'seulement si 4 a réussi', span: 2, tone: 'rose' },
+      { label: '6. Enregistrer', sub: 'write memory', span: 2, tone: 'sky' },
+      { label: '7. Valider le coffre', sub: 'si tout a réussi', span: 2, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="46rem"
+  caption="Les étapes 3 à 6 se déroulent équipement par équipement. Au premier problème, tout s'arrête."
+/>
+
+Trois précautions rendent l'opération sûre :
+
+- **Le mot de passe est mis au coffre avant d'être appliqué** (étape 2). Si le script plante juste
+  après avoir changé un équipement, le nouveau mot de passe n'est pas perdu : il est dans
+  `vault/breakglass.pending.yml`.
+- **La vérification utilise une connexion indépendante**, avec le nouveau mot de passe. On ne se
+  contente pas de constater que la commande est passée.
+- **Un équipement à la fois** : si quelque chose cloche sur le premier, les autres ne sont pas touchés.
+
+## Le coffre : Ansible Vault
+
+Les mots de passe sont stockés dans un fichier **chiffré avec Ansible Vault**, lisible par les deux
+versions du script et par les playbooks :
+
+```text title="ansible-vault view vault/breakglass.yml"
+breakglass_user: nh-breakglass
+breakglass_passwords:
+  spine1: q8Zr-3vK…
+  leaf1: Tn.4wP+e…
+  leaf2: 7hXc=Lm2…
+```
+
+Le fichier chiffré peut être commité dans un dépôt privé : sans le mot de passe du coffre, il est
+illisible. Les scripts ne l'écrivent **jamais en clair** sur le disque : le chiffrement se fait en
+mémoire.
+
+<Callout type="field">
+En production, un vrai gestionnaire de secrets (HashiCorp Vault, CyberArk, Bitwarden…) apporte ce
+qu'Ansible Vault n'a pas : un accès nominatif au secret, un journal de chaque consultation, et
+parfois la rotation automatique après usage. Le principe des scripts reste le même ; seule l'étape
+« mettre au coffre » change, avec le module ou l'API du gestionnaire choisi.
+</Callout>
+
+## La version Python
+
+<CodeFile lab="netops" file="python/rotate_breakglass.py" />
+
+```text title="python3 python/rotate_breakglass.py --remove-default-admin"
+Nouveaux mots de passe enregistrés (chiffrés) dans vault/breakglass.pending.yml
+OK    spine1
+OK    leaf1
+OK    leaf2
+Rotation terminée : vault/breakglass.yml est à jour.
+```
+
+## La version Ansible
+
+Le playbook suit les mêmes étapes, réparties en trois *plays* : préparation du coffre pour tous les
+équipements, application et vérification un par un (`serial: 1`, `any_errors_fatal: true`), puis
+validation du coffre.
+
+<CodeFile lab="netops" file="ansible/rotate_breakglass.yml" />
+
+Quelques détails importants :
+
+- `no_log: true` empêche Ansible d'afficher les mots de passe dans sa sortie et ses journaux ;
+- le mot de passe ne contient ni espace ni `?` (qui déclenche l'aide de la CLI) ;
+- la vérification passe par **eAPI** (`uri`) : c'est une connexion HTTPS totalement indépendante de
+  la session SSH qui vient de modifier la configuration.
+
+<Callout type="warning">
+Les commandes de configuration peuvent être journalisées, par la comptabilité TACACS+
+(`aaa accounting commands`) ou un syslog. EOS enregistre une empreinte du mot de passe dans sa
+configuration, mais la commande tapée, elle, peut apparaître en clair dans ces journaux. Vérifiez
+comment votre serveur AAA traite ces commandes, et restreignez l'accès aux journaux en conséquence.
+</Callout>
+
+## Automatiser : tous les 4 mois et à chaque départ
+
+La rotation tourne dans un pipeline, comme la sauvegarde. Deux déclencheurs :
+
+- une **planification** tous les 4 mois : `0 6 1 1,5,9 *` (le 1er janvier, mai et septembre à 6 h) ;
+- un lancement **manuel** depuis l'interface (*Run pipeline*), le jour où un membre de l'équipe part.
+
+```yaml title=".gitlab-ci.yml (job de rotation, à ajouter)"
+# Ajouter « security » à la liste des étapes : stages: [backup, security]
+rotate-breakglass:
+  stage: security
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $JOB == "rotate-breakglass"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git > /dev/null
+    - pip install -q -r requirements.txt
+  script:
+    - python3 python/rotate_breakglass.py --remove-default-admin
+    - git config user.name "netops-rotation" && git config user.email "netops-rotation@example.com"
+    - git add vault/breakglass.yml
+    - git commit -m "rotation du compte de secours $(date -u +%F)"
+    - git push "https://oauth2:${ROTATION_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_REF_NAME}"
+  artifacts:
+    when: on_failure          # en cas d'échec, garder le coffre « en attente » (chiffré)
+    paths: [vault/breakglass.pending.yml]
+    expire_in: 7 days
+```
+
+Variables à créer (masquées, protégées) : `NET_USER`, `NET_PASSWORD`, `ROTATION_PUSH_TOKEN`, et
+`ANSIBLE_VAULT_PASSWORD_FILE` en type **File** (GitLab écrit son contenu dans un fichier et met le
+chemin dans la variable). La planification définit `JOB=rotate-breakglass`, pour ne pas lancer la
+rotation en même temps que la sauvegarde nocturne.
+
+### La check-list de départ d'un membre de l'équipe
+
+1. Désactiver son compte nominatif dans l'annuaire et sur le serveur TACACS+.
+2. **Lancer le pipeline de rotation** du compte de secours.
+3. S'il connaissait le mot de passe du coffre : `ansible-vault rekey`, et mettre à jour la variable du pipeline.
+4. Révoquer ses clés SSH, ses jetons d'API et ses accès GitLab.
+5. Relire la comptabilité TACACS+ de ses dernières semaines d'activité.
+
+## Dans le lab
+
+1. Déployez le lab et vérifiez que le compte par défaut fonctionne : `ssh admin@172.20.30.12`
+   (mot de passe `admin`). C'est exactement le problème.
+2. Créez le mot de passe du coffre : `openssl rand -base64 32 > ~/.vault_pass && chmod 600 ~/.vault_pass`,
+   puis `export ANSIBLE_VAULT_PASSWORD_FILE=$HOME/.vault_pass`.
+3. Lancez la rotation (Python ou Ansible) avec la suppression du compte admin.
+4. Vérifiez : `ssh admin@172.20.30.12` est refusé ; `ssh nh-breakglass@172.20.30.12` fonctionne avec
+   le mot de passe lu par `ansible-vault view vault/breakglass.yml`.
+5. Relancez la rotation : les mots de passe changent, l'ancien ne fonctionne plus.
+6. Bonus : arrêtez leaf2 (`docker stop clab-netops-leaf2`) et relancez. Le script s'arrête sur leaf2 :
+   où sont les mots de passe de spine1 et leaf1 ?
+
+<Lab name="netops" lang="fr" />
+
+## À retenir
+
+- Le compte `admin` partagé est **connu, partagé, intraçable** et **survit aux départs** : supprimez-le.
+- Au quotidien : des **comptes nominatifs** via TACACS+ ; en dernier recours : **un compte local de
+  secours**, au nom non devinable, avec un mot de passe **unique par équipement**, rangé dans un **coffre**.
+- Rotation **tous les 4 mois**, et **immédiatement** au départ d'un collègue ou après chaque usage.
+- L'ordre est vital : **créer et vérifier le compte de secours avant de supprimer admin**, et mettre le
+  nouveau mot de passe au coffre **avant** de l'appliquer.
+- Un pipeline planifié et déclenchable à la main rend la rotation **systématique**, pas héroïque.
+
+Prochain chapitre : **NetBox**, pour ne plus décrire son réseau dans des fichiers épars, mais dans une
+vraie source de vérité.

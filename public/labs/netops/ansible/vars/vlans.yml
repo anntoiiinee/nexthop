@@ -1,0 +1,8 @@
+# Les VLAN voulus sur les leafs : on décrit l'état souhaité, Ansible s'occupe du reste.
+vlans:
+  - vlan_id: 10
+    name: USERS
+  - vlan_id: 20
+    name: GUEST-WIFI
+  - vlan_id: 30
+    name: SERVERS

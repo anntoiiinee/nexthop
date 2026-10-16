@@ -1,0 +1,20 @@
+---
+// Affiche un fichier d'un lab (public/labs/<lab>/<file>) avec la coloration syntaxique.
+// Le chapitre montre ainsi exactement le code téléchargé par le lecteur, sans copie à maintenir.
+// <CodeFile lab="netops" file="python/backup_configs.py" />
+import fs from 'node:fs';
+import path from 'node:path';
+import { Code } from 'astro-expressive-code/components';
+
+interface Props { lab: string; file: string; title?: string }
+const { lab, file, title } = Astro.props;
+
+const languages: Record<string, string> = {
+  py: 'python', yml: 'yaml', yaml: 'yaml', json: 'json', sh: 'bash', cfg: 'text', txt: 'text', j2: 'jinja',
+};
+const ext = file.split('.').pop() ?? '';
+const code = fs.readFileSync(path.join(process.cwd(), 'public', 'labs', lab, file), 'utf-8').trimEnd();
+---
+<div class="my-6">
+  <Code code={code} lang={languages[ext] ?? 'text'} title={title ?? file} />
+</div>

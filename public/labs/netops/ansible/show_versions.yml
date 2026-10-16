@@ -1,0 +1,16 @@
+---
+# Affiche le modèle et la version EOS de chaque équipement.
+# Usage (depuis la racine du lab) : ansible-playbook ansible/show_versions.yml
+
+- name: Inventaire des versions
+  hosts: eos
+  gather_facts: false
+
+  tasks:
+    - name: Collecter les informations de l'équipement
+      arista.eos.eos_facts:
+        gather_subset: min
+
+    - name: Afficher le modèle et la version
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} : {{ ansible_net_model }} · EOS {{ ansible_net_version }}"

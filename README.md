@@ -81,7 +81,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -138,7 +138,8 @@ src/
   - `<PacketFormat rows cols />` : trame, en-tête ou champ de bits, sur une ou plusieurs lignes alignées ;
   - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
-  - `<OsiModel />`, `<Lab name="…" />`.
+  - `<OsiModel />`, `<Lab name="…" />` ;
+  - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé).
 - **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`). Mode sombre : variante `dark:`, pilotée par la classe `.dark` sur `<html>`.
 - **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
@@ -201,7 +202,9 @@ Mise en route (une seule fois) :
 - [ ] Traduction anglaise de la formation Fondamentaux
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
-- [ ] Formation suivante : le data center (VRF, spine/leaf, VXLAN, EVPN)
+- [x] Formation Automatisation en FR (6 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, NetBox, AVD + lab `netops`)
+- [ ] Formation Data center (VRF, spine/leaf, VXLAN, EVPN) : rédaction par Antoine
+- [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 
 ---

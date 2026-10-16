@@ -8,6 +8,22 @@ export interface GlossaryEntry {
 
 // Clés en minuscules et en anglais, comme les slugs. Ordre alphabétique.
 export const glossary = {
+  aaa: {
+    term: 'AAA',
+    expansion: 'Authentication, Authorization, Accounting',
+    definition: {
+      fr: "Le cadre qui contrôle l'accès aux équipements : qui se connecte (authentification), ce qu'il a le droit de faire (autorisation), et la trace de ce qu'il a fait (traçabilité).",
+      en: "The framework controlling access to devices: who logs in (authentication), what they may do (authorization), and the record of what they did (accounting).",
+    },
+  },
+  api: {
+    term: 'API',
+    expansion: 'Application Programming Interface',
+    definition: {
+      fr: "Interface qui permet à un programme de piloter un autre logiciel ou un équipement, par exemple eAPI sur Arista ou l'API REST de NetBox.",
+      en: "Interface that lets a program drive another piece of software or a device, for example eAPI on Arista or NetBox's REST API.",
+    },
+  },
   arp: {
     term: 'ARP',
     expansion: 'Address Resolution Protocol',
@@ -22,6 +38,14 @@ export const glossary = {
     definition: {
       fr: "Système autonome : ensemble de réseaux géré par une même organisation, avec une politique de routage commune, identifié par un numéro (ASN).",
       en: "Autonomous system: a set of networks run by one organization with a common routing policy, identified by a number (ASN).",
+    },
+  },
+  avd: {
+    term: 'AVD',
+    expansion: 'Arista Validated Designs',
+    definition: {
+      fr: "Collection Ansible d'Arista qui génère les configurations complètes d'une fabric (et sa documentation) à partir d'un modèle de données YAML.",
+      en: "Arista Ansible collection that generates the complete configurations of a fabric (and its documentation) from a YAML data model.",
     },
   },
   bgp: {
@@ -46,6 +70,14 @@ export const glossary = {
     definition: {
       fr: "Protocole propriétaire Cisco par lequel un équipement annonce son identité (nom, modèle, port, adresse) à ses voisins directs.",
       en: "Cisco proprietary protocol through which a device advertises its identity (name, model, port, address) to its directly connected neighbors.",
+    },
+  },
+  cicd: {
+    term: 'CI/CD',
+    expansion: 'Continuous Integration / Continuous Delivery',
+    definition: {
+      fr: "Chaîne d'automatisation (GitLab CI, GitHub Actions…) qui teste et déploie automatiquement chaque changement poussé dans Git, ou exécute des tâches planifiées.",
+      en: "Automation pipeline (GitLab CI, GitHub Actions…) that automatically tests and deploys every change pushed to Git, or runs scheduled jobs.",
     },
   },
   cidr: {
@@ -96,6 +128,13 @@ export const glossary = {
       en: "Forwarding table: the copy of the best routes programmed into the router hardware, used for every packet.",
     },
   },
+  gitops: {
+    term: 'GitOps',
+    definition: {
+      fr: "Pratique qui fait de Git la référence de l'état d'une infrastructure : chaque changement passe par un commit, relu et tracé, et un pipeline l'applique ou le constate.",
+      en: "Practice that makes Git the reference for an infrastructure's state: every change goes through a reviewed, traceable commit, and a pipeline applies or records it.",
+    },
+  },
   ibgp: {
     term: 'iBGP',
     expansion: 'Internal BGP',
@@ -112,12 +151,26 @@ export const glossary = {
       en: "IP's control and error message protocol. It is what ping (echo request / echo reply) and traceroute rely on.",
     },
   },
+  idempotence: {
+    term: 'Idempotence',
+    definition: {
+      fr: "Propriété d'une opération qu'on peut relancer sans risque : appliquée une ou dix fois, elle mène au même résultat, et ne change rien si l'état voulu est déjà atteint.",
+      en: "Property of an operation that can safely be run again: applied once or ten times, it leads to the same result, and changes nothing if the desired state is already reached.",
+    },
+  },
   igp: {
     term: 'IGP',
     expansion: 'Interior Gateway Protocol',
     definition: {
       fr: "Protocole de routage utilisé à l'intérieur d'un système autonome, comme OSPF ou IS-IS.",
       en: "Routing protocol used inside an autonomous system, such as OSPF or IS-IS.",
+    },
+  },
+  jinja: {
+    term: 'Jinja2',
+    definition: {
+      fr: "Langage de gabarits utilisé par Ansible : un modèle de configuration avec des variables et des boucles, rempli à partir des données.",
+      en: "Templating language used by Ansible: a configuration template with variables and loops, filled in from data.",
     },
   },
   lan: {
@@ -216,6 +269,14 @@ export const glossary = {
       en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
     },
   },
+  sot: {
+    term: 'SoT',
+    expansion: 'Source of Truth',
+    definition: {
+      fr: "La source de vérité : la base de données qui décrit l'état voulu du réseau (équipements, adresses, VLAN…), d'où l'on génère les configurations. NetBox est la plus connue.",
+      en: "The source of truth: the database describing the intended state of the network (devices, addresses, VLANs…), from which configurations are generated. NetBox is the best known.",
+    },
+  },
   stp: {
     term: 'STP',
     expansion: 'Spanning Tree Protocol',
@@ -230,6 +291,14 @@ export const glossary = {
     definition: {
       fr: "Interface virtuelle d'un switch associée à un VLAN (interface Vlan10). Elle porte une adresse IP et sert de passerelle aux machines du VLAN.",
       en: "Virtual switch interface bound to a VLAN (interface Vlan10). It holds an IP address and acts as the gateway for the VLAN's hosts.",
+    },
+  },
+  tacacs: {
+    term: 'TACACS+',
+    expansion: 'Terminal Access Controller Access-Control System Plus',
+    definition: {
+      fr: "Protocole AAA qui centralise l'authentification des administrateurs réseau sur un serveur, avec autorisation commande par commande et journal de chaque commande tapée.",
+      en: "AAA protocol that centralizes network administrators' authentication on a server, with per-command authorization and a log of every command typed.",
     },
   },
   tcp: {
@@ -278,6 +347,14 @@ export const glossary = {
     definition: {
       fr: "Encapsulation de trames Ethernet dans de l'UDP, pour transporter des réseaux de niveau 2 au-dessus d'un réseau IP. Jusqu'à 16 millions de segments (VNI).",
       en: 'Encapsulation of Ethernet frames in UDP, to carry layer 2 networks over an IP network. Up to 16 million segments (VNIs).',
+    },
+  },
+  yaml: {
+    term: 'YAML',
+    expansion: "YAML Ain't Markup Language",
+    definition: {
+      fr: "Format de fichier texte lisible, à base d'indentation, utilisé pour les inventaires, les variables et les playbooks Ansible.",
+      en: "Human-readable, indentation-based text file format used for inventories, variables and Ansible playbooks.",
     },
   },
 } satisfies Record<string, GlossaryEntry>;

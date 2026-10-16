@@ -1,0 +1,202 @@
+---
+title: "Python pour le réseau"
+description: "Se connecter à des équipements réseau avec Python et Netmiko : environnement virtuel, commandes, sorties JSON, inventaire, parallélisme et gestion des secrets."
+pubDate: 2026-10-18
+level: intermediate
+tags: [python, netmiko, automation]
+vendor: [arista]
+order: 1
+---
+
+Python est le langage de référence de l'automatisation réseau : simple à lire, disponible partout,
+et doté de bibliothèques faites pour parler aux équipements. Pas besoin d'être développeur : avec
+une poignée de concepts, on remplace des heures de copier-coller dans des terminaux par un script
+de vingt lignes.
+
+## Le lab
+
+Tout ce chapitre se pratique sur le lab `netops` : trois switches cEOS joignables depuis votre machine
+sur un réseau de management, et un compte de service `svc-netops` pour l'automatisation.
+
+<Topology
+  width={720}
+  height={260}
+  groups={[{ x: 250, y: 20, w: 455, h: 225, label: 'Management · 172.20.30.0/24', tone: 'sky' }]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 90, y: 130, label: 'Votre machine', sub: 'Python · Ansible' },
+    { id: 'sp', type: 'switch', x: 480, y: 80, label: 'spine1', sub: '172.20.30.11' },
+    { id: 'l1', type: 'switch', x: 360, y: 190, label: 'leaf1', sub: '172.20.30.12' },
+    { id: 'l2', type: 'switch', x: 600, y: 190, label: 'leaf2', sub: '172.20.30.13' },
+  ]}
+  links={[
+    { from: 'pc', to: 'sp', label: 'SSH', tone: 'emerald' }, { from: 'pc', to: 'l1', tone: 'emerald' }, { from: 'pc', to: 'l2', tone: 'emerald' },
+    { from: 'sp', to: 'l1', style: 'dashed' }, { from: 'sp', to: 'l2', style: 'dashed' },
+  ]}
+  caption="Les scripts tournent sur votre machine et se connectent en SSH à l'interface de management de chaque switch."
+/>
+
+<Lab name="netops" lang="fr" />
+
+## Préparer l'environnement
+
+On travaille toujours dans un **environnement virtuel** (venv) : un dossier qui contient sa propre
+version des bibliothèques, isolée du système. Chaque projet a le sien, sans conflit.
+
+```bash
+cd netops
+python3 -m venv .venv
+source .venv/bin/activate        # à refaire dans chaque nouveau terminal
+pip install -r requirements.txt
+```
+
+<CodeFile lab="netops" file="requirements.txt" />
+
+Enfin, les identifiants du compte de service, dans des **variables d'environnement** :
+
+```bash
+export NET_USER=svc-netops
+export NET_PASSWORD='netops-lab'
+```
+
+<Callout type="warning">
+Un mot de passe ne s'écrit **jamais** dans un script ni dans un dépôt Git, même privé : il finit
+toujours par fuiter (copie d'écran, dépôt rendu public, ancien collègue). On le lit dans
+l'environnement, dans un coffre (Ansible Vault, HashiCorp Vault…) ou dans les variables masquées
+d'un pipeline. Les scripts du lab refusent de démarrer si les variables sont absentes.
+</Callout>
+
+## Netmiko : piloter la CLI en SSH
+
+**Netmiko** se connecte en SSH comme vous le feriez, gère les invites, la pagination et le mode
+configuration, et renvoie les sorties sous forme de texte. Il connaît des dizaines de plateformes
+(Arista, Cisco, Juniper, Fortinet, Palo Alto…), via le paramètre `device_type`.
+
+```python
+from netmiko import ConnectHandler
+
+switch = {"device_type": "arista_eos", "host": "172.20.30.12", "username": "svc-netops", "password": "…"}
+
+with ConnectHandler(**switch) as conn:
+    print(conn.send_command("show ip interface brief"))            # une commande « show »
+    conn.send_config_set(["vlan 40", "name MANAGEMENT"])           # passe en mode configuration
+    conn.save_config()                                             # write memory
+```
+
+Le bloc `with` ferme la connexion proprement, même en cas d'erreur.
+
+## Des sorties exploitables : le JSON
+
+Une sortie texte est faite pour un humain. Pour un script, il faut la découper (« parser »), ce qui
+est fragile : une colonne qui bouge d'une version à l'autre et tout casse. Arista EOS sait répondre
+directement en **JSON** en ajoutant `| json` à n'importe quelle commande :
+
+```text title="leaf1#show version | json (extrait)"
+{
+    "modelName": "cEOSLab",
+    "version": "4.32.0F",
+    "serialNumber": "5A1B2C3D4E5F",
+    "uptime": 5329.77,
+    ...
+}
+```
+
+En Python, `json.loads()` transforme ce texte en dictionnaire : `data["version"]` donne directement
+la version, sans aucune expression régulière.
+
+<Callout type="tip">
+Sur les plateformes qui ne savent pas répondre en JSON (une partie du parc Cisco IOS, par exemple),
+Netmiko peut parser les sorties à l'aide de modèles **TextFSM** prêts à l'emploi :
+`conn.send_command("show ip interface brief", use_textfsm=True)` renvoie une liste de dictionnaires.
+</Callout>
+
+## Un inventaire partagé
+
+Plutôt que de coder les adresses en dur, on les lit dans un fichier d'**inventaire** au format
+<Term id="yaml" />. On réutilise celui d'Ansible (chapitre suivant) : une seule liste d'équipements
+pour tous les outils.
+
+<CodeFile lab="netops" file="inventory.yml" />
+
+Les fonctions communes à tous les scripts du lab sont regroupées dans un petit module :
+
+<CodeFile lab="netops" file="python/netops.py" />
+
+## Travailler en parallèle
+
+Se connecter en SSH prend une à deux secondes. Sur trois équipements, peu importe ; sur trois cents,
+un script qui les traite l'un après l'autre met dix minutes. Avec un **pool de threads**, on traite
+plusieurs équipements en même temps :
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'En série', fields: [
+      { label: 'spine1', span: 4, tone: 'sky' },
+      { label: 'leaf1', span: 4, start: 5, tone: 'sky' },
+      { label: 'leaf2', span: 4, start: 9, tone: 'sky' },
+    ] },
+    { label: 'En parallèle', fields: [{ label: 'spine1', span: 4, start: 1, tone: 'emerald' }] },
+    { label: '', fields: [{ label: 'leaf1', span: 4, start: 1, tone: 'emerald' }] },
+    { label: '', fields: [{ label: 'leaf2', span: 4, start: 1, tone: 'emerald' }] },
+  ]}
+  minWidth="36rem"
+  caption="En série, le temps total est la somme des connexions. En parallèle (10 à la fois dans nos scripts), il est proche de la plus lente."
+/>
+
+Le premier script du lab récupère le modèle et la version de chaque switch, en parallèle et en JSON :
+
+<CodeFile lab="netops" file="python/show_versions.py" />
+
+```text title="python3 python/show_versions.py"
+spine1   cEOSLab      4.32.0F
+leaf1    cEOSLab      4.32.0F
+leaf2    cEOSLab      4.32.0F
+```
+
+<Callout type="note">
+Les threads conviennent parfaitement ici, car le script passe son temps à **attendre** les
+équipements (des entrées-sorties réseau). Ne dépassez pas quelques dizaines de connexions
+simultanées : au-delà, ce sont les équipements, les serveurs AAA ou le pare-feu qui saturent.
+</Callout>
+
+## Gérer les erreurs
+
+Un équipement éteint, un mot de passe changé : sur un grand parc, il y a **toujours** un équipement qui
+ne répond pas. Un bon script le signale, continue avec les autres et termine par un code de sortie
+non nul, pour qu'un pipeline sache qu'il y a eu un problème. Netmiko lève des exceptions précises :
+
+| Exception | Signifie |
+|---|---|
+| `NetmikoTimeoutException` | l'équipement ne répond pas (éteint, routage, filtrage du port 22) |
+| `NetmikoAuthenticationException` | identifiant ou mot de passe refusé |
+
+Le script de sauvegarde du chapitre 3 en est un exemple complet.
+
+## Les autres bibliothèques
+
+| Bibliothèque | Principe | Quand l'utiliser |
+|---|---|---|
+| **Netmiko** | CLI en SSH, multi-constructeur | le couteau suisse, parfait pour démarrer |
+| **pyeapi** | <Term id="api" /> JSON d'Arista (eAPI) | parc 100 % Arista, sorties structurées garanties |
+| **Scrapli** | CLI en SSH, plus rapide, asynchrone possible | gros volumes, performance |
+| **NAPALM** | une interface commune (getters, remplacement de config) | outils multi-constructeurs |
+| **ncclient** | NETCONF | équipements pilotés par modèles YANG |
+
+## À vous de jouer
+
+1. Déployez le lab, préparez le venv et lancez `python3 python/show_versions.py`.
+2. Modifiez le script pour afficher aussi le numéro de série (`serialNumber`) et l'uptime en heures.
+3. Écrivez un script qui affiche, pour chaque switch, ses voisins LLDP à partir de
+   `show lldp neighbors | json`.
+4. Arrêtez un switch (`docker stop clab-netops-leaf2`) et relancez votre script : que se passe-t-il ?
+   Ajoutez la gestion des exceptions.
+
+## À retenir
+
+- Toujours un **environnement virtuel**, et **jamais** de mot de passe dans le code.
+- **Netmiko** pilote la CLI en SSH : `send_command`, `send_config_set`, `save_config`.
+- Préférez les sorties **structurées** : `| json` sur Arista, TextFSM ailleurs.
+- Un **inventaire** YAML partagé avec Ansible, un **pool de threads** pour le parallélisme.
+- Gérer les erreurs : signaler, continuer, et terminer avec un **code de sortie** explicite.
+
+Prochain chapitre : **Ansible**, pour décrire l'état voulu plutôt que les commandes à taper.

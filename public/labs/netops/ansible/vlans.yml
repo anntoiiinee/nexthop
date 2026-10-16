@@ -1,0 +1,17 @@
+---
+# Déploie les VLAN décrits dans ansible/vars/vlans.yml sur les leafs.
+# Idempotent : relancé, il ne change rien si l'état est déjà le bon.
+#   ansible-playbook ansible/vlans.yml --check --diff   # voir ce qui changerait
+#   ansible-playbook ansible/vlans.yml                  # appliquer
+
+- name: VLAN des leafs
+  hosts: leaf1,leaf2
+  gather_facts: false
+  vars_files:
+    - vars/vlans.yml
+
+  tasks:
+    - name: Configurer les VLAN
+      arista.eos.eos_vlans:
+        config: "{{ vlans }}"
+        state: merged

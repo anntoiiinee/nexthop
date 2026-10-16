@@ -1,0 +1,36 @@
+# Pipeline de sauvegarde GitOps : à renommer en .gitlab-ci.yml à la racine du dépôt.
+#
+# Variables CI/CD (Settings > CI/CD > Variables, « Masked » et « Protected ») :
+#   NET_USER, NET_PASSWORD   compte de service des équipements
+#   BACKUP_PUSH_TOKEN        jeton d'accès projet (rôle Developer, scope write_repository)
+# Planification (Build > Pipeline schedules) : par exemple tous les jours à 2 h, « 0 2 * * * ».
+# Le runner doit pouvoir joindre le réseau de management des équipements.
+
+stages: [backup]
+
+backup:
+  stage: backup
+  image: python:3.12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git > /dev/null
+    - pip install -q -r requirements.txt
+    # Version Ansible : ajouter « ansible-galaxy collection install -r requirements.yml »
+  script:
+    # On continue même si un équipement échoue : les autres sauvegardes sont commitées,
+    # et le job est marqué en échec à la fin.
+    - python3 python/backup_configs.py || BACKUP_STATUS=$?
+    # Version Ansible : ansible-playbook ansible/backup.yml || BACKUP_STATUS=$?
+    - git config user.name "netops-backup"
+    - git config user.email "netops-backup@example.com"
+    - git add backups/
+    - |
+      if git diff --cached --quiet; then
+        echo "Aucun changement de configuration."
+      else
+        CHANGED=$(git diff --cached --name-only | xargs -n1 basename | sed 's/\.cfg$//' | paste -sd ' ')
+        git commit -m "backup $(date -u +%F) : ${CHANGED}"
+        git push "https://oauth2:${BACKUP_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_REF_NAME}"
+      fi
+    - exit ${BACKUP_STATUS:-0}
