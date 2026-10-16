@@ -1,8 +1,8 @@
 ---
 import { getCollection } from 'astro:content';
-import BaseLayout from '../layouts/BaseLayout.astro';
-import { routes, t, type Lang } from '../i18n/ui';
-import { levelColors } from '../lib/levels';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { levelColors } from '@/lib/levels';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;

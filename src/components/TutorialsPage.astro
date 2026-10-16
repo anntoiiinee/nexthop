@@ -1,8 +1,9 @@
 ---
-import BaseLayout from '../layouts/BaseLayout.astro';
+import BaseLayout from '@/layouts/BaseLayout.astro';
 import TutorialCard from './TutorialCard.astro';
-import { routes, t, type Lang } from '../i18n/ui';
-import { getTutorials } from '../lib/content';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { getTutorials, techsOf } from '@/lib/content';
+import { brands } from '@/data/brands';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
@@ -11,7 +12,14 @@ const posts = await getTutorials(lang);
 const levels = (['beginner', 'intermediate', 'advanced'] as const)
   .filter((l) => posts.some((p) => p.data.level === l));
 
+// Puces de technologie : uniquement celles qui ont au moins un tutoriel, dans l'ordre du carrousel
+const techs = brands
+  .map((brand) => ({ ...brand, count: posts.filter((p) => techsOf(p).includes(brand.id)).length }))
+  .filter((brand) => brand.count > 0);
+const brandNames = Object.fromEntries(brands.map((b) => [b.id, b.name]));
+
 const btn = 'rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium transition hover:border-sky-400 dark:border-slate-700 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white dark:aria-pressed:border-white dark:aria-pressed:bg-white dark:aria-pressed:text-slate-900';
+const label = 'w-24 shrink-0 pt-1.5 font-mono text-xs text-slate-500';
 ---
 <BaseLayout title={`${t(lang, 'tutorials.title')} | Next Hop`} lang={lang} alternates={routes.tutorials}>
   <section class="mx-auto max-w-6xl px-4 py-16">
@@ -21,26 +29,55 @@ const btn = 'rounded-full border border-slate-300 px-4 py-1.5 text-sm font-mediu
     <p class="mt-4 max-w-2xl text-lg text-slate-600 dark:text-slate-400">{t(lang, 'tutorials.intro')}</p>
 
     {posts.length > 0 ? (
-      <>
-        <div class="mt-10 flex flex-wrap gap-2">
-          <button type="button" data-filter="all" aria-pressed="true" class={btn}>
-            {t(lang, 'tutorials.all')} ({posts.length})
+      <div
+        data-tutorials
+        data-brands={JSON.stringify(brandNames)}
+        data-i18n={JSON.stringify({ techEmpty: t(lang, 'tutorials.techEmpty'), noMatch: t(lang, 'tutorials.noMatch') })}
+      >
+        <div class="mt-10 space-y-3">
+          <div class="flex flex-col gap-2 sm:flex-row">
+            <span class={label}>{t(lang, 'tutorials.level')}</span>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" data-level-filter="all" aria-pressed="true" class={btn}>
+                {t(lang, 'tutorials.all')} ({posts.length})
+              </button>
+              {levels.map((l) => (
+                <button type="button" data-level-filter={l} aria-pressed="false" class={btn}>
+                  {t(lang, `level.${l}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {techs.length > 0 && (
+            <div class="flex flex-col gap-2 sm:flex-row">
+              <span class={label}>{t(lang, 'tutorials.tech')}</span>
+              <div class="flex flex-wrap gap-2">
+                {techs.map((tech) => (
+                  <button type="button" data-tech-filter={tech.id} aria-pressed="false" class={btn}>
+                    {tech.name} <span class="opacity-60">{tech.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div data-empty hidden class="mt-10 rounded-xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
+          <p data-empty-text class="text-slate-600 dark:text-slate-400"></p>
+          <button type="button" data-reset class="mt-4 rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600">
+            {t(lang, 'tutorials.reset')}
           </button>
-          {levels.map((l) => (
-            <button type="button" data-filter={l} aria-pressed="false" class={btn}>
-              {t(lang, `level.${l}`)}
-            </button>
-          ))}
         </div>
 
         <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {posts.map((post) => (
-            <div data-level={post.data.level} class="grid">
+            <div data-level={post.data.level} data-techs={techsOf(post).join(' ')} class="grid">
               <TutorialCard post={post} lang={lang} />
             </div>
           ))}
         </div>
-      </>
+      </div>
     ) : (
       <p class="mt-10 text-slate-500">{t(lang, 'tutorials.empty')}</p>
     )}
@@ -48,16 +85,54 @@ const btn = 'rounded-full border border-slate-300 px-4 py-1.5 text-sm font-mediu
 </BaseLayout>
 
 <script>
-  const buttons = document.querySelectorAll<HTMLButtonElement>('[data-filter]');
-  const items = document.querySelectorAll<HTMLElement>('[data-level]');
+  const root = document.querySelector<HTMLElement>('[data-tutorials]');
 
-  buttons.forEach((button) =>
-    button.addEventListener('click', () => {
-      const level = button.dataset.filter;
-      buttons.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+  if (root) {
+    const brands = JSON.parse(root.dataset.brands!) as Record<string, string>;
+    const i18n = JSON.parse(root.dataset.i18n!) as Record<'techEmpty' | 'noMatch', string>;
+    const levelButtons = root.querySelectorAll<HTMLButtonElement>('[data-level-filter]');
+    const techButtons = root.querySelectorAll<HTMLButtonElement>('[data-tech-filter]');
+    const items = root.querySelectorAll<HTMLElement>('[data-level]');
+    const empty = root.querySelector<HTMLElement>('[data-empty]')!;
+    const emptyText = root.querySelector<HTMLElement>('[data-empty-text]')!;
+
+    // Le filtre techno vient de l'URL (?tech=fortinet), ce qui permet les liens depuis le carrousel
+    let level = 'all';
+    let tech = new URLSearchParams(location.search).get('tech');
+
+    function apply() {
+      levelButtons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.levelFilter === level)));
+      techButtons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.techFilter === tech)));
+
+      let visible = 0;
       items.forEach((item) => {
-        item.hidden = level !== 'all' && item.dataset.level !== level;
+        const show = (level === 'all' || item.dataset.level === level)
+          && (!tech || item.dataset.techs!.split(' ').includes(tech));
+        item.hidden = !show;
+        if (show) visible++;
       });
-    })
-  );
+
+      empty.hidden = visible > 0;
+      if (visible === 0) {
+        const techOnly = tech && level === 'all';
+        emptyText.textContent = techOnly ? i18n.techEmpty.replace('{name}', brands[tech!] ?? tech!) : i18n.noMatch;
+      }
+
+      const url = new URL(location.href);
+      if (tech) url.searchParams.set('tech', tech);
+      else url.searchParams.delete('tech');
+      history.replaceState(null, '', url);
+    }
+
+    levelButtons.forEach((b) => b.addEventListener('click', () => { level = b.dataset.levelFilter!; apply(); }));
+    techButtons.forEach((b) =>
+      b.addEventListener('click', () => {
+        tech = tech === b.dataset.techFilter ? null : b.dataset.techFilter!; // second clic = retirer le filtre
+        apply();
+      })
+    );
+    root.querySelector('[data-reset]')!.addEventListener('click', () => { level = 'all'; tech = null; apply(); });
+
+    apply();
+  }
 </script>

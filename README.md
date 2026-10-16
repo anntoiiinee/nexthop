@@ -93,7 +93,7 @@ public/labs/<lab>/topology.clab.yml + configs/*.cfg
 - **Composants dans le MDX** : mettre la classe `not-prose` sur le conteneur racine.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`).
 - **Confidentialité** : aucun nom de client (employeurs cités : SQUAD, Devoteam, Malherbe). Dans les exemples : AS privés `65000-65535`, plages de documentation `192.0.2.0/24`, `198.51.100.0/24`.
-- **Alias** `@/` → `src/` (si configuré dans `tsconfig.json`, sinon chemins relatifs).
+- **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
 
 ---
 

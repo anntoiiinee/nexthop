@@ -1,14 +1,18 @@
 ---
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
-import '../styles/global.css';
-import { languages, routes, t, type Lang } from '../i18n/ui';
+import '@/styles/global.css';
+import { languages, routes, t, type Lang } from '@/i18n/ui';
+import Search from '@/components/Search.astro';
+import ThemeToggle from '@/components/ThemeToggle.astro';
+import { coffeeUrl, coffeeIcon, issuesUrl } from '@/lib/support';
 
 interface Props {
   title: string;
   lang: Lang;
   description?: string;
   alternates?: Partial<Record<Lang, string>>;
+  searchable?: boolean; // false = page exclue de l'index Pagefind (ex. 404)
 }
 
 const {
@@ -16,9 +20,19 @@ const {
   lang,
   description = t(lang, 'site.description'),
   alternates = routes.home,
+  searchable = true,
 } = Astro.props;
 
 const langs = Object.keys(languages) as Lang[];
+
+const navLinks = [
+  { href: routes.tutorials[lang], label: t(lang, 'nav.tutorials') },
+  { href: routes.courses[lang], label: t(lang, 'nav.courses') },
+  { href: routes.tools[lang], label: t(lang, 'nav.tools') },
+  { href: routes.whoami[lang], label: 'whoami', mono: true },
+];
+const path = Astro.url.pathname.replace(/\/$/, '');
+const isActive = (href: string) => path === href || path.startsWith(`${href}/`);
 ---
 <!doctype html>
 <html lang={lang}>
@@ -27,51 +41,88 @@ const langs = Object.keys(languages) as Lang[];
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0f172a" />
+    <!-- Thème posé avant l'affichage pour éviter un flash clair en mode sombre -->
+    <script is:inline>
+      (() => {
+        let stored = null;
+        try { stored = localStorage.getItem('theme'); } catch {}
+        const dark = stored ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', dark);
+      })();
+    </script>
     {Object.entries(alternates).map(([l, href]) => (
       <link rel="alternate" hreflang={l} href={new URL(href, Astro.site)} />
     ))}
   </head>
   <body class="flex min-h-screen flex-col bg-white font-sans text-slate-700 antialiased dark:bg-slate-950 dark:text-slate-300">
     <header class="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80">
-      <nav class="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
+      <nav aria-label={t(lang, 'nav.menu')} class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 md:h-16 md:flex-nowrap md:py-0">
         <a href={routes.home[lang]} class="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
           <span class="font-mono text-sky-500">&gt;</span>
           <span>next<span class="text-sky-500">hop</span></span>
         </a>
-        <div class="flex items-center gap-6 text-sm font-medium">
-          <a href={routes.tutorials[lang]} class="transition hover:text-sky-500">{t(lang, 'nav.tutorials')}</a>
-          <a href={routes.courses[lang]} class="transition hover:text-sky-500">{t(lang, 'nav.courses')}</a>
-          <a href={routes.whoami[lang]} class="font-mono transition hover:text-sky-500">whoami</a>
-          
+
+        <!-- Mobile : 2e ligne pleine largeur. Desktop : entre le logo et le sélecteur. -->
+        <div class="order-last flex w-full items-center justify-between text-sm font-medium sm:justify-start sm:gap-6 md:order-none md:ml-auto md:w-auto">
+          {navLinks.map((link) => (
+            <a
+              href={link.href}
+              aria-current={isActive(link.href) ? 'page' : undefined}
+              class:list={['py-1 transition hover:text-sky-500 aria-[current=page]:text-sky-500', link.mono && 'font-mono']}
+            >
+              {link.label}
+            </a>
+          ))}
+        </div>
+
+        <div class="flex items-center gap-2">
+          <Search lang={lang} />
+          <ThemeToggle lang={lang} />
+
           <div class="flex items-center gap-0.5 rounded-md border border-slate-300 p-0.5 font-mono text-xs dark:border-slate-700">
-            {langs.map((l) =>
-              l === lang ? (
-                <span class="rounded bg-slate-900 px-2 py-0.5 text-white dark:bg-white dark:text-slate-900">
-                  {languages[l]}
-                </span>
-              ) : (
-                <a
-                  href={alternates[l] ?? routes.home[l]}
-                  hreflang={l}
-                  title={t(lang, 'lang.switch')}
-                  class="rounded px-2 py-0.5 transition hover:text-sky-500"
-                >
-                  {languages[l]}
-                </a>
-              )
-            )}
+          {langs.map((l) =>
+            l === lang ? (
+              <span class="rounded bg-slate-900 px-2 py-0.5 text-white dark:bg-white dark:text-slate-900">
+                {languages[l]}
+              </span>
+            ) : (
+              <a
+                href={alternates[l] ?? routes.home[l]}
+                hreflang={l}
+                title={t(lang, 'lang.switch')}
+                class="rounded px-2 py-0.5 transition hover:text-sky-500"
+              >
+                {languages[l]}
+              </a>
+            )
+          )}
           </div>
         </div>
       </nav>
     </header>
 
-    <main class="flex-1">
+    <main class="flex-1" data-pagefind-body={searchable ? '' : undefined}>
       <slot />
     </main>
 
-    <footer class="border-t border-slate-200 py-8 text-center text-sm text-slate-500 dark:border-slate-800">
-      © {new Date().getFullYear()} Next Hop · {t(lang, 'site.tagline')}
+    <footer class="border-t border-slate-200 py-8 text-sm text-slate-500 dark:border-slate-800">
+      <div class="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 sm:flex-row sm:justify-between">
+        <p>© {new Date().getFullYear()} Next Hop · {t(lang, 'site.tagline')}</p>
+        <div class="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+          <a href={issuesUrl} target="_blank" rel="noopener" class="transition hover:text-sky-500">{t(lang, 'support.report')} / {t(lang, 'support.suggest').toLowerCase()} ↗</a>
+          {coffeeUrl && (
+            <a href={coffeeUrl} target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 font-medium text-slate-700 transition hover:text-sky-500 dark:text-slate-300">
+              <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d={coffeeIcon} /></svg>
+              {t(lang, 'support.coffee')}
+            </a>
+          )}
+        </div>
+      </div>
     </footer>
   </body>
 </html>

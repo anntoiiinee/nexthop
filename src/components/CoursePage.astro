@@ -1,9 +1,10 @@
 ---
 import { render } from 'astro:content';
-import BaseLayout from '../layouts/BaseLayout.astro';
-import { routes, t, type Lang } from '../i18n/ui';
-import { levelColors } from '../lib/levels';
-import { chapterUrl, chapterSlugOf, type Course } from '../lib/courses';
+import { mdxComponents } from '@/lib/mdx';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { levelColors } from '@/lib/levels';
+import { chapterUrl, chapterSlugOf, type Course } from '@/lib/courses';
 
 interface Props {
   lang: Lang;
@@ -30,7 +31,7 @@ const first = course.chapters[0];
     <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
 
     <div class="prose prose-slate mt-8 max-w-none dark:prose-invert prose-a:text-sky-600 dark:prose-a:text-sky-400">
-      <Content />
+      <Content components={mdxComponents} />
     </div>
 
     {course.chapters.length > 0 && (

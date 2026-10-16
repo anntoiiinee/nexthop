@@ -1,0 +1,312 @@
+---
+import type { Lang } from '@/i18n/ui';
+
+interface Props { lang?: Lang; }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Découpeur de sous-réseaux (VLSM)',
+    base: 'Bloc à découper',
+    baseHint: 'Format : 192.168.10.0/24',
+    needs: 'Besoins',
+    name: 'Nom',
+    hosts: 'Hôtes',
+    add: '+ Ajouter un sous-réseau',
+    remove: 'Supprimer',
+    p2p: 'Liens point à point (2 hôtes) en /31 plutôt qu’en /30 (RFC 3021)',
+    plan: "Plan d'adressage",
+    colName: 'Nom',
+    colNeed: 'Besoin',
+    colNetwork: 'Réseau',
+    colMask: 'Masque',
+    colRange: 'Plage utilisable',
+    colBroadcast: 'Broadcast',
+    colUsage: 'Utilisation',
+    summary: '{used} adresses allouées sur {total} ({percent}).',
+    free: 'Espace libre : {blocks}',
+    full: 'Le bloc est entièrement utilisé.',
+    copy: 'Copier en CSV',
+    copied: 'Copié !',
+    share: 'Copier le lien du plan',
+    errBase: 'Bloc invalide : saisissez une adresse suivie de /préfixe, par exemple 192.168.10.0/24.',
+    normalized: '{input} n’est pas une adresse réseau : le bloc utilisé est {base}.',
+    errTooBig: 'Le bloc est trop petit : ce plan demande {needed} adresses, le /{prefix} n’en contient que {total}. Il faudrait au moins un /{min}.',
+    errHosts: 'Le besoin « {name} » est trop grand pour de l’IPv4.',
+    empty: 'Ajoutez au moins un besoin avec un nombre d’hôtes.',
+    unnamed: 'Sous-réseau {n}',
+    defaults: ['Utilisateurs', 'Wi-Fi invités', 'Serveurs', 'Administration', 'Lien R1-R2'],
+  },
+  en: {
+    title: 'Subnet planner (VLSM)',
+    base: 'Block to split',
+    baseHint: 'Format: 192.168.10.0/24',
+    needs: 'Requirements',
+    name: 'Name',
+    hosts: 'Hosts',
+    add: '+ Add a subnet',
+    remove: 'Remove',
+    p2p: 'Point-to-point links (2 hosts) as /31 instead of /30 (RFC 3021)',
+    plan: 'Addressing plan',
+    colName: 'Name',
+    colNeed: 'Need',
+    colNetwork: 'Network',
+    colMask: 'Mask',
+    colRange: 'Usable range',
+    colBroadcast: 'Broadcast',
+    colUsage: 'Usage',
+    summary: '{used} addresses allocated out of {total} ({percent}).',
+    free: 'Free space: {blocks}',
+    full: 'The block is fully used.',
+    copy: 'Copy as CSV',
+    copied: 'Copied!',
+    share: 'Copy link to this plan',
+    errBase: 'Invalid block: enter an address followed by /prefix, for example 192.168.10.0/24.',
+    normalized: '{input} is not a network address: the block used is {base}.',
+    errTooBig: 'The block is too small: this plan needs {needed} addresses, a /{prefix} only has {total}. You need at least a /{min}.',
+    errHosts: 'The "{name}" requirement is too large for IPv4.',
+    empty: 'Add at least one requirement with a number of hosts.',
+    unnamed: 'Subnet {n}',
+    defaults: ['Users', 'Guest Wi-Fi', 'Servers', 'Management', 'R1-R2 link'],
+  },
+}[lang];
+
+const defaults = [60, 28, 12, 5, 2].map((hosts, i) => ({ name: copy.defaults[i], hosts }));
+const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+const smallBtn = 'rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400';
+---
+<div
+  data-vlsm
+  data-lang={lang}
+  data-i18n={JSON.stringify(copy)}
+  data-defaults={JSON.stringify(defaults)}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.title}</span>
+
+  <div class="mt-4 grid gap-6 md:grid-cols-[16rem_minmax(0,1fr)]">
+    <div>
+      <label class="block">
+        <span class="text-sm font-medium text-slate-900 dark:text-white">{copy.base}</span>
+        <input type="text" data-base value="192.168.10.0/24" spellcheck="false" autocomplete="off" class:list={[field, 'mt-2 font-mono text-lg']} />
+      </label>
+      <p class="mt-2 text-xs text-slate-500">{copy.baseHint}</p>
+      <label class="mt-4 flex items-start gap-2 text-sm text-slate-600 dark:text-slate-400">
+        <input type="checkbox" data-p2p class="mt-1 accent-sky-500" />
+        <span>{copy.p2p}</span>
+      </label>
+    </div>
+
+    <div>
+      <p class="text-sm font-medium text-slate-900 dark:text-white">{copy.needs}</p>
+      <div class="mt-2 grid grid-cols-[minmax(0,1fr)_6rem_2rem] gap-2 text-xs text-slate-500" aria-hidden="true">
+        <span>{copy.name}</span><span>{copy.hosts}</span><span></span>
+      </div>
+      <ul data-rows class="mt-1 space-y-2"></ul>
+      <button type="button" data-add class:list={[smallBtn, 'mt-3']}>{copy.add}</button>
+    </div>
+  </div>
+
+  <template data-row-template>
+    <li class="grid grid-cols-[minmax(0,1fr)_6rem_2rem] items-center gap-2">
+      <input type="text" data-name aria-label={copy.name} class:list={[field, 'text-sm']} />
+      <input type="number" data-hosts min="1" step="1" inputmode="numeric" aria-label={copy.hosts} class:list={[field, 'font-mono text-sm']} />
+      <button type="button" data-remove aria-label={copy.remove} title={copy.remove} class="size-8 rounded-md text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10">×</button>
+    </li>
+  </template>
+
+  <div class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+    <p data-error hidden class="text-sm text-rose-600 dark:text-rose-400"></p>
+    <p data-notice hidden class="text-sm text-amber-700 dark:text-amber-400"></p>
+
+    <div data-result hidden>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm font-medium text-slate-900 dark:text-white">{copy.plan}</p>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" data-copy class={smallBtn}>{copy.copy}</button>
+          <button type="button" data-share class={smallBtn}>{copy.share}</button>
+        </div>
+      </div>
+
+      <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+        <table class="w-full text-left text-sm">
+          <thead class="bg-slate-100 text-xs text-slate-500 dark:bg-slate-800/60">
+            <tr>
+              <th class="px-3 py-2 font-medium">{copy.colName}</th>
+              <th class="px-3 py-2 font-medium">{copy.colNeed}</th>
+              <th class="px-3 py-2 font-medium">{copy.colNetwork}</th>
+              <th class="px-3 py-2 font-medium">{copy.colMask}</th>
+              <th class="px-3 py-2 font-medium">{copy.colRange}</th>
+              <th class="px-3 py-2 font-medium">{copy.colBroadcast}</th>
+              <th class="px-3 py-2 font-medium">{copy.colUsage}</th>
+            </tr>
+          </thead>
+          <tbody data-tbody class="divide-y divide-slate-200 font-mono text-xs whitespace-nowrap text-slate-900 dark:divide-slate-800 dark:text-white"></tbody>
+        </table>
+      </div>
+
+      <p data-summary class="mt-3 text-sm text-slate-600 dark:text-slate-400"></p>
+      <p data-free class="mt-1 font-mono text-xs text-slate-500"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+  import {
+    toIp, prefixToMask, blockSize, networkOf, usableHosts, prefixForHosts, parseCidr, toCidrBlocks, fmt,
+  } from '@/lib/ipv4';
+
+  type Need = { name: string; hosts: number };
+
+  document.querySelectorAll<HTMLElement>('[data-vlsm]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const locale = root.dataset.lang === 'en' ? 'en-US' : 'fr-FR';
+    const $ = <E extends HTMLElement>(sel: string) => root.querySelector<E>(sel)!;
+    const num = (n: number) => n.toLocaleString(locale);
+    const percent = (ratio: number) => new Intl.NumberFormat(locale, { style: 'percent' }).format(ratio);
+
+    const baseInput = $<HTMLInputElement>('[data-base]');
+    const p2p = $<HTMLInputElement>('[data-p2p]');
+    const rows = $<HTMLUListElement>('[data-rows]');
+    const template = $<HTMLTemplateElement>('[data-row-template]');
+    const errorEl = $('[data-error]');
+    const noticeEl = $('[data-notice]');
+    const result = $('[data-result]');
+    const tbody = $('[data-tbody]');
+    let csv = '';
+
+    function addRow(need: Need = { name: '', hosts: NaN }) {
+      const li = template.content.firstElementChild!.cloneNode(true) as HTMLLIElement;
+      li.querySelector<HTMLInputElement>('[data-name]')!.value = need.name;
+      if (!Number.isNaN(need.hosts)) li.querySelector<HTMLInputElement>('[data-hosts]')!.value = String(need.hosts);
+      li.querySelector('[data-remove]')!.addEventListener('click', () => { li.remove(); update(); });
+      rows.append(li);
+      return li;
+    }
+
+    const readNeeds = (): Need[] =>
+      [...rows.querySelectorAll('li')]
+        .map((li, i) => ({
+          name: li.querySelector<HTMLInputElement>('[data-name]')!.value.trim() || fmt(t.unnamed, { n: i + 1 }),
+          hosts: Math.floor(Number(li.querySelector<HTMLInputElement>('[data-hosts]')!.value)),
+        }))
+        .filter((n) => Number.isFinite(n.hosts) && n.hosts >= 1);
+
+    function fail(message: string) {
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+      result.hidden = true;
+    }
+
+    // État dans l'URL (#b=…&p2p=1&n=Nom:60,…) pour partager un plan
+    function saveHash(needs: Need[]) {
+      const params = new URLSearchParams({ b: baseInput.value.trim() });
+      if (p2p.checked) params.set('p2p', '1');
+      params.set('n', needs.map((n) => `${n.name.replace(/[,:]/g, ' ')}:${n.hosts}`).join(','));
+      history.replaceState(null, '', `#${params}`);
+    }
+
+    function loadHash() {
+      const params = new URLSearchParams(location.hash.slice(1));
+      if (!params.has('b')) return false;
+      baseInput.value = params.get('b')!;
+      p2p.checked = params.get('p2p') === '1';
+      (params.get('n') ?? '').split(',').filter(Boolean).forEach((item) => {
+        const i = item.lastIndexOf(':');
+        addRow({ name: item.slice(0, i), hosts: Number(item.slice(i + 1)) });
+      });
+      return true;
+    }
+
+    function update() {
+      errorEl.hidden = true;
+      noticeEl.hidden = true;
+
+      const parsed = parseCidr(baseInput.value);
+      if (!parsed) return fail(t.errBase);
+      const { prefix } = parsed;
+      const base = networkOf(parsed.ip, prefix);
+      if (base !== parsed.ip) {
+        noticeEl.textContent = fmt(t.normalized, { input: baseInput.value.trim(), base: `${toIp(base)}/${prefix}` });
+        noticeEl.hidden = false;
+      }
+
+      const needs = readNeeds();
+      saveHash(needs);
+      if (needs.length === 0) return fail(t.empty);
+
+      // Du plus grand au plus petit : chaque bloc tombe naturellement sur une frontière alignée
+      const sized = needs.map((need, order) => ({ ...need, order, prefix: prefixForHosts(need.hosts, p2p.checked) }));
+      const tooBig = sized.find((n) => n.prefix === null);
+      if (tooBig) return fail(fmt(t.errHosts, { name: tooBig.name }));
+      sized.sort((a, b) => a.prefix! - b.prefix! || a.order - b.order);
+
+      const total = blockSize(prefix);
+      const needed = sized.reduce((sum, n) => sum + blockSize(n.prefix!), 0);
+      if (needed > total) {
+        const min = 32 - Math.ceil(Math.log2(needed));
+        return fail(fmt(t.errTooBig, { needed: num(needed), prefix, total: num(total), min }));
+      }
+
+      let cursor = base;
+      const lines = [[t.colName, t.colNeed, t.colNetwork, t.colMask, t.colRange, t.colBroadcast, t.colUsage]];
+      const trs = sized.map((n) => {
+        const p = n.prefix!;
+        const network = cursor;
+        const broadcast = network + blockSize(p) - 1;
+        cursor += blockSize(p);
+
+        const first = p >= 31 ? network : network + 1;
+        const last = p >= 31 ? broadcast : broadcast - 1;
+        const capacity = usableHosts(p);
+        const cells = [
+          n.name,
+          num(n.hosts),
+          `${toIp(network)}/${p}`,
+          toIp(prefixToMask(p)),
+          first === last ? toIp(first) : `${toIp(first)} – ${toIp(last)}`,
+          p >= 31 ? '—' : toIp(broadcast),
+          `${num(n.hosts)}/${num(capacity)} (${percent(n.hosts / capacity)})`,
+        ];
+        lines.push(cells);
+
+        const tr = document.createElement('tr');
+        cells.forEach((value, i) => {
+          const td = document.createElement('td');
+          td.className = i === 0 ? 'px-3 py-2 font-sans text-sm font-medium' : i === 2 ? 'px-3 py-2 text-sky-600 dark:text-sky-400' : 'px-3 py-2';
+          td.textContent = value;
+          tr.append(td);
+        });
+        return tr;
+      });
+      tbody.replaceChildren(...trs);
+      csv = lines.map((cells) => cells.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
+
+      $('[data-summary]').textContent = fmt(t.summary, {
+        used: num(needed), total: num(total), percent: percent(needed / total),
+      });
+      const free = toCidrBlocks(cursor, base + total).map((b) => `${toIp(b.network)}/${b.prefix}`);
+      $('[data-free]').textContent = free.length ? fmt(t.free, { blocks: free.join(', ') }) : t.full;
+      result.hidden = false;
+    }
+
+    async function copyText(button: HTMLButtonElement, text: string) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const label = button.textContent;
+        button.textContent = t.copied;
+        setTimeout(() => (button.textContent = label), 1500);
+      } catch {}
+    }
+
+    if (!loadHash()) JSON.parse(root.dataset.defaults!).forEach((need: Need) => addRow(need));
+
+    root.addEventListener('input', update);
+    $('[data-add]').addEventListener('click', () => {
+      addRow().querySelector<HTMLInputElement>('[data-name]')!.focus();
+    });
+    $<HTMLButtonElement>('[data-copy]').addEventListener('click', (e) => copyText(e.currentTarget as HTMLButtonElement, csv));
+    $<HTMLButtonElement>('[data-share]').addEventListener('click', (e) => copyText(e.currentTarget as HTMLButtonElement, location.href));
+    update();
+  });
+</script>

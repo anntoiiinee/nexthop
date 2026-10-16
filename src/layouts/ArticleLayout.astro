@@ -2,8 +2,9 @@
 import BaseLayout from './BaseLayout.astro';
 import type { CollectionEntry } from 'astro:content';
 import type { MarkdownHeading } from 'astro';
-import { t, formatDate, type Lang } from '../i18n/ui';
-import { levelColors } from '../lib/levels';
+import { t, formatDate, type Lang } from '@/i18n/ui';
+import { levelColors } from '@/lib/levels';
+import SupportCard from '@/components/SupportCard.astro';
 
 interface Props {
   post: CollectionEntry<'tutorials'> | CollectionEntry<'courses'>;
@@ -42,11 +43,12 @@ const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
       <div class="prose prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-a:text-sky-600 dark:prose-a:text-sky-400">
         <slot />
       </div>
+      <SupportCard lang={lang} title={title} />
       <slot name="after" />
     </article>
 
     {toc.length > 0 && (
-      <aside class="hidden lg:block">
+      <aside class="hidden lg:block" data-pagefind-ignore>
         <nav class="sticky top-24 text-sm">
           <p class="mb-3 font-semibold text-slate-900 dark:text-white">{t(lang, 'article.toc')}</p>
           <ul class="space-y-2 border-l border-slate-200 dark:border-slate-800">

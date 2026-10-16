@@ -18,16 +18,7 @@ export default defineConfig({
   },
 
   integrations: [
-    expressiveCode({
-      themes: ['github-dark', 'github-light'],
-      styleOverrides: {
-        borderRadius: '0.5rem',
-        codeFontFamily: "'JetBrains Mono Variable', ui-monospace, monospace",
-      },
-      defaultProps: {
-        wrap: false
-      },
-    }),
+    expressiveCode(), // options dans ec.config.mjs
     mdx(),
     sitemap({
       i18n: {

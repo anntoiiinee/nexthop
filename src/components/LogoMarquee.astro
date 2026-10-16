@@ -1,0 +1,116 @@
+---
+// Carrousel défilant des constructeurs et outils abordés sur le blog (accueil).
+// Deux rangées en sens opposés, pause au survol, statique si l'utilisateur réduit les animations.
+import type { Lang } from '@/i18n/ui';
+import { vendors, stackTools, type Brand } from '@/data/brands';
+import { getTutorials, techsOf, techUrl } from '@/lib/content';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const posts = await getTutorials(lang);
+const countOf = (brand: Brand) => posts.filter((p) => techsOf(p).includes(brand.id)).length;
+
+const copy = {
+  fr: {
+    title: 'Les technologies abordées',
+    vendors: 'Constructeurs',
+    tools: 'Automatisation et supervision',
+    hint: 'Cliquez sur une technologie pour voir les tutoriels associés.',
+    count: (n: number) => `${n} tutoriel${n > 1 ? 's' : ''}`,
+    note: "Les marques citées appartiennent à leurs propriétaires respectifs. Next Hop n'est affilié à aucun constructeur.",
+  },
+  en: {
+    title: 'Technologies covered',
+    vendors: 'Vendors',
+    tools: 'Automation and monitoring',
+    hint: 'Click a technology to see the related tutorials.',
+    count: (n: number) => `${n} tutorial${n > 1 ? 's' : ''}`,
+    note: 'All trademarks belong to their respective owners. Next Hop is not affiliated with any vendor.',
+  },
+}[lang];
+
+const rows: { label: string; items: Brand[]; reverse?: boolean }[] = [
+  { label: copy.vendors, items: vendors },
+  { label: copy.tools, items: stackTools, reverse: true },
+];
+---
+<section data-pagefind-ignore class="border-y border-slate-200 py-10 dark:border-slate-800">
+  <h2 class="px-4 text-center font-mono text-xs font-medium uppercase tracking-widest text-slate-500">{copy.title}</h2>
+
+  <div class="mt-6 space-y-4">
+    {rows.map((row) => (
+      <div class="marquee group" role="region" aria-label={row.label}>
+        <!-- La liste est doublée pour une boucle continue ; la copie est masquée aux lecteurs d'écran -->
+        <div class:list={['marquee-track', row.reverse && 'marquee-reverse']}>
+          {[false, true].map((duplicate) => (
+            <ul class="flex shrink-0 items-center gap-4 pr-4" aria-hidden={duplicate ? 'true' : undefined}>
+              {row.items.map((brand) => {
+                const count = countOf(brand);
+                return (
+                  <li class="shrink-0">
+                    <a
+                      href={techUrl(lang, brand.id)}
+                      tabindex={duplicate ? -1 : undefined}
+                      title={count > 0 ? `${brand.name} · ${copy.count(count)}` : brand.name}
+                      class="flex h-12 items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-4 text-slate-500 transition hover:border-sky-400 hover:text-slate-900 focus-visible:border-sky-400 focus-visible:text-slate-900 focus-visible:outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:text-white dark:focus-visible:text-white"
+                    >
+                      {brand.path && (
+                        <svg viewBox={brand.viewBox ?? '0 0 24 24'} class="size-5 shrink-0" fill="currentColor" aria-hidden="true">
+                          {[brand.path].flat().map((d) => <path d={d} />)}
+                        </svg>
+                      )}
+                      <span class="whitespace-nowrap text-sm font-semibold tracking-tight">{brand.name}</span>
+                      {count > 0 && (
+                        <span class="rounded-full bg-sky-100 px-1.5 font-mono text-[10px] font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">{count}</span>
+                      )}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <p class="mx-auto mt-6 max-w-2xl px-4 text-center text-sm text-slate-500">{copy.hint}</p>
+  <p class="mx-auto mt-1 max-w-2xl px-4 text-center text-xs text-slate-400 dark:text-slate-500">{copy.note}</p>
+</section>
+
+<style>
+  .marquee {
+    overflow: hidden;
+    /* Fondu sur les bords */
+    mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+  }
+  .marquee-track {
+    display: flex;
+    width: max-content;
+    animation: marquee 40s linear infinite;
+  }
+  .marquee-reverse {
+    animation-direction: reverse;
+  }
+  .marquee:hover .marquee-track,
+  .marquee:focus-within .marquee-track {
+    animation-play-state: paused;
+  }
+  @keyframes marquee {
+    to { transform: translateX(-50%); }
+  }
+
+  /* Animations réduites : pas de défilement, les logos passent à la ligne */
+  @media (prefers-reduced-motion: reduce) {
+    .marquee { mask-image: none; }
+    .marquee-track {
+      animation: none;
+      width: auto;
+      justify-content: center;
+      padding-inline: 1rem;
+    }
+    .marquee-track > ul { flex-wrap: wrap; justify-content: center; row-gap: 1rem; }
+    .marquee-track > ul[aria-hidden] { display: none; }
+  }
+</style>

@@ -1,0 +1,7 @@
+---
+import ToolPage from '@/components/ToolPage.astro';
+import { getToolPaths } from '@/data/tools';
+
+export const getStaticPaths = () => getToolPaths();
+---
+<ToolPage lang="en" slug={Astro.params.tool} />

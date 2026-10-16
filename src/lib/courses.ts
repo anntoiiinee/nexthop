@@ -1,5 +1,5 @@
 import { getCollection, type CollectionEntry } from 'astro:content';
-import { routes, type Lang } from '../i18n/ui';
+import { routes, type Lang } from '@/i18n/ui';
 
 export type CourseEntry = CollectionEntry<'courses'>;
 export interface Course {

@@ -1,7 +1,10 @@
 ---
-import BaseLayout from '../layouts/BaseLayout.astro';
-import { routes, type Lang } from '../i18n/ui';
-import { profile } from '../data/profile';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { Image } from 'astro:assets';
+import { routes, type Lang } from '@/i18n/ui';
+import { profile } from '@/data/profile';
+import { coffeeUrl, coffeeIcon } from '@/lib/support';
+import { t } from '@/i18n/ui';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
@@ -60,7 +63,7 @@ const linkBtn = 'rounded-lg border border-slate-300 px-4 py-2 text-sm font-mediu
     <!-- En-tête -->
     <p class="font-mono text-sm text-slate-500"><span class="text-sky-500">$</span> whoami</p>
     <div class="mt-6 flex flex-col gap-6 sm:flex-row sm:items-center">
-      <img src={profile.avatar} alt={profile.name} width="112" height="112" class="size-28 rounded-full ring-4 ring-sky-500/20" />
+      <Image src={profile.avatar} alt={profile.name} width={224} height={224} loading="eager" class="size-28 rounded-full ring-4 ring-sky-500/20" />
       <div>
         <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{profile.name}</h1>
         <p class="mt-2 text-lg text-slate-600 dark:text-slate-400">{copy.role}</p>
@@ -68,6 +71,12 @@ const linkBtn = 'rounded-lg border border-slate-300 px-4 py-2 text-sm font-mediu
           <a href={profile.links.linkedin} target="_blank" rel="noopener" class={linkBtn}>LinkedIn</a>
           <a href={profile.links.github} target="_blank" rel="noopener" class={linkBtn}>GitHub</a>
           <a href={profile.links.resume} target="_blank" rel="noopener" class={linkBtn}>{copy.resume} ↗</a>
+          {coffeeUrl && (
+            <a href={coffeeUrl} target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-lg bg-[#FFDD00] px-4 py-2 text-sm font-semibold text-slate-900 transition hover:brightness-95">
+              <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d={coffeeIcon} /></svg>
+              {t(lang, 'support.coffee')}
+            </a>
+          )}
         </div>
       </div>
     </div>

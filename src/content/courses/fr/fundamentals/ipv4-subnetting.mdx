@@ -1,19 +1,25 @@
 ---
 title: "Adressage IPv4 et subnetting"
-description: "Masques, préfixes CIDR et découpage en sous-réseaux, avec un calculateur pour s'entraîner."
+description: "Masques, préfixes CIDR et découpage en sous-réseaux, avec un calculateur en ligne pour s'entraîner."
 pubDate: 2026-10-15
 level: beginner
 tags: [ipv4, subnetting]
 order: 5
 ---
 
-import SubnetCalculator from '../../../../components/SubnetCalculator.astro';
-
 ## À vous de jouer
 
-Modifiez l'adresse ou le préfixe et observez comment évoluent l'adresse réseau,
-le broadcast et la frontière entre bits réseau et bits hôte.
+Ouvrez le [calculateur de sous-réseau](/outils/subnet-calculator) dans un autre onglet,
+modifiez l'adresse ou le préfixe <Term id="cidr" /> et observez comment évoluent
+l'adresse réseau, le broadcast et la frontière entre bits réseau et bits hôte.
 
-<SubnetCalculator lang="fr" />
+Essayez par exemple `10.0.1.0/31`, le préfixe utilisé pour les liens entre spines et leafs,
+puis une adresse privée comme `192.168.1.10/24` : ces plages ne sont pas routées sur Internet,
+et c'est le <Term id="nat" /> de votre box qui leur permet d'y accéder.
 
-Essayez par exemple `10.0.1.0/31`, le préfixe utilisé pour les liens entre spines et leafs.
+## Pour aller plus loin
+
+- Entraînez-vous avec le [quiz de subnetting](/outils/subnetting-quiz) : chaque réponse est
+  accompagnée du raisonnement, avec la méthode du nombre magique.
+- Découpez un bloc selon des besoins réels avec le [découpeur VLSM](/outils/vlsm-planner),
+  par exemple un `/24` pour des utilisateurs, un Wi-Fi invités, des serveurs et un lien entre routeurs.

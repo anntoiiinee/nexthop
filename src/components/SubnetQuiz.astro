@@ -1,0 +1,324 @@
+---
+import type { Lang } from '@/i18n/ui';
+
+interface Props { lang?: Lang; }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Quiz de subnetting',
+    levels: { beginner: 'Débutant', intermediate: 'Intermédiaire', advanced: 'Avancé' },
+    score: 'Score',
+    streak: 'Série',
+    best: 'Record',
+    answer: 'Votre réponse',
+    check: 'Valider',
+    skip: 'Passer',
+    next: 'Question suivante',
+    enterHint: 'Entrée pour valider, puis Entrée pour la question suivante.',
+    correct: 'Bonne réponse !',
+    wrong: 'Pas tout à fait. La bonne réponse était {answer}.',
+    skipped: 'Question passée. La réponse était {answer}.',
+    explanation: 'Le raisonnement',
+    binary: 'Vue binaire de {ip}',
+    q: {
+      network: "Quelle est l'adresse réseau de {cidr} ?",
+      broadcast: "Quelle est l'adresse de broadcast de {cidr} ?",
+      first: 'Quelle est la première adresse utilisable de {cidr} ?',
+      last: 'Quelle est la dernière adresse utilisable de {cidr} ?',
+      hosts: "Combien d'adresses utilisables contient {cidr} ?",
+      mask: 'Quel est le masque décimal d’un /{prefix} ?',
+      wildcard: 'Quel est le wildcard (masque inverse) d’un /{prefix} ?',
+    },
+    placeholder: { ip: 'ex. 192.168.1.0', count: 'ex. 62' },
+    steps: {
+      maskIs: 'Le /{prefix} correspond au masque {mask}.',
+      magic: "L'octet intéressant est le {pos}ᵉ : 256 − {octet} = {magic}, les réseaux avancent de {magic} en {magic}. {value} est entre {low} et {high}.",
+      boundary: 'Le /{prefix} tombe sur une frontière d’octet : on garde les {kept} premiers octets, les autres passent à 0 pour le réseau et à 255 pour le broadcast.',
+      network: 'Réseau : {network}.',
+      broadcast: 'Broadcast : {broadcast} (dernière adresse du bloc).',
+      first: 'Première adresse = réseau + 1 = {first}.',
+      last: 'Dernière adresse = broadcast − 1 = {last}.',
+      hosts: '{hostbits} bits hôte : 2^{hostbits} − 2 = {hosts} (on retire le réseau et le broadcast).',
+      mask: '{prefix} bits à 1 puis {hostbits} bits à 0 : {mask}.',
+      wildcard: '255.255.255.255 − {mask} = {wildcard}.',
+    },
+  },
+  en: {
+    title: 'Subnetting quiz',
+    levels: { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' },
+    score: 'Score',
+    streak: 'Streak',
+    best: 'Best',
+    answer: 'Your answer',
+    check: 'Check',
+    skip: 'Skip',
+    next: 'Next question',
+    enterHint: 'Press Enter to check, then Enter again for the next question.',
+    correct: 'Correct!',
+    wrong: 'Not quite. The right answer was {answer}.',
+    skipped: 'Question skipped. The answer was {answer}.',
+    explanation: 'How to get there',
+    binary: 'Binary view of {ip}',
+    q: {
+      network: 'What is the network address of {cidr}?',
+      broadcast: 'What is the broadcast address of {cidr}?',
+      first: 'What is the first usable address of {cidr}?',
+      last: 'What is the last usable address of {cidr}?',
+      hosts: 'How many usable addresses does {cidr} contain?',
+      mask: 'What is the dotted-decimal mask of a /{prefix}?',
+      wildcard: 'What is the wildcard (inverse mask) of a /{prefix}?',
+    },
+    placeholder: { ip: 'e.g. 192.168.1.0', count: 'e.g. 62' },
+    steps: {
+      maskIs: 'A /{prefix} means the mask {mask}.',
+      magic: 'The interesting octet is #{pos}: 256 − {octet} = {magic}, so networks go up in steps of {magic}. {value} sits between {low} and {high}.',
+      boundary: 'A /{prefix} falls on an octet boundary: keep the first {kept} octets, set the others to 0 for the network and 255 for the broadcast.',
+      network: 'Network: {network}.',
+      broadcast: 'Broadcast: {broadcast} (last address of the block).',
+      first: 'First address = network + 1 = {first}.',
+      last: 'Last address = broadcast − 1 = {last}.',
+      hosts: '{hostbits} host bits: 2^{hostbits} − 2 = {hosts} (minus the network and broadcast addresses).',
+      mask: '{prefix} bits set to 1, then {hostbits} bits set to 0: {mask}.',
+      wildcard: '255.255.255.255 − {mask} = {wildcard}.',
+    },
+  },
+}[lang];
+
+const levels = ['beginner', 'intermediate', 'advanced'] as const;
+const btn = 'rounded-full border border-slate-300 px-3 py-1 text-xs font-medium transition hover:border-sky-400 dark:border-slate-700 aria-pressed:border-slate-900 aria-pressed:bg-slate-900 aria-pressed:text-white dark:aria-pressed:border-white dark:aria-pressed:bg-white dark:aria-pressed:text-slate-900';
+---
+<div
+  data-subnet-quiz
+  data-lang={lang}
+  data-i18n={JSON.stringify(copy)}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.title}</span>
+    <div class="flex flex-wrap gap-2">
+      {levels.map((l, i) => (
+        <button type="button" data-level={l} aria-pressed={i === 0 ? 'true' : 'false'} class={btn}>{copy.levels[l]}</button>
+      ))}
+    </div>
+  </div>
+
+  <p class="mt-4 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-slate-500" aria-live="polite">
+    <span>{copy.score} <span data-score class="font-semibold text-slate-900 dark:text-white">0/0</span></span>
+    <span>{copy.streak} <span data-streak class="font-semibold text-slate-900 dark:text-white">0</span></span>
+    <span>{copy.best} <span data-best class="font-semibold text-slate-900 dark:text-white">0</span></span>
+  </p>
+
+  <p data-question class="mt-6 text-lg font-semibold text-slate-900 dark:text-white"></p>
+
+  <form data-form class="mt-4 flex flex-col gap-2 sm:flex-row">
+    <input
+      type="text"
+      data-answer
+      aria-label={copy.answer}
+      spellcheck="false"
+      autocomplete="off"
+      inputmode="decimal"
+      class="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+    />
+    <div class="flex gap-2">
+      <button type="submit" data-submit class="flex-1 rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-600 sm:flex-none">{copy.check}</button>
+      <button type="button" data-skip class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400">{copy.skip}</button>
+    </div>
+  </form>
+  <p class="mt-2 text-xs text-slate-500">{copy.enterHint}</p>
+
+  <div data-feedback hidden class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+    <p data-verdict class="font-semibold" aria-live="polite"></p>
+    <p class="mt-4 text-xs text-slate-500">{copy.explanation}</p>
+    <ol data-steps class="mt-2 space-y-1.5 text-sm text-slate-600 dark:text-slate-400"></ol>
+    <p data-binary-label class="mt-4 text-xs text-slate-500"></p>
+    <p data-binary class="mt-1 break-all font-mono text-sm tracking-wider"></p>
+  </div>
+</div>
+
+<script>
+  import {
+    toInt, toIp, prefixToMask, networkOf, broadcastOf, usableHosts, binaryHtml, fmt,
+  } from '@/lib/ipv4';
+
+  type Level = 'beginner' | 'intermediate' | 'advanced';
+  type Kind = 'network' | 'broadcast' | 'first' | 'last' | 'hosts' | 'mask' | 'wildcard';
+
+  const LEVELS: Record<Level, { min: number; kinds: Kind[] }> = {
+    beginner: { min: 24, kinds: ['network', 'broadcast', 'hosts', 'mask'] },
+    intermediate: { min: 16, kinds: ['network', 'broadcast', 'first', 'last', 'hosts', 'mask'] },
+    advanced: { min: 8, kinds: ['network', 'broadcast', 'first', 'last', 'hosts', 'mask', 'wildcard'] },
+  };
+
+  const rand = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
+  const pick = <T,>(items: T[]) => items[rand(0, items.length - 1)];
+
+  // Adresses privées RFC 1918 : 10/8 pour les grands préfixes, sinon au hasard
+  function randomIp(prefix: number) {
+    const range = prefix < 16 ? 0 : rand(0, 2);
+    const [a, b] = range === 0 ? [10, rand(0, 255)] : range === 1 ? [172, rand(16, 31)] : [192, 168];
+    return toInt(`${a}.${b}.${rand(0, 255)}.${rand(1, 254)}`)!;
+  }
+
+  const BEST_KEY = 'subnet-quiz-best';
+  const readBest = () => { try { return Number(localStorage.getItem(BEST_KEY)) || 0; } catch { return 0; } };
+  const saveBest = (n: number) => { try { localStorage.setItem(BEST_KEY, String(n)); } catch {} };
+
+  document.querySelectorAll<HTMLElement>('[data-subnet-quiz]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const locale = root.dataset.lang === 'en' ? 'en-US' : 'fr-FR';
+    const $ = <E extends HTMLElement>(sel: string) => root.querySelector<E>(sel)!;
+
+    const questionEl = $('[data-question]');
+    const form = $<HTMLFormElement>('[data-form]');
+    const input = $<HTMLInputElement>('[data-answer]');
+    const submit = $<HTMLButtonElement>('[data-submit]');
+    const skip = $<HTMLButtonElement>('[data-skip]');
+    const feedback = $('[data-feedback]');
+    const verdict = $('[data-verdict]');
+    const steps = $('[data-steps]');
+    const levelButtons = root.querySelectorAll<HTMLButtonElement>('[data-level]');
+
+    let level: Level = 'beginner';
+    let answered = false;
+    let score = 0, total = 0, streak = 0, best = readBest();
+    let current: { kind: Kind; ip: number; prefix: number; expected: number; display: string; steps: string[] };
+
+    const updateStats = () => {
+      $('[data-score]').textContent = `${score}/${total}`;
+      $('[data-streak]').textContent = String(streak);
+      $('[data-best]').textContent = String(best);
+    };
+
+    function build(kind: Kind, ip: number, prefix: number) {
+      const mask = prefixToMask(prefix);
+      const network = networkOf(ip, prefix);
+      const broadcast = broadcastOf(ip, prefix);
+      const hostbits = 32 - prefix;
+      const v = {
+        prefix, hostbits,
+        mask: toIp(mask),
+        wildcard: toIp(~mask >>> 0),
+        network: toIp(network),
+        broadcast: toIp(broadcast),
+        first: toIp(network + 1),
+        last: toIp(broadcast - 1),
+        hosts: usableHosts(prefix).toLocaleString(locale),
+      };
+
+      const expected = {
+        network, broadcast, first: network + 1, last: broadcast - 1,
+        hosts: usableHosts(prefix), mask, wildcard: ~mask >>> 0,
+      }[kind];
+
+      const lines: string[] = [];
+      if (kind === 'hosts') lines.push(fmt(t.steps.hosts, v));
+      else if (kind === 'mask') lines.push(fmt(t.steps.mask, v));
+      else if (kind === 'wildcard') lines.push(fmt(t.steps.maskIs, v), fmt(t.steps.wildcard, v));
+      else {
+        lines.push(fmt(t.steps.maskIs, v));
+        if (prefix % 8 === 0) {
+          lines.push(fmt(t.steps.boundary, { prefix, kept: prefix / 8 }));
+        } else {
+          const index = Math.floor(prefix / 8); // octet intéressant, base 0
+          const magic = 2 ** (8 - (prefix % 8));
+          const value = (ip >>> (24 - index * 8)) & 255;
+          const low = Math.floor(value / magic) * magic;
+          lines.push(fmt(t.steps.magic, { pos: index + 1, octet: 256 - magic, magic, value, low, high: low + magic - 1 }));
+        }
+        lines.push(fmt(t.steps.network, v));
+        if (kind === 'broadcast' || kind === 'last') lines.push(fmt(t.steps.broadcast, v));
+        if (kind === 'first') lines.push(fmt(t.steps.first, v));
+        if (kind === 'last') lines.push(fmt(t.steps.last, v));
+      }
+
+      const display = kind === 'hosts' ? v.hosts : toIp(expected);
+      return { kind, ip, prefix, expected, display, steps: lines };
+    }
+
+    function nextQuestion(focus = true) {
+      const { min, kinds } = LEVELS[level];
+      const prefix = rand(min, 30);
+      const kind = pick(kinds);
+      const ip = randomIp(prefix);
+      current = build(kind, ip, prefix);
+
+      const cidr = `${toIp(ip)}/${prefix}`;
+      questionEl.textContent = fmt(t.q[kind], { cidr, prefix });
+      input.placeholder = kind === 'hosts' ? t.placeholder.count : t.placeholder.ip;
+      input.inputMode = kind === 'hosts' ? 'numeric' : 'decimal';
+      input.value = '';
+      input.readOnly = false;
+      submit.textContent = t.check;
+      skip.hidden = false;
+      feedback.hidden = true;
+      answered = false;
+      if (focus) input.focus({ preventScroll: true });
+    }
+
+    function isCorrect(raw: string) {
+      if (current.kind === 'hosts') {
+        const digits = raw.replace(/[\s.,_  ]/g, '');
+        return /^\d+$/.test(digits) && Number(digits) === current.expected;
+      }
+      return toInt(raw) === current.expected;
+    }
+
+    function reveal(result: 'correct' | 'wrong' | 'skipped') {
+      answered = true;
+      total++;
+      if (result === 'correct') {
+        score++;
+        streak++;
+        if (streak > best) { best = streak; saveBest(best); }
+      } else {
+        streak = 0;
+      }
+      updateStats();
+
+      verdict.textContent = result === 'correct' ? t.correct : fmt(t[result], { answer: current.display });
+      verdict.className = result === 'correct'
+        ? 'font-semibold text-emerald-600 dark:text-emerald-400'
+        : 'font-semibold text-rose-600 dark:text-rose-400';
+
+      steps.replaceChildren(...current.steps.map((line) => {
+        const li = document.createElement('li');
+        li.className = 'flex gap-2';
+        li.innerHTML = '<span class="text-sky-500">▸</span>';
+        const span = document.createElement('span');
+        span.textContent = line;
+        li.append(span);
+        return li;
+      }));
+
+      $('[data-binary-label]').textContent = fmt(t.binary, { ip: toIp(current.ip) });
+      $('[data-binary]').innerHTML = binaryHtml(current.ip, current.prefix);
+
+      input.readOnly = true;
+      submit.textContent = t.next;
+      skip.hidden = true;
+      feedback.hidden = false;
+      submit.focus({ preventScroll: true });
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (answered) return nextQuestion();
+      if (input.value.trim() === '') return input.focus();
+      reveal(isCorrect(input.value) ? 'correct' : 'wrong');
+    });
+    skip.addEventListener('click', () => reveal('skipped'));
+
+    levelButtons.forEach((button) =>
+      button.addEventListener('click', () => {
+        level = button.dataset.level as Level;
+        levelButtons.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+        nextQuestion();
+      })
+    );
+
+    updateStats();
+    nextQuestion(false); // pas de focus au chargement : la page ne doit pas défiler
+  });
+</script>

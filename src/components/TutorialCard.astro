@@ -1,8 +1,8 @@
 ---
 import type { CollectionEntry } from 'astro:content';
-import { t, formatDate, type Lang } from '../i18n/ui';
-import { levelColors } from '../lib/levels';
-import { slugOf, tutorialUrl } from '../lib/content';
+import { t, formatDate, type Lang } from '@/i18n/ui';
+import { levelColors } from '@/lib/levels';
+import { slugOf, tutorialUrl } from '@/lib/content';
 
 interface Props {
   post: CollectionEntry<'tutorials'>;

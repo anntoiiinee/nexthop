@@ -1,0 +1,45 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { getTool, toolUrl } from '@/data/tools';
+
+interface Props { lang: Lang; slug: string; }
+const { lang, slug } = Astro.props;
+
+const tool = getTool(slug);
+if (!tool) throw new Error(`Outil inconnu : "${slug}" (voir src/data/tools.ts)`);
+
+const Tool = tool.component;
+const learnMore = tool.learnMore?.[lang];
+const alternates = { fr: toolUrl('fr', slug), en: toolUrl('en', slug) };
+---
+<BaseLayout title={`${tool.title[lang]} | Next Hop`} description={tool.description[lang]} lang={lang} alternates={alternates}>
+  <div class="mx-auto max-w-4xl px-4 py-16">
+    <a href={routes.tools[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
+      ← {t(lang, 'tools.back')}
+    </a>
+
+    <h1 class="mt-6 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{tool.title[lang]}</h1>
+    <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{tool.description[lang]}</p>
+
+    <Tool lang={lang} />
+
+    <section class="mt-12">
+      <h2 class="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{t(lang, 'tools.howto')}</h2>
+      <ul class="mt-4 space-y-2 text-slate-600 dark:text-slate-400">
+        {tool.howto[lang].map((step) => (
+          <li class="flex gap-2"><span class="text-sky-500">▸</span><span>{step}</span></li>
+        ))}
+      </ul>
+    </section>
+
+    {learnMore && (
+      <a
+        href={learnMore}
+        class="mt-10 inline-block rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400"
+      >
+        {t(lang, 'tools.learn')} →
+      </a>
+    )}
+  </div>
+</BaseLayout>

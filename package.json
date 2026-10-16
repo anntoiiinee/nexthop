@@ -5,10 +5,9 @@
   "engines": {
     "node": ">=22.22.0"
   },
-  "build": "astro build && pagefind --site dist",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && pagefind --site dist",
     "preview": "astro preview",
     "astro": "astro"
   },

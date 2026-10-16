@@ -1,0 +1,49 @@
+---
+// Terme du jour : une entrée du glossaire, qui change chaque jour.
+// Le terme du jour du build est affiché sans JavaScript ; le script affiche celui du jour réel.
+import type { Lang } from '@/i18n/ui';
+import { glossary } from '@/data/glossary';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Le terme du jour',
+    hint: 'Dans les articles, les termes',
+    dotted: 'soulignés en pointillés',
+    hintEnd: 'affichent leur définition au survol.',
+  },
+  en: {
+    title: 'Term of the day',
+    hint: 'In articles,',
+    dotted: 'dotted-underlined terms',
+    hintEnd: 'show their definition on hover.',
+  },
+}[lang];
+
+const entries = Object.values(glossary);
+const dayIndex = (date: Date) => Math.floor(date.getTime() / 86_400_000) % entries.length;
+const buildIndex = dayIndex(new Date());
+---
+<div data-totd class="rounded-2xl border border-slate-200 bg-white p-8 dark:border-slate-800 dark:bg-slate-950">
+  <p class="font-mono text-xs font-medium uppercase tracking-widest text-sky-600 dark:text-sky-400">{copy.title}</p>
+  {entries.map((entry, i) => (
+    <div data-totd-item hidden={i !== buildIndex}>
+      <p class="mt-4 font-mono text-4xl font-bold text-slate-900 dark:text-white">{entry.term}</p>
+      {'expansion' in entry && <p class="mt-1 font-medium text-slate-500">{entry.expansion}</p>}
+      <p class="mt-4 text-slate-600 dark:text-slate-400">{entry.definition[lang]}</p>
+    </div>
+  ))}
+  <p class="mt-6 border-t border-slate-200 pt-4 text-sm text-slate-500 dark:border-slate-800">
+    {copy.hint} <span class="underline decoration-sky-500 decoration-dotted decoration-2 underline-offset-4">{copy.dotted}</span> {copy.hintEnd}
+  </p>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-totd]').forEach((root) => {
+    const items = root.querySelectorAll<HTMLElement>('[data-totd-item]');
+    const today = Math.floor(Date.now() / 86_400_000) % items.length;
+    items.forEach((item, i) => (item.hidden = i !== today));
+  });
+</script>

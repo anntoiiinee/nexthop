@@ -1,10 +1,18 @@
+// Photo locale, optimisée au build par Astro (WebP, bonnes dimensions).
+// Pour la changer : remplacer src/assets/avatar.png en gardant le même nom.
+import avatar from '@/assets/avatar.png';
+
 export const profile = {
   name: 'Antoine Lecarpentier',
-  avatar: 'https://avatars.githubusercontent.com/u/118256978?v=4',
+  avatar,
   links: {
     linkedin: 'https://www.linkedin.com/in/antoine-lecarpentier-64b292183',
     github: 'https://github.com/anntoiiinee',
     resume: 'https://resume.alcpt.network',
+    repo: 'https://github.com/anntoiiinee/nexthop',
+    // Page Buy Me a Coffee, ex. 'https://buymeacoffee.com/ton-identifiant'.
+    // Vide = aucun bouton café affiché sur le site.
+    coffee: 'https://buymeacoffee.com/anntoiiinee',
   },
   certifications: ['Arista ACE:L5', 'Arista DCE', 'Arista WAN', 'Cisco CCNP', 'Cisco CCNA'],
   stats: [
