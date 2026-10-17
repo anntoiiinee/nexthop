@@ -1,0 +1,374 @@
+---
+title: "TCP et UDP : la couche transport"
+description: "Ports et sockets, l'en-tête TCP, la poignée de main SYN, SYN-ACK, ACK, numéros de séquence et accusés de réception, fermeture FIN et RST, états de connexion, puis UDP et QUIC, avec une capture dans le lab."
+pubDate: 2026-10-17
+level: beginner
+tags: [tcp, udp, transport, troubleshooting]
+vendor: [arista, cisco]
+order: 10
+---
+
+Le chapitre précédent a acheminé des paquets d'une machine à une autre, de routeur en routeur. Mais sur
+une machine tournent des dizaines d'applications : un navigateur, un client de messagerie, un agent de
+supervision. À qui remettre chaque paquet ? Et que faire si un paquet se perd en route ? C'est le rôle de
+la **couche transport** (couche 4 du modèle OSI), avec ses deux protocoles : <Term id="tcp" /> et
+<Term id="udp" />.
+
+## Les ports : à quelle application parler
+
+L'adresse IP désigne une **machine** ; le **port**, un nombre de 0 à 65535, désigne une **application**
+sur cette machine. Un serveur web écoute sur le port 443, un serveur SSH sur le port 22. Le client, lui,
+choisit pour chaque connexion un **port éphémère**, un numéro libre pris au hasard au-dessus de 32768 (ou
+49152 sous Windows).
+
+<Topology
+  width={680}
+  height={230}
+  nodes={[
+    { id: 'pc', type: 'host', x: 110, y: 110, label: 'PC', sub: '192.168.10.10' },
+    { id: 'srv', type: 'server', x: 570, y: 110, label: 'Appli', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'srv', style: 'dashed' }]}
+  flows={[
+    { from: 'pc', to: 'srv', label: 'port 51234 → port 443 (HTTPS)', tone: 'emerald', offset: -30 },
+    { from: 'pc', to: 'srv', label: 'port 51990 → port 22 (SSH)', tone: 'sky', offset: 30 },
+  ]}
+  caption="Deux connexions entre les mêmes machines, distinguées par leurs ports. Le port de destination désigne le service, le port source est choisi par le client."
+/>
+
+Une connexion est identifiée par **cinq éléments** : protocole, adresse et port source, adresse et port
+de destination. Ce « 5-tuple » revient partout : dans les règles de firewall, dans la répartition de
+charge d'un port-channel ou d'un load balancer, dans les journaux. L'outil
+[Ports et protocoles](/outils/ports-protocols) donne les numéros des services courants.
+
+## TCP : un transport fiable
+
+IP ne promet rien : un paquet peut se perdre, arriver en double ou dans le désordre. TCP
+construit par-dessus un **flux d'octets fiable et ordonné** : ce que l'application envoie d'un côté
+arrive complet et dans l'ordre de l'autre, ou la connexion signale une erreur. Pour cela, il numérote
+chaque octet, attend des accusés de réception et retransmet ce qui manque.
+
+### L'en-tête TCP
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'Octets 0-3', fields: [
+      { label: 'Port source', sub: '16 bits', span: 16, tone: 'emerald' },
+      { label: 'Port destination', sub: '16 bits', span: 16, tone: 'emerald' },
+    ] },
+    { label: 'Octets 4-7', fields: [
+      { label: 'Numéro de séquence', sub: '32 bits · position du premier octet envoyé', span: 32, tone: 'violet' },
+    ] },
+    { label: 'Octets 8-11', fields: [
+      { label: "Numéro d'acquittement", sub: '32 bits · prochain octet attendu', span: 32, tone: 'violet' },
+    ] },
+    { label: 'Octets 12-15', fields: [
+      { label: 'Long.', sub: '4', span: 4 },
+      { label: 'Rés.', sub: '4', span: 4 },
+      { label: 'Drapeaux', sub: 'SYN ACK FIN RST PSH…', span: 8, tone: 'amber' },
+      { label: 'Fenêtre', sub: '16 bits · octets acceptés', span: 16, tone: 'sky' },
+    ] },
+    { label: 'Octets 16-19', fields: [
+      { label: 'Somme de contrôle', sub: '16 bits', span: 16 },
+      { label: 'Pointeur urgent', sub: '16 bits', span: 16 },
+    ] },
+    { label: 'Options', fields: [
+      { label: 'Options (MSS, SACK, Window Scale…)', sub: '0 à 40 octets', span: 32, dashed: true },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="L'en-tête TCP fait 20 octets sans options. Les drapeaux disent ce que transporte le segment : ouverture, accusé, fermeture, réinitialisation."
+/>
+
+Les **drapeaux** à connaître :
+
+| Drapeau | Nom | Signification |
+|---|---|---|
+| `SYN` | Synchronize | Ouverture de connexion : « voici mon numéro de séquence de départ » |
+| `ACK` | Acknowledgment | Le champ d'acquittement est valide : présent sur tous les segments après le premier |
+| `FIN` | Finish | « J'ai fini d'envoyer » : fermeture propre, dans un sens |
+| `RST` | Reset | « Cette connexion n'existe pas » ou « j'abandonne » : fermeture brutale |
+| `PSH` | Push | Remettre les données à l'application sans attendre |
+
+## La poignée de main en trois temps
+
+Avant d'échanger la moindre donnée, les deux machines **ouvrent la connexion**. C'est la poignée de main
+en trois temps (*three-way handshake*) : **SYN, SYN-ACK, ACK**.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'c', label: 'PC (client)', sub: '192.168.10.10:46455' },
+    { id: 's', label: 'Appli (serveur)', sub: '172.16.20.10:8080', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Le serveur écoute sur le port 8080 (état LISTEN)', tone: 'slate' },
+    { from: 'c', to: 's', label: 'SYN', sub: 'seq = 713573588 · MSS 1460', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'SYN-ACK', sub: 'seq = 2922288714 · ack = 713573589', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', sub: 'ack = 2922288715', tone: 'emerald' },
+    { note: 'Connexion établie des deux côtés (ESTABLISHED)', tone: 'emerald' },
+  ]}
+  caption="SYN, SYN-ACK, ACK. Chaque côté annonce son numéro de séquence de départ, et l'autre l'acquitte en répondant ce numéro + 1."
+/>
+
+1. **SYN** : le client choisit un numéro de séquence de départ **au hasard** (ici 713573588) et
+   l'envoie, avec ses options : la taille maximale de segment qu'il accepte (<Term id="mss" />), la prise
+   en charge des acquittements sélectifs (SACK) et du facteur d'échelle de fenêtre.
+2. **SYN-ACK** : le serveur accepte. Il envoie **son propre** numéro de départ (2922288714) et acquitte
+   celui du client : `ack = 713573589`, c'est-à-dire « j'ai reçu ton SYN, j'attends la suite à partir
+   de 713573589 ». Le SYN compte pour un octet, d'où le **+1**.
+3. **ACK** : le client acquitte le SYN du serveur (`ack = 2922288715`). La connexion est établie, les
+   données peuvent circuler.
+
+Pourquoi trois messages et pas deux ? Parce que **chaque sens** a son propre numéro de séquence, qui doit
+être annoncé **et** acquitté. Le SYN-ACK fait les deux à la fois pour le sens serveur vers client.
+Pourquoi un numéro au hasard ? Pour qu'un attaquant ne puisse pas deviner les numéros d'une connexion et
+y injecter de faux segments.
+
+### Ce que la poignée de main révèle au dépannage
+
+La poignée de main est le premier test de bout en bout : elle dit si le **chemin réseau** et le
+**service** fonctionnent, avant même que l'application ne parle.
+
+| Ce qu'on observe | Ce que ça veut dire | Message typique |
+|---|---|---|
+| SYN, SYN-ACK, ACK | Réseau et service fonctionnent : chercher du côté de l'application | (la connexion s'établit) |
+| SYN, puis **RST** en réponse | La machine est joignable, mais **rien n'écoute** sur ce port (ou un firewall rejette activement) | `Connection refused` |
+| SYN, SYN, SYN… **sans réponse** | Le paquet n'arrive pas, ou la réponse ne revient pas : route manquante, firewall qui jette, route retour absente | `Connection timed out` |
+| SYN-ACK qui part, mais ACK jamais reçu | Souvent un **routage asymétrique** : l'aller et le retour ne passent pas par le même firewall | (le serveur garde la connexion à moitié ouverte) |
+
+La différence entre *refused* et *timed out* fait gagner beaucoup de temps : la première dit que le
+réseau fonctionne et qu'il faut regarder le service ; la seconde, qu'il faut regarder le réseau ou les
+firewalls.
+
+## Échanger des données
+
+Une fois la connexion ouverte, chaque segment de données porte un **numéro de séquence** (la position de
+son premier octet dans le flux), et le destinataire répond par un **acquittement** : le numéro du
+prochain octet qu'il attend. Si le PC envoie 6 octets à partir de la position 713573589, l'Appli répond
+`ack = 713573595`.
+
+- **Acquittements cumulatifs** : un seul ACK confirme tout ce qui précède. Inutile d'acquitter chaque
+  segment.
+- **Retransmission** : si l'acquittement n'arrive pas dans le délai, l'émetteur renvoie. Si des ACK
+  identiques s'accumulent (*duplicate ACK*), c'est qu'un segment manque : il est renvoyé sans attendre.
+- **Fenêtre** : chaque côté annonce combien d'octets il peut encore recevoir. L'émetteur ne dépasse
+  jamais cette quantité sans acquittement : c'est le **contrôle de flux**, qui évite de submerger un
+  récepteur lent.
+- **Contrôle de congestion** : en plus, TCP démarre doucement (*slow start*) et réduit son débit dès
+  qu'il détecte des pertes, signe que le réseau est saturé.
+
+<Callout type="field">
+La taille de segment (MSS) est négociée dans le SYN à partir du <Term id="mtu" /> de chaque machine :
+1460 octets pour un MTU Ethernet de 1500 (1500 moins 20 d'en-tête IP et 20 d'en-tête TCP). Le piège
+classique arrive avec un tunnel (VPN IPsec, GRE) dont l'en-tête réduit la taille réellement disponible :
+la poignée de main passe (les SYN sont petits), le `ping` aussi, mais les gros transferts restent
+bloqués, car les segments pleins ne passent plus. La parade : réduire le MSS sur le routeur du tunnel
+(`ip tcp adjust-mss 1360` chez Cisco, `tcp mss ceiling ipv4 1360` sur l'interface chez Arista).
+</Callout>
+
+## Fermer la connexion
+
+### Proprement : FIN
+
+Chaque sens se ferme **séparément**. Le côté qui a fini d'envoyer émet un **FIN**, l'autre l'acquitte ;
+puis l'autre côté fait de même quand il a fini. Entre les deux, la connexion est à moitié fermée : un
+côté peut encore envoyer, l'autre plus.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'c', label: 'PC', sub: 'client' },
+    { id: 's', label: 'Appli', sub: 'serveur', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'FIN', sub: 'le client n’a rien à envoyer', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'Données + ACK', sub: '« Bonjour depuis appli »', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'FIN', sub: 'le serveur a fini aussi', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', sub: 'le client passe en TIME_WAIT', tone: 'emerald' },
+  ]}
+  caption="La fermeture capturée dans le lab : le client ferme son sens tout de suite, le serveur envoie encore sa réponse, puis ferme le sien."
+/>
+
+Le côté qui ferme en premier reste ensuite quelques dizaines de secondes en état **TIME_WAIT**, pour
+absorber d'éventuels segments en retard avant de réutiliser le même couple de ports.
+
+### Brutalement : RST
+
+Un **RST** coupe la connexion immédiatement, sans échange. Une machine l'envoie quand elle reçoit un
+segment pour une connexion qui n'existe pas : un SYN vers un port où rien n'écoute (*Connection
+refused*), ou un segment pour une connexion déjà oubliée (après un redémarrage, par exemple). Les
+firewalls et les load balancers en envoient aussi pour rejeter une connexion, ou pour fermer celles qui
+sont restées inactives trop longtemps.
+
+## Les états d'une connexion
+
+Le système d'exploitation suit chaque connexion dans une machine à états. Les principaux :
+
+| État | Côté | Signification |
+|---|---|---|
+| `LISTEN` | Serveur | En attente de connexions sur un port |
+| `SYN-SENT` | Client | SYN envoyé, en attente du SYN-ACK |
+| `SYN-RECEIVED` | Serveur | SYN-ACK envoyé, en attente de l'ACK final |
+| `ESTABLISHED` | Les deux | Connexion ouverte, données en cours |
+| `FIN-WAIT` | Celui qui ferme | FIN envoyé, en attente de la fin de l'autre côté |
+| `CLOSE-WAIT` | Celui qui reçoit le FIN | L'autre a fermé, l'application doit fermer à son tour |
+| `TIME-WAIT` | Celui qui a fermé en premier | Attente de sécurité avant de libérer les ports |
+
+Sous Linux, `ss -tan` les affiche toutes. Beaucoup de `SYN-SENT` : les connexions sortantes n'aboutissent
+pas. Des milliers de `CLOSE-WAIT` qui s'accumulent : une application qui oublie de fermer ses
+connexions. Beaucoup de `SYN-RECEIVED` sur un serveur : peut-être une attaque.
+
+<Callout type="note">
+Un firewall dit **à états** (*stateful*) suit exactement cette machine : il n'autorise un SYN-ACK que
+s'il a vu passer le SYN correspondant, et laisse passer les réponses d'une connexion qu'il a autorisée.
+C'est aussi la cible de l'**inondation de SYN** (*SYN flood*) : des milliers de SYN sans jamais l'ACK
+final, pour remplir la table des connexions à moitié ouvertes du serveur ou du firewall. Les *SYN
+cookies* permettent au serveur de ne rien mémoriser avant l'ACK final.
+</Callout>
+
+## UDP : le transport minimal
+
+UDP fait le strict minimum : des ports, une longueur et une somme de contrôle. Pas de connexion, pas de
+numéro de séquence, pas d'acquittement, pas de retransmission. Chaque datagramme est indépendant.
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'Octets 0-3', fields: [
+      { label: 'Port source', sub: '16 bits', span: 16, tone: 'emerald' },
+      { label: 'Port destination', sub: '16 bits', span: 16, tone: 'emerald' },
+    ] },
+    { label: 'Octets 4-7', fields: [
+      { label: 'Longueur', sub: '16 bits', span: 16 },
+      { label: 'Somme de contrôle', sub: '16 bits', span: 16 },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="L'en-tête UDP : 8 octets, rien de plus."
+/>
+
+C'est un avantage quand :
+
+- **la rapidité compte plus que la fiabilité** : la voix et la vidéo en temps réel. Un paquet de voix
+  retransmis arriverait trop tard pour servir ; mieux vaut le perdre ;
+- **l'échange tient en une question et une réponse** : <Term id="dhcp" />, DNS, NTP, SNMP. Ouvrir une
+  connexion TCP coûterait plus cher que l'échange lui-même, et l'application renvoie sa question si elle
+  n'a pas de réponse ;
+- **un autre protocole gère la fiabilité** : <Term id="vxlan" /> transporte des trames Ethernet dans UDP,
+  et QUIC reconstruit tout ce que fait TCP, au-dessus d'UDP.
+
+| | TCP | UDP |
+|---|---|---|
+| **Connexion** | Oui : poignée de main, fermeture | Non |
+| **Fiabilité** | Acquittements, retransmission, ordre garanti | Aucune : à la charge de l'application |
+| **Contrôle de flux et de congestion** | Oui | Non |
+| **En-tête** | 20 octets minimum | 8 octets |
+| **Exemples** | HTTP/1.1 et HTTP/2, SSH, SMTP, BGP, LDAP | DNS, DHCP, NTP, SNMP, syslog, voix, VXLAN, QUIC |
+
+<Callout type="note">
+**QUIC**, le protocole de HTTP/3, fonctionne sur **UDP port 443**. Il intègre le chiffrement TLS et ouvre
+une connexion plus vite que TCP + TLS. Pour le réseau, c'est une nouveauté : un firewall ou un proxy qui
+n'autorise que TCP 443 bloque QUIC, et les navigateurs se replient alors sur HTTP/2 en TCP. Certaines
+entreprises bloquent volontairement UDP 443 pour garder la visibilité de leur proxy (voir le saut
+[Proxy et load balancing](/formations/proxy)).
+</Callout>
+
+Comme il n'y a pas de connexion, un port UDP fermé ne répond pas par un RST : la machine renvoie un
+message <Term id="icmp" /> *port unreachable*, ou rien du tout si un firewall l'en empêche. C'est pourquoi
+tester un service UDP est moins simple qu'un service TCP : l'absence de réponse ne prouve rien.
+
+## Dans le lab
+
+On reprend le lab du chapitre précédent, une fois les routes statiques en place : `pc1` et `appli` se
+joignent par `ping`. On va observer une vraie poignée de main.
+
+<Lab name="static-routing" lang="fr" />
+
+**1. Démarrer un service sur `appli`.** Un petit serveur `nc` (netcat) qui répond une phrase à la
+première connexion sur le port 8080 :
+
+```bash
+docker exec -d clab-static-routing-appli sh -c 'echo "Bonjour depuis appli" | nc -l -p 8080'
+```
+
+**2. Capturer le trafic.** Les images du lab n'ont pas `tcpdump` : on le lance depuis un conteneur
+`nicolaka/netshoot` qui partage la pile réseau de `appli`. Dans un second terminal :
+
+```bash
+docker run --rm -it --net container:clab-static-routing-appli nicolaka/netshoot tcpdump -l -nni eth1 -S tcp
+```
+
+L'option `-S` affiche les numéros de séquence absolus, pour voir le **+1** de la poignée de main.
+
+**3. Se connecter depuis `pc1`.**
+
+```bash
+docker exec -it clab-static-routing-pc1 sh
+nc 172.16.20.10 8080 </dev/null
+```
+
+```text
+Bonjour depuis appli
+```
+
+La capture (options TCP retirées pour la lisibilité) :
+
+```text
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [S], seq 713573588, win 64240, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [S.], seq 2922288714, ack 713573589, win 65160, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288715, win 502, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [F.], seq 713573589, ack 2922288715, win 502, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [P.], seq 2922288715:2922288736, ack 713573590, win 510, length 21
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288736, win 502, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [F.], seq 2922288736, ack 713573590, win 510, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288737, win 502, length 0
+```
+
+`tcpdump` note les drapeaux en abrégé : `S` pour SYN, `.` pour ACK, `F` pour FIN, `P` pour PSH, `R` pour
+RST. On retrouve :
+
+- lignes 1 à 3 : **SYN, SYN-ACK (`S.`), ACK** ;
+- ligne 4 : le client n'a rien à envoyer (`</dev/null`), il ferme tout de suite son sens (**FIN**) ;
+- ligne 5 : le serveur envoie ses 21 octets (`seq 2922288715:2922288736`) ;
+- lignes 6 à 8 : le client acquitte, le serveur ferme à son tour, le client acquitte le FIN.
+
+Le serveur `nc` de l'étape 1 ne sert qu'une connexion : relancez la commande de l'étape 1 pour
+recommencer l'étape 3.
+
+**4. Un port fermé.** Rien n'écoute sur le port 9999 :
+
+```bash
+nc -w 2 172.16.20.10 9999
+```
+
+```text
+IP 192.168.10.10.37257 > 172.16.20.10.9999: Flags [S], seq 1598422382, win 64240, length 0
+IP 172.16.20.10.9999 > 192.168.10.10.37257: Flags [R.], seq 0, ack 1598422383, win 0, length 0
+```
+
+Un SYN, un **RST** immédiat : la machine est joignable, mais aucun service n'écoute. C'est le *Connection
+refused*.
+
+**5. Bonus : un timeout.** Sur R3, retirez la route vers l'agence (`no ip route 192.168.10.0/26 …`), et
+relancez la connexion depuis `pc1`. La capture montre maintenant le SYN arriver et le SYN-ACK partir…
+mais il ne revient jamais au client, qui renvoie son SYN plusieurs fois avant d'abandonner. C'est la
+**route retour** manquante du chapitre précédent, vue du côté TCP. Remettez la route ensuite.
+
+## À retenir
+
+- L'adresse IP désigne la machine, le **port** désigne l'application. Une connexion est identifiée par son
+  **5-tuple**.
+- TCP ouvre la connexion par **SYN, SYN-ACK, ACK** : chaque côté annonce un numéro de séquence aléatoire,
+  que l'autre acquitte avec **+1**.
+- Les numéros de séquence et les **acquittements** permettent de retransmettre ce qui manque ; la
+  **fenêtre** évite de submerger le récepteur.
+- **FIN** ferme proprement, sens par sens ; **RST** coupe brutalement.
+- Au dépannage : **RST** = *Connection refused* (le réseau marche, le service non) ; **pas de réponse** =
+  *timed out* (regarder le réseau, les firewalls, la route retour).
+- **UDP** : ni connexion, ni fiabilité, 8 octets d'en-tête. DNS, DHCP, voix, VXLAN, et QUIC pour HTTP/3.
+
+Bravo, vous avez terminé les fondamentaux ! La suite logique : apprendre aux routeurs à se
+découvrir tout seuls avec le [routage dynamique](/formations/routing) (OSPF, puis BGP).

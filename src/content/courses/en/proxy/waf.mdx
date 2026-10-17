@@ -158,7 +158,7 @@ in the same place:
   caption="A volumetric attack must be absorbed before it reaches the company's link. An application-layer attack looks like normal traffic and is handled at the WAF."
 />
 
-- **Volumetric** (layers 3 and 4): flooding the link or the devices with packets (UDP and SYN floods,
+- **Volumetric** (layers 3 and 4): flooding the link or the devices with packets (UDP and [SYN](/en/courses/fundamentals/tcp-udp) floods,
   amplification through badly configured DNS or NTP servers). These attacks reach hundreds of Gb/s: no
   device installed behind a 10 Gb/s link can absorb them, since the link is saturated first. Protection
   happens **upstream**, at the carrier or an anti-DDoS provider, which diverts traffic to **scrubbing

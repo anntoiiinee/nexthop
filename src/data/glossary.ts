@@ -228,6 +228,14 @@ export const glossary = {
       en: "Templating language used by Ansible: a configuration template with variables and loops, filled in from data.",
     },
   },
+  lacp: {
+    term: 'LACP',
+    expansion: 'Link Aggregation Control Protocol',
+    definition: {
+      fr: "Protocole (IEEE 802.1AX) qui négocie un port-channel entre deux équipements : un lien n'entre dans le groupe que si les deux côtés sont d'accord.",
+      en: "Protocol (IEEE 802.1AX) negotiating a port-channel between two devices: a link only joins the group if both ends agree.",
+    },
+  },
   lan: {
     term: 'LAN',
     expansion: 'Local Area Network',
@@ -274,6 +282,22 @@ export const glossary = {
     definition: {
       fr: 'Authentification qui exige au moins deux preuves différentes, par exemple un mot de passe et un code à usage unique sur le téléphone.',
       en: 'Authentication that requires at least two different proofs, for example a password and a one-time code on a phone.',
+    },
+  },
+  mlag: {
+    term: 'MLAG',
+    expansion: 'Multi-Chassis Link Aggregation',
+    definition: {
+      fr: "Deux switches qui se présentent comme un seul, pour qu'un équipement s'y raccorde par un port-channel réparti sur les deux. Appelé vPC chez Cisco.",
+      en: "Two switches presenting themselves as one, so a device can connect through a port-channel spread across both. Called vPC at Cisco.",
+    },
+  },
+  mss: {
+    term: 'MSS',
+    expansion: 'Maximum Segment Size',
+    definition: {
+      fr: "Taille maximale des données dans un segment TCP, annoncée dans le SYN : 1460 octets pour un MTU Ethernet de 1500.",
+      en: "Largest amount of data in a TCP segment, announced in the SYN: 1460 bytes for a 1500-byte Ethernet MTU.",
     },
   },
   mtu: {

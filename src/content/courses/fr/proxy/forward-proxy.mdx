@@ -15,7 +15,8 @@ explique ce que cet intermédiaire apporte, comment les postes le trouvent, et c
 
 ## Deux connexions au lieu d'une
 
-Sans proxy, le poste ouvre une connexion <Term id="tcp" /> directement vers le serveur. Avec un proxy, il
+Sans proxy, le poste ouvre une connexion <Term id="tcp" /> directement vers le serveur (la poignée de main
+SYN, SYN-ACK, ACK est détaillée au chapitre [TCP et UDP](/formations/fundamentals/tcp-udp)). Avec un proxy, il
 y a **deux connexions** distinctes : du poste au proxy, puis du proxy au serveur. Le serveur ne voit jamais
 le poste, seulement l'adresse du proxy.
 

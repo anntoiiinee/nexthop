@@ -19,10 +19,12 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'ethernet', title: { fr: 'Ethernet et adresses MAC', en: 'Ethernet and MAC addresses' } },
       { slug: 'vlan', title: { fr: 'Les VLAN', en: 'VLANs' } },
       { slug: 'stp', title: { fr: 'Spanning Tree (STP)', en: 'Spanning Tree (STP)' } },
+      { slug: 'link-aggregation', title: { fr: 'Agrégation de liens et MLAG', en: 'Link aggregation and MLAG' } },
       { slug: 'lldp-cdp', title: { fr: 'LLDP et CDP', en: 'LLDP and CDP' } },
       { slug: 'ipv4-subnetting', title: { fr: 'Adressage IPv4 et subnetting', en: 'IPv4 addressing and subnetting' } },
       { slug: 'arp', title: { fr: 'ARP', en: 'ARP' } },
       { slug: 'static-routing', title: { fr: 'Le routage statique', en: 'Static routing' } },
+      { slug: 'tcp-udp', title: { fr: 'TCP et UDP', en: 'TCP and UDP' } },
     ],
   },
   {
