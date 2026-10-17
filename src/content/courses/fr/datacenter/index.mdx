@@ -1,0 +1,67 @@
+---
+title: "Le data center"
+description: "Les architectures des data centers modernes : VRF, fabric spine/leaf et underlay eBGP, VXLAN, puis BGP EVPN comme plan de contrôle, avec passerelle anycast et routage entre VRF. Lab Arista cEOS à deux spines et trois leafs."
+pubDate: 2026-10-17
+level: advanced
+tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp]
+vendor: [arista, cisco]
+order: 0
+---
+
+Un data center d'entreprise n'a plus grand-chose à voir avec le réseau de l'agence des Fondamentaux. Des
+centaines de serveurs et de machines virtuelles échangent entre eux bien plus qu'avec les utilisateurs, les
+applications déménagent d'un serveur à l'autre sans changer d'adresse, et plusieurs environnements
+(production, développement, clients différents) partagent la même infrastructure sans jamais se voir.
+
+Les architectures classiques, avec leurs VLAN étendus et leur Spanning Tree, ne tiennent pas à cette
+échelle. Ce saut présente l'architecture qui les a remplacées : une **fabric spine/leaf** routée, sur
+laquelle on transporte les VLAN dans **VXLAN**, avec **BGP EVPN** pour plan de contrôle et des **VRF** pour
+séparer les environnements. C'est l'architecture que génère [Arista AVD](/formations/automation/avd).
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **Les VRF** | Séparer plusieurs tables de routage sur un même équipement, gérer des adresses qui se recouvrent, faire communiquer deux VRF de façon contrôlée |
+| **L'architecture spine/leaf** | Expliquer pourquoi le data center a quitté le modèle à trois niveaux, dimensionner une fabric, construire son underlay eBGP avec ECMP |
+| **VXLAN** | Transporter un VLAN à travers une fabric routée, lire un paquet VXLAN, comprendre les limites du *flood and learn* |
+| **EVPN, le control plane** | Distribuer les adresses MAC et IP par BGP, configurer la passerelle anycast et le routage symétrique entre VLAN et entre leafs |
+
+Les chapitres se suivent : chacun s'appuie sur le précédent.
+
+## Le lab
+
+Une fabric complète, en Arista cEOS : deux spines, trois leafs, quatre serveurs dans trois VLAN et deux VRF.
+
+<Topology
+  width={720}
+  height={410}
+  groups={[
+    { x: 20, y: 270, w: 500, h: 125, label: 'VRF PROD · VLAN 10 et 20', tone: 'sky' },
+    { x: 540, y: 270, w: 160, h: 125, label: 'VRF DEV · VLAN 30', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 250, y: 55, label: 'spine1', sub: 'AS 65000' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 130, y: 185, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 360, y: 185, label: 'leaf2', sub: 'AS 65102', tone: 'emerald' },
+    { id: 'l3', type: 'l3switch', x: 590, y: 185, label: 'leaf3', sub: 'AS 65103', tone: 'emerald' },
+    { id: 'h1', type: 'server', x: 130, y: 325, label: 'host1', sub: '10.10.10.11' },
+    { id: 'h2', type: 'server', x: 320, y: 325, label: 'host2', sub: '10.10.10.12' },
+    { id: 'h3', type: 'server', x: 450, y: 325, label: 'host3', sub: '10.10.20.13' },
+    { id: 'h4', type: 'server', x: 620, y: 325, label: 'host4', sub: '10.10.10.11', tone: 'amber' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'l3' },
+    { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'l3' },
+    { from: 'l1', to: 'h1' }, { from: 'l2', to: 'h2' }, { from: 'l3', to: 'h3' }, { from: 'l3', to: 'h4' },
+  ]}
+  caption="Le lab dc-fabric. Chaque leaf est relié aux deux spines. host4, dans la VRF DEV, a la même adresse que host1, dans la VRF PROD, sans conflit."
+/>
+
+## Prérequis
+
+- Les [VLAN](/formations/fundamentals/vlan) et l'[agrégation de liens](/formations/fundamentals/link-aggregation).
+- La formation [Routage dynamique](/formations/routing), en particulier les chapitres sur BGP.
+- Pour le lab : un poste avec ContainerLab et l'image Arista cEOS (au moins 8 Go de mémoire pour cinq cEOS),
+  voir [Monter son lab](/tutoriels/containerlab-setup).

@@ -1,0 +1,263 @@
+---
+title: "L'architecture spine/leaf"
+description: "Pourquoi le data center a quitté le modèle cœur / distribution / accès : la fabric spine/leaf, ses règles de câblage, l'ECMP, le dimensionnement et la sursouscription, un underlay routé en eBGP, et le réseau de management de la fabric."
+pubDate: 2026-10-17
+level: advanced
+tags: [spine-leaf, clos, ecmp, bgp, datacenter]
+vendor: [arista, cisco]
+order: 2
+---
+
+Pendant vingt ans, les réseaux d'entreprise, data centers compris, ont suivi le même modèle à **trois
+niveaux** : des switches d'**accès** pour les machines, une couche de **distribution** qui les agrège, et un
+**cœur** au centre. Ce modèle convenait au trafic de l'époque : les utilisateurs allaient vers les
+serveurs, et les serveurs vers Internet, du **nord au sud**. Il convient beaucoup moins au data center
+d'aujourd'hui.
+
+## Les limites du modèle à trois niveaux
+
+<Topology
+  width={700}
+  height={330}
+  nodes={[
+    { id: 'c1', type: 'l3switch', x: 270, y: 50, label: 'cœur1' },
+    { id: 'c2', type: 'l3switch', x: 430, y: 50, label: 'cœur2' },
+    { id: 'd1', type: 'l3switch', x: 190, y: 150, label: 'distrib1' },
+    { id: 'd2', type: 'l3switch', x: 510, y: 150, label: 'distrib2' },
+    { id: 'a1', type: 'switch', x: 90, y: 255, label: 'accès1' },
+    { id: 'a2', type: 'switch', x: 280, y: 255, label: 'accès2' },
+    { id: 'a3', type: 'switch', x: 420, y: 255, label: 'accès3' },
+    { id: 'a4', type: 'switch', x: 610, y: 255, label: 'accès4' },
+  ]}
+  links={[
+    { from: 'c1', to: 'c2' }, { from: 'c1', to: 'd1' }, { from: 'c2', to: 'd2' }, { from: 'c1', to: 'd2' }, { from: 'c2', to: 'd1' },
+    { from: 'd1', to: 'a1' }, { from: 'd1', to: 'a2' }, { from: 'd2', to: 'a3' }, { from: 'd2', to: 'a4' },
+    { from: 'd2', to: 'a2', style: 'blocked' }, { from: 'd1', to: 'a3', style: 'blocked' },
+  ]}
+  caption="Le modèle à trois niveaux : Spanning Tree bloque une partie des liens, et deux serveurs sur accès1 et accès4 traversent cinq équipements pour se parler."
+/>
+
+- **Le trafic a changé de sens.** Dans un data center moderne, l'essentiel du trafic va de **serveur à
+  serveur** (*est-ouest*) : une application web interroge un service, qui interroge une base, qui se
+  réplique, pendant que les sauvegardes et les migrations de machines virtuelles circulent. Dans le modèle à
+  trois niveaux, ce trafic remonte jusqu'à la distribution, voire jusqu'au cœur, et redescend.
+- **Spanning Tree bloque la moitié des liens.** Les liens redondants existent, mais ne transportent rien
+  tant qu'il n'y a pas de panne (voir [Spanning Tree](/formations/fundamentals/stp)).
+- **La latence n'est pas prévisible.** Selon l'emplacement des deux serveurs, le chemin passe par deux,
+  trois ou cinq équipements.
+- **Grandir coûte cher.** Ajouter de la capacité, c'est remplacer le cœur par un modèle plus gros.
+
+## La fabric spine/leaf
+
+L'architecture spine/leaf (on dit aussi **fabric**, ou réseau de **Clos**, du nom de l'ingénieur qui l'a
+décrite pour les commutateurs téléphoniques dans les années 1950) n'a que **deux niveaux** :
+
+- les **leafs** (feuilles) : les switches où se branchent les serveurs, souvent un ou deux par baie (le
+  *top of rack*) ;
+- les **spines** (colonne vertébrale) : les switches qui relient les leafs entre eux.
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 180, y: 55, label: 'spine1' },
+    { id: 's2', type: 'l3switch', x: 350, y: 55, label: 'spine2' },
+    { id: 's3', type: 'l3switch', x: 520, y: 55, label: 'spine3' },
+    { id: 'l1', type: 'l3switch', x: 90, y: 200, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 270, y: 200, label: 'leaf2', tone: 'emerald' },
+    { id: 'l3', type: 'l3switch', x: 430, y: 200, label: 'leaf3', tone: 'emerald' },
+    { id: 'l4', type: 'l3switch', x: 610, y: 200, label: 'leaf4', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'l3' }, { from: 's1', to: 'l4' },
+    { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'l3' }, { from: 's2', to: 'l4' },
+    { from: 's3', to: 'l1' }, { from: 's3', to: 'l2' }, { from: 's3', to: 'l3' }, { from: 's3', to: 'l4' },
+  ]}
+  caption="Chaque leaf est relié à chaque spine. Entre deux leafs, il y a autant de chemins que de spines, tous de même longueur."
+/>
+
+Les règles de câblage sont strictes, et c'est ce qui fait la force du modèle :
+
+1. **chaque leaf est relié à chaque spine** ;
+2. **les leafs ne sont pas reliés entre eux** (sauf, éventuellement, une paire de leafs en
+   [MLAG](/formations/fundamentals/link-aggregation) dans la même baie) ;
+3. **les spines ne sont pas reliés entre eux**.
+
+Conséquences :
+
+- entre deux serveurs sur deux leafs différents, il y a **toujours trois sauts** : leaf, spine, leaf. La
+  latence est faible et **prévisible** ;
+- entre deux leafs, il y a **autant de chemins que de spines**, tous de même coût, tous utilisés en même
+  temps grâce à l'<Term id="ecmp" /> (*Equal-Cost Multi-Path*) ;
+- la perte d'un spine retire une fraction de la capacité (un tiers avec trois spines), sans coupure.
+
+## Grandir horizontalement
+
+Une fabric grandit en **ajoutant** des équipements, jamais en les remplaçant :
+
+- **plus de ports serveurs** : on ajoute des leafs, chacun câblé à tous les spines ;
+- **plus de bande passante entre leafs** : on ajoute des spines. Chaque leaf gagne un lien de montée.
+
+La limite est le nombre de ports des spines : un spine à 32 ports accepte au plus 32 leafs. Au-delà, on
+construit une fabric à trois étages (des *super-spines* au-dessus de plusieurs fabrics), sur le même
+principe.
+
+### La sursouscription
+
+Un leaf a beaucoup de ports vers les serveurs et quelques ports de montée vers les spines. Le **taux de
+sursouscription** compare les deux capacités :
+
+| Leaf | Vers les serveurs | Vers les spines | Sursouscription |
+|---|---|---|---|
+| 48 × 25 Gb/s + 8 × 100 Gb/s, 4 spines | 48 × 25 = 1 200 Gb/s | 4 × 100 = 400 Gb/s | **3:1** |
+| Même leaf, 8 spines | 1 200 Gb/s | 8 × 100 = 800 Gb/s | **1,5:1** |
+
+Un taux de 3:1 signifie que si tous les serveurs émettent à pleine vitesse vers d'autres leafs, seul un
+tiers du trafic passe. C'est acceptable pour la plupart des applications, qui n'émettent jamais toutes en
+même temps ; le stockage et les calculs distribués (IA notamment) visent plutôt 1:1.
+
+## L'underlay : une fabric routée
+
+Entre leafs et spines, il n'y a **plus de couche 2** : chaque lien est un lien routé, avec un petit
+sous-réseau en `/31` (deux adresses, une par extrémité). Plus de Spanning Tree, plus de boucle possible ;
+c'est le **routage** qui choisit les chemins et répartit la charge.
+
+Ce réseau routé de base s'appelle l'**underlay**. Son seul rôle : que chaque leaf puisse joindre
+l'adresse de bouclage (*loopback*) de chaque autre leaf, par tous les spines à la fois. Les VLAN des
+serveurs seront transportés **par-dessus**, dans l'**overlay** (chapitres VXLAN et EVPN).
+
+Plusieurs protocoles conviennent (OSPF, IS-IS), mais le plus répandu dans les grandes fabrics est **eBGP**
+(décrit dans la RFC 7938) :
+
+- **les spines partagent un même numéro d'AS**, et **chaque leaf a le sien** (AS privés, `65000` à `65535`) ;
+- chaque leaf a une session eBGP avec chaque spine, sur l'adresse du lien ;
+- chaque leaf annonce ses loopbacks ; il reçoit celles des autres leafs **par chaque spine**, avec le même
+  chemin d'AS (`65000 65102`), donc le même coût : l'ECMP fait le reste.
+
+<Topology
+  width={700}
+  height={270}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: 'AS 65000' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 195, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 195, label: 'leaf2', sub: 'AS 65102 · lo1 10.255.1.12', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', tone: 'violet' }, { from: 's2', to: 'l1', tone: 'violet' },
+    { from: 's1', to: 'l2' }, { from: 's2', to: 'l2' },
+  ]}
+  notes={[
+    { x: 120, y: 262, text: '10.255.1.12 : 2 chemins (ECMP)', tone: 'violet' },
+  ]}
+  caption="leaf2 annonce sa loopback aux deux spines, qui la relaient à leaf1. leaf1 la reçoit deux fois, avec le même chemin d'AS : il l'installe avec deux prochains sauts (en violet)."
+/>
+
+Pourquoi BGP plutôt qu'OSPF ? Parce qu'il passe à l'échelle de milliers d'équipements, qu'il permet des
+politiques fines, et surtout que le même protocole servira à l'overlay avec EVPN : un seul protocole à
+connaître et à superviser.
+
+```text title="Arista EOS : underlay de leaf1"
+interface Ethernet1
+   description spine1
+   mtu 9214
+   no switchport
+   ip address 10.0.1.1/31
+!
+interface Loopback0
+   ip address 10.255.0.11/32
+!
+router bgp 65101
+   router-id 10.255.0.11
+   maximum-paths 4 ecmp 4
+   neighbor UNDERLAY peer group
+   neighbor UNDERLAY remote-as 65000
+   neighbor 10.0.1.0 peer group UNDERLAY
+   neighbor 10.0.2.0 peer group UNDERLAY
+   address-family ipv4
+      neighbor UNDERLAY activate
+      network 10.255.0.11/32
+```
+
+`maximum-paths 4` est indispensable : sans lui, BGP n'installe qu'un seul chemin, et un seul spine
+travaille.
+
+<Callout type="note">
+Le **MTU** des liens de la fabric est augmenté (9214 octets chez Arista, souvent 9216 ailleurs) : l'overlay
+VXLAN ajoute 50 octets à chaque trame, et une trame de 1500 octets d'un serveur doit pouvoir traverser la
+fabric sans fragmentation.
+</Callout>
+
+## Les leafs particuliers
+
+Tous les leafs ont la même forme, mais pas forcément le même rôle :
+
+- **leafs serveurs** : la majorité, un ou deux par baie ;
+- **border leafs** : la sortie de la fabric vers le reste du monde (cœur de réseau du campus, WAN,
+  Internet, autre data center), souvent derrière des firewalls ;
+- **service leafs** : les équipements partagés, comme les firewalls et les load balancers, branchés sur des
+  leafs dédiés plutôt qu'au milieu de la fabric.
+
+## Le réseau de management de la fabric
+
+Chaque switch de la fabric a un port de management, `Management0` chez Arista, placé dans une **VRF
+`MGMT`** (voir [Les VRF](/formations/datacenter/vrf)). Ces ports sont raccordés à un réseau **séparé** de la
+fabric : un petit switch de management par baie, qui reçoit aussi les cartes d'administration des serveurs
+(iDRAC, iLO), et qui remonte vers un cœur de management **indépendant** de la fabric de production.
+Ainsi, une erreur de configuration de l'underlay ne coupe jamais l'accès aux switches qui permettrait de la
+corriger. Le chapitre [Management et accès hors bande](/formations/operations/oob) détaille ce réseau, et
+l'accès par la console quand même lui ne répond plus.
+
+## Dans le lab
+
+Le lab `dc-fabric` est une fabric à deux spines et trois leafs, avec un underlay eBGP.
+
+<Lab name="dc-fabric" lang="fr" />
+
+**1. Les sessions de l'underlay.** Sur leaf1 :
+
+```bash
+docker exec -it clab-dc-fabric-leaf1 Cli
+```
+
+```text
+show ip bgp summary
+```
+
+Deux voisins, les deux spines (`10.0.1.0` et `10.0.2.0`), en état *Established*.
+
+**2. L'ECMP.** Regardez comment leaf1 joint le VTEP de leaf2 :
+
+```text
+show ip route 10.255.1.12
+```
+
+La route apparaît avec **deux prochains sauts**, `10.0.1.0` (spine1) et `10.0.2.0` (spine2) : le trafic vers
+leaf2 est réparti sur les deux spines. `show ip bgp 10.255.1.12` montre les deux chemins reçus, avec le même
+chemin d'AS `65000 65102`.
+
+**3. Perdre un spine.** Coupez le lien vers spine1, puis regardez de nouveau la route :
+
+```text
+configure
+interface Ethernet1
+   shutdown
+end
+show ip route 10.255.1.12
+```
+
+Un seul prochain saut subsiste, par spine2 : la fabric continue de fonctionner, avec la moitié de la
+capacité. Un `ping` lancé depuis `host1` vers `host2` pendant la coupure perd au plus quelques paquets.
+Remettez l'interface en service (`no shutdown`).
+
+## À retenir
+
+- Le data center moderne est dominé par le trafic **est-ouest** ; le modèle à trois niveaux, avec Spanning
+  Tree, s'y adapte mal.
+- La fabric **spine/leaf** : chaque leaf relié à chaque spine, ni leaf-leaf ni spine-spine. Toujours **trois
+  sauts**, et autant de chemins que de spines grâce à l'**ECMP**.
+- On grandit **horizontalement** : des leafs pour les ports, des spines pour la bande passante. Surveiller
+  la **sursouscription**.
+- L'**underlay** est entièrement routé (liens `/31`, MTU augmenté), le plus souvent en **eBGP** : un AS
+  pour les spines, un AS par leaf, `maximum-paths` pour l'ECMP.
+- Le management de la fabric passe par un réseau **séparé**, dans une VRF dédiée.

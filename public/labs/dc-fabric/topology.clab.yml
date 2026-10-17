@@ -1,0 +1,74 @@
+name: dc-fabric
+
+# Lab de la formation « Le data center ».
+# Fabric spine/leaf : 2 spines (AS 65000), 3 leafs (AS 65101 à 65103), underlay eBGP, overlay BGP EVPN / VXLAN.
+#   VRF PROD : VLAN 10 (10.10.10.0/24, VNI 10010) et VLAN 20 (10.10.20.0/24, VNI 10020), L3 VNI 50001
+#   VRF DEV  : VLAN 30 (10.10.10.0/24, VNI 10030), L3 VNI 50002 : le même sous-réseau que le VLAN 10, isolé par la VRF
+# Chaque leaf porte la passerelle anycast (.1) de chaque VLAN.
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+  nodes:
+    spine1:
+      kind: arista_ceos
+      startup-config: configs/spine1.cfg
+      labels: { graph-level: 1 }
+    spine2:
+      kind: arista_ceos
+      startup-config: configs/spine2.cfg
+      labels: { graph-level: 1 }
+    leaf1:
+      kind: arista_ceos
+      startup-config: configs/leaf1.cfg
+      labels: { graph-level: 2 }
+    leaf2:
+      kind: arista_ceos
+      startup-config: configs/leaf2.cfg
+      labels: { graph-level: 2 }
+    leaf3:
+      kind: arista_ceos
+      startup-config: configs/leaf3.cfg
+      labels: { graph-level: 2 }
+    host1:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 3 }
+      exec:
+        - ip addr add 10.10.10.11/24 dev eth1
+        - ip route replace default via 10.10.10.1
+    host2:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 3 }
+      exec:
+        - ip addr add 10.10.10.12/24 dev eth1
+        - ip route replace default via 10.10.10.1
+    host3:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 3 }
+      exec:
+        - ip addr add 10.10.20.13/24 dev eth1
+        - ip route replace default via 10.10.20.1
+    host4:
+      kind: linux
+      image: alpine:latest
+      labels: { graph-level: 3 }
+      exec:
+        # VRF DEV : même adresse que host1 (VRF PROD), sans conflit
+        - ip addr add 10.10.10.11/24 dev eth1
+        - ip route replace default via 10.10.10.1
+
+  links:
+    - endpoints: ["spine1:eth1", "leaf1:eth1"]
+    - endpoints: ["spine1:eth2", "leaf2:eth1"]
+    - endpoints: ["spine1:eth3", "leaf3:eth1"]
+    - endpoints: ["spine2:eth1", "leaf1:eth2"]
+    - endpoints: ["spine2:eth2", "leaf2:eth2"]
+    - endpoints: ["spine2:eth3", "leaf3:eth2"]
+    - endpoints: ["leaf1:eth3", "host1:eth1"]
+    - endpoints: ["leaf2:eth3", "host2:eth1"]
+    - endpoints: ["leaf3:eth3", "host3:eth1"]
+    - endpoints: ["leaf3:eth4", "host4:eth1"]

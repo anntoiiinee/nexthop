@@ -1,0 +1,194 @@
+---
+title: "VxLAN"
+description: "Carrying VLANs across a routed fabric: VTEPs and VNIs, the VXLAN encapsulation byte by byte, MTU, BUM traffic and the limits of flood and learn, with a capture in the lab."
+pubDate: 2026-10-17
+level: advanced
+tags: [vxlan, overlay, vtep, datacenter]
+vendor: [arista, cisco]
+order: 3
+---
+
+The previous chapter built a **routed** fabric: between leaves and spines, no more VLANs, no more Spanning
+Tree. But servers still need layer 2: two virtual machines in the same cluster must be in the same subnet,
+and a machine migrating from one physical server to another, on another leaf, must keep its IP address.
+
+How do you offer the same VLAN on leaves that only a routed fabric connects? By **carrying Ethernet frames
+inside IP packets**: that is <Term id="vxlan" /> (*Virtual eXtensible LAN*).
+
+## Underlay and overlay
+
+<Topology
+  width={700}
+  height={300}
+  groups={[
+    { x: 20, y: 200, w: 660, h: 85, label: 'Overlay · VNI 10010', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 350, y: 50, label: 'spine1', sub: 'IP underlay' },
+    { id: 'l1', type: 'l3switch', x: 150, y: 140, label: 'leaf1', sub: 'VTEP 10.255.1.11', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 550, y: 140, label: 'leaf2', sub: 'VTEP 10.255.1.12', tone: 'emerald' },
+    { id: 'h1', type: 'server', x: 150, y: 245, label: 'host1' },
+    { id: 'h2', type: 'server', x: 550, y: 245, label: 'host2' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' },
+    { from: 'l1', to: 'h1', tone: 'sky' }, { from: 'l2', to: 'h2', tone: 'sky' },
+    { from: 'l1', to: 'l2', style: 'dashed', tone: 'violet', label: 'VXLAN tunnel' },
+  ]}
+  caption="The underlay routes packets between VTEPs; the overlay carries, inside those packets, the frames of VLAN 10. For host1 and host2, it is a plain Ethernet cable."
+/>
+
+- the **underlay** is the routed fabric of the previous chapter. It only knows the leaves' addresses;
+- the **overlay** is the servers' virtual network: layer 2 segments (and, in the next chapter, VRFs)
+  carried on top of the underlay;
+- the <Term id="vtep" /> (*VXLAN Tunnel Endpoint*) is the device that encapsulates and decapsulates. In a
+  fabric, every leaf is a VTEP, with a dedicated address (a loopback);
+- the <Term id="vni" /> (*VXLAN Network Identifier*) identifies the segment. On each leaf, a local VLAN is
+  mapped to a VNI: `vlan 10 ↔ vni 10010`.
+
+The VNI is 24 bits long: **16 million** possible segments, against 4094 VLANs. And the VLAN number becomes
+**local** to the leaf: only the VNI matters in the fabric.
+
+## The VXLAN packet
+
+When `host1` sends a frame to `host2`, leaf1 encapsulates it entirely:
+
+<PacketFormat
+  cols={18}
+  rows={[
+    { label: 'host1 frame', fields: [
+      { label: 'Ethernet', sub: 'MAC host1 → MAC host2', span: 4, tone: 'amber', start: 11 },
+      { label: 'IP + data', sub: '10.10.10.11 → .12', span: 4, tone: 'emerald' },
+    ] },
+    { label: 'In the fabric', fields: [
+      { label: 'Outer Ethernet', sub: '14 B', span: 3, tone: 'slate' },
+      { label: 'Outer IP', sub: '20 B · VTEP → VTEP', span: 3, tone: 'slate' },
+      { label: 'UDP', sub: '8 B · port 4789', span: 2, tone: 'slate' },
+      { label: 'VXLAN', sub: '8 B · VNI 10010', span: 2, tone: 'violet' },
+      { label: 'Ethernet', sub: 'original frame', span: 4, tone: 'amber' },
+      { label: 'IP + data', span: 4, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="48rem"
+  caption="VXLAN adds 50 bytes in front of the original frame: an Ethernet header, an IP header between the two VTEPs, a UDP header and the VXLAN header carrying the VNI."
+/>
+
+A few details that matter:
+
+- **UDP, port 4789**: the fabric only sees a UDP packet between two leaves. It routes it like any other
+  packet.
+- **The UDP source port** is computed from a hash of the original frame (addresses, ports). Two different
+  flows between the same VTEPs therefore get different source ports, and the underlay's **ECMP** spreads
+  them over different spines. Without this trick, all traffic between two leaves would take the same path.
+- **50 more bytes**: a 1500-byte frame becomes a 1550-byte packet. Hence the **raised MTU** on fabric links:
+  without it, servers' large frames are lost, while small ones (ping, the TCP handshake) get through. A
+  symptom the [TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter teaches you to recognise.
+
+## BUM traffic
+
+For a **unicast** frame to a known MAC address, the VTEP knows which other VTEP to send it to. But Ethernet
+also relies on traffic aimed at **the whole segment**: *broadcast* (an <Term id="arp" /> request), *unknown
+unicast* (a MAC not learned yet) and *multicast*. This is called **BUM** traffic. The VTEP must send it to
+every other VTEP carrying the same VNI. Two methods:
+
+| | Multicast in the underlay | Ingress replication |
+|---|---|---|
+| **Principle** | Each VNI maps to a multicast group; the underlay delivers a single copy to all subscribed VTEPs | The source VTEP sends a unicast copy to each other VTEP of the VNI |
+| **Underlay** | Must do multicast routing (PIM): more complex | Unicast only |
+| **Cost** | Low, even with many VTEPs | One copy per remote VTEP: fine up to a few tens or hundreds |
+| **Use** | Older fabrics, very large and chatty fabrics | Today's norm, with EVPN |
+
+## Flood and learn, and its limits
+
+Without a control plane, VXLAN works like a classic switch: it **floods** unknown traffic to every VTEP,
+and **learns** MAC addresses by looking at incoming frames ("this MAC comes from VTEP 10.255.1.12"). You
+configure by hand, on each leaf, the list of other VTEPs:
+
+```text title="Arista EOS: static VXLAN (flood and learn)"
+interface Vxlan1
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 10 vni 10010
+   vxlan vlan 10 flood vtep 10.255.1.12 10.255.1.13
+```
+
+```text title="Cisco NX-OS: static VXLAN"
+feature nv overlay
+feature vn-segment-vlan-based
+vlan 10
+  vn-segment 10010
+interface nve1
+  no shutdown
+  source-interface loopback1
+  member vni 10010
+    ingress-replication protocol static
+      peer-ip 10.255.1.12
+      peer-ip 10.255.1.13
+```
+
+It works, but:
+
+- **the VTEP list must be maintained by hand** on each leaf, for each VNI. Adding a leaf means changing all
+  the others;
+- **learning happens by flooding**: every unknown MAC, every ARP, is replicated everywhere;
+- **there is no routing** between segments: you need a centralised gateway, through which all inter-VLAN
+  traffic climbs;
+- **nothing handles mobility** properly: when a virtual machine changes leaf, the other VTEPs find out when
+  they receive its traffic.
+
+The next chapter replaces all of this with a **control plane**: BGP EVPN.
+
+## In the lab
+
+The `dc-fabric` lab uses VXLAN with EVPN (next chapter), but the data plane is the same: you can observe
+VXLAN packets right away.
+
+<Lab name="dc-fabric" lang="en" />
+
+**1. VTEPs and VNIs.** On leaf1:
+
+```bash
+docker exec -it clab-dc-fabric-leaf1 Cli
+```
+
+```text
+show interfaces vxlan 1
+show vxlan vtep
+show vxlan address-table
+```
+
+`show interfaces vxlan 1` gives the source (`Loopback1`, `10.255.1.11`), the UDP port and the VLAN / VNI
+mappings. `show vxlan vtep` lists the other VTEPs discovered (`10.255.1.12` and `10.255.1.13`). The VXLAN
+address table stays empty until the servers have talked.
+
+**2. Capture VXLAN in the underlay.** In a first terminal, capture on the link between spine1 and leaf1,
+from a container sharing spine1's network stack:
+
+```bash
+docker run --rm -it --net container:clab-dc-fabric-spine1 nicolaka/netshoot tcpdump -nni eth1 udp port 4789
+```
+
+In a second terminal, make `host1` and `host2` talk (same VLAN 10, on two leaves):
+
+```bash
+docker exec clab-dc-fabric-host1 ping -c 4 10.10.10.12
+```
+
+The captured packets are UDP packets between `10.255.1.11` and `10.255.1.12`, port 4789, with the header
+`VXLAN, flags [I] (0x08), vni 10010` and, inside, the ICMP between `10.10.10.11` and `10.10.10.12`. The spine
+only sees the outer packet: it routes between two loopbacks, knowing nothing about VLAN 10. Depending on the
+hash, packets may also go through spine2: run the capture on spine2 if you see nothing.
+
+**3. The address table.** Back on leaf1, `show vxlan address-table` now shows `host2`'s MAC, behind VTEP
+`10.255.1.12`.
+
+## Key takeaways
+
+- VXLAN carries **Ethernet frames inside UDP** (port 4789), to stretch layer 2 over a routed fabric: the
+  **underlay** routes, the **overlay** carries the segments.
+- The **VTEP** encapsulates and decapsulates; the **VNI** (24 bits, 16 million values) identifies the
+  segment, and the VLAN becomes local to the leaf.
+- **50 bytes** of headers: raised MTU in the fabric. The UDP source port varies per flow to benefit from
+  **ECMP**.
+- **BUM** traffic is replicated by multicast or, most often, by the source (**ingress replication**).
+- Static flood and learn does not scale: manual VTEP lists, flooding, no distributed routing. Hence **EVPN**.

@@ -1,0 +1,297 @@
+---
+title: "EVPN, the control plane"
+description: "BGP EVPN as the VXLAN control plane: route types, RD and RT, ARP suppression, mobility, anycast gateway, asymmetric and symmetric IRB, prefix routes and multihoming, with Arista and Cisco configuration."
+pubDate: 2026-10-17
+level: advanced
+tags: [evpn, vxlan, bgp, irb, datacenter]
+vendor: [arista, cisco]
+order: 4
+---
+
+The previous chapter ended on the limits of VXLAN alone: VTEP lists to maintain by hand, MAC addresses
+learned by flooding the fabric, and no distributed routing. <Term id="evpn" /> (*Ethernet VPN*) replaces
+all of that with a **control plane**: instead of discovering addresses by watching traffic go by, leaves
+**advertise** them to each other over <Term id="bgp" />, before the first packet even flows.
+
+## BGP carries MAC addresses
+
+EVPN is a BGP **address family** (`l2vpn evpn`), like `ipv4 unicast`. The same BGP sessions, the same
+advertisement mechanism, but routes of a new kind: MAC addresses, MAC and IP pairs, VNI memberships.
+
+<Topology
+  width={700}
+  height={330}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 350, y: 60, label: 'spine1' },
+    { id: 'l1', type: 'l3switch', x: 140, y: 185, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 560, y: 185, label: 'leaf2', tone: 'emerald' },
+    { id: 'h1', type: 'server', x: 140, y: 275, label: 'host1', sub: '10.10.10.11' },
+    { id: 'h2', type: 'server', x: 560, y: 275, label: 'host2' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 'l1', to: 'h1' }, { from: 'l2', to: 'h2' },
+  ]}
+  flows={[
+    { from: 'l1', to: 's1', label: 'type 2: MAC + IP of host1', tone: 'violet', offset: -26 },
+    { from: 's1', to: 'l2', label: 'VNI 10010, VTEP leaf1', tone: 'violet', offset: -26 },
+  ]}
+  caption="leaf1 learns host1's MAC locally and advertises it in BGP EVPN; spine1 relays the route. leaf2 knows where to send traffic to host1 before host2 even talks to it."
+/>
+
+In the lab, the EVPN overlay follows the underlay: each leaf has an EVPN session with each spine, between
+loopbacks. The spines relay routes **without changing the next hop** (`next-hop-unchanged`): the next hop of
+an EVPN route stays the originating leaf's VTEP. Another common design uses iBGP with the spines as *route
+reflectors*; the result is the same.
+
+## Route types
+
+| Type | Name | What it advertises | Use |
+|---|---|---|---|
+| **1** | Ethernet Auto-Discovery | A multihomed Ethernet segment | Multihoming: fast convergence, load sharing |
+| **2** | MAC/IP Advertisement | A MAC address, and often its associated IP address | Learning hosts, ARP suppression, routing to hosts |
+| **3** | Inclusive Multicast Ethernet Tag | "I am a VTEP for VNI 10010" | Automatically builds the BUM replication list |
+| **4** | Ethernet Segment | A multihomed segment, to elect a forwarder | Multihoming: a single leaf forwards BUM to the server |
+| **5** | IP Prefix | An IP prefix in a VRF | Subnets, external routes, inter-VRF routing and fabric exit |
+
+Types **2** and **3** are enough for layer 2, type **5** serves layer 3. The
+[BGP EVPN route types](/en/tutorials/bgp-evpn-route-types) tutorial details them one by one, field by field.
+
+The **type 3** route alone fixes the first flaw of flood and learn: each leaf advertises the VNIs it
+carries, and each leaf automatically builds, VNI by VNI, the list of VTEPs to replicate BUM traffic to.
+Adding a leaf no longer requires touching the others.
+
+### RD and RT, again
+
+You find the two values seen with [VRFs](/en/courses/datacenter/vrf), at two levels:
+
+- per **VLAN** (a *MAC-VRF*): `rd 10.255.0.11:10010` and `route-target both 10010:10010`. Leaves carrying
+  VLAN 10 import routes with that RT;
+- per **VRF** (an *IP-VRF*): `rd 10.255.0.11:50001` and an RT `50001:50001`, for layer 3 routes.
+
+## What the control plane brings
+
+- **Less flooding.** MACs and IPs are known in advance. The leaf can even answer its servers' ARP requests
+  itself, with the MAC / IP pairs learned through EVPN: this is **ARP suppression**. ARP broadcasts no
+  longer cross the fabric.
+- **Mobility.** When a virtual machine changes leaf, the new leaf advertises its MAC with a higher
+  **sequence number** (*MAC Mobility* community). All leaves switch to the new location immediately,
+  without waiting for their tables to age out.
+- **Control.** EVPN routes are BGP routes: you can filter, observe and count them with the tools of the
+  [Dynamic routing](/en/courses/routing) course.
+
+## The anycast gateway
+
+In a VLAN stretched across the whole fabric, where should the servers' gateway live? If it sits on a single
+device, all routed traffic converges there, across the fabric. EVPN enables the **anycast gateway**
+(*distributed anycast gateway*): **every leaf** carries the gateway of every VLAN, with **the same IP
+address and the same MAC address** everywhere.
+
+```text title="Arista EOS: the same gateway on every leaf"
+ip virtual-router mac-address 00:1c:73:00:00:01
+!
+interface Vlan10
+   vrf PROD
+   ip address virtual 10.10.10.1/24
+```
+
+A server always talks to its gateway **on its own leaf**, in one hop. If it migrates to another leaf, it
+finds the same gateway, with the same MAC in its ARP cache: nothing changes for it.
+
+## Routing between VLANs: asymmetric or symmetric IRB
+
+When `host1` (VLAN 10, on leaf1) talks to `host3` (VLAN 20, on leaf3), someone has to route. With the
+anycast gateway, it is the ingress leaf, leaf1. Two models exist, called **IRB** (*Integrated Routing and
+Bridging*):
+
+| | Asymmetric IRB | Symmetric IRB |
+|---|---|---|
+| **Ingress leaf** | Routes from VLAN 10 to VLAN 20, then sends the frame into **VLAN 20's VNI** | Routes in the VRF, then sends the packet into the **VRF's VNI** (L3 VNI) |
+| **Egress leaf** | Simply switches in VLAN 20 | Routes again, from the VRF to VLAN 20 |
+| **Constraint** | **Every VLAN** must exist on **every leaf** | Each leaf only carries its own VLANs, plus the VRF's L3 VNI |
+| **Scale** | Small fabrics | The norm |
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'h1', label: 'host1', sub: 'VLAN 10' },
+    { id: 'l1', label: 'leaf1', sub: 'anycast gateway', tone: 'emerald' },
+    { id: 'l3', label: 'leaf3', sub: 'anycast gateway', tone: 'emerald' },
+    { id: 'h3', label: 'host3', sub: 'VLAN 20' },
+  ]}
+  messages={[
+    { from: 'h1', to: 'l1', label: 'to 10.10.20.13', sub: 'to the gateway MAC', tone: 'sky' },
+    { note: 'leaf1 routes in VRF PROD: 10.10.20.13 is behind VTEP 10.255.1.13', tone: 'violet' },
+    { from: 'l1', to: 'l3', label: 'VXLAN, L3 VNI 50001', sub: '10.255.1.11 → 10.255.1.13', tone: 'violet' },
+    { note: 'leaf3 routes from VRF PROD into VLAN 20', tone: 'violet' },
+    { from: 'l3', to: 'h3', label: 'to 10.10.20.13', sub: 'from the gateway MAC', tone: 'sky' },
+  ]}
+  caption="Symmetric routing: each leaf routes once. In between, the packet travels in the VRF's VNI (L3 VNI), not in a VLAN's."
+/>
+
+With symmetric IRB, each VRF gets an **L3 VNI** (`vxlan vrf PROD vni 50001`), and each leaf advertises, with
+its type 2 routes, its own router MAC. **Type 5** routes complete the picture: each leaf advertises its
+subnets, and a *border leaf* advertises routes to the outside of the fabric.
+
+## Multihoming
+
+A server connected to two leaves for redundancy can use [MLAG](/en/courses/fundamentals/link-aggregation),
+or EVPN directly: this is **EVPN multihoming**, or **ESI-LAG**. Both leaves share an Ethernet segment
+identifier (**ESI**) and advertise it with **type 1** and **4** routes. No more peer-link between the two
+leaves: BGP coordinates them.
+
+## A leaf's complete configuration
+
+The essentials of a lab leaf, in Arista EOS:
+
+```text title="Arista EOS: leaf1 EVPN overlay"
+interface Vxlan1
+   vxlan source-interface Loopback1
+   vxlan udp-port 4789
+   vxlan vlan 10 vni 10010
+   vxlan vlan 20 vni 10020
+   vxlan vrf PROD vni 50001
+!
+router bgp 65101
+   neighbor EVPN peer group
+   neighbor EVPN remote-as 65000
+   neighbor EVPN update-source Loopback0
+   neighbor EVPN ebgp-multihop 3
+   neighbor EVPN send-community extended
+   neighbor 10.255.0.1 peer group EVPN
+   neighbor 10.255.0.2 peer group EVPN
+   !
+   vlan 10
+      rd 10.255.0.11:10010
+      route-target both 10010:10010
+      redistribute learned
+   !
+   address-family evpn
+      neighbor EVPN activate
+   !
+   vrf PROD
+      rd 10.255.0.11:50001
+      route-target import evpn 50001:50001
+      route-target export evpn 50001:50001
+      redistribute connected
+```
+
+The Cisco NX-OS equivalent, as an excerpt (you also need the `router bgp` configuration, with the
+`l2vpn evpn` family and the VRF):
+
+```text title="Cisco NX-OS: EVPN overlay"
+nv overlay evpn
+feature bgp
+feature interface-vlan
+feature vn-segment-vlan-based
+feature nv overlay
+fabric forwarding anycast-gateway-mac 001c.7300.0001
+!
+vlan 10
+  vn-segment 10010
+vlan 3001
+  vn-segment 50001
+vrf context PROD
+  vni 50001
+  rd auto
+  address-family ipv4 unicast
+    route-target both auto evpn
+!
+interface Vlan10
+  vrf member PROD
+  ip address 10.10.10.1/24
+  fabric forwarding mode anycast-gateway
+interface Vlan3001
+  vrf member PROD
+  ip forward
+!
+interface nve1
+  source-interface loopback1
+  host-reachability protocol bgp
+  member vni 10010
+    ingress-replication protocol bgp
+  member vni 50001 associate-vrf
+!
+evpn
+  vni 10010 l2
+    rd auto
+    route-target both auto
+```
+
+With three VLANs, two VRFs and three leaves, that is already a few hundred lines, almost identical from one
+leaf to the next: exactly what Arista AVD generates from a data model of a few dozen lines.
+
+## In the lab
+
+<Lab name="dc-fabric" lang="en" />
+
+**1. EVPN sessions.** On leaf1:
+
+```bash
+docker exec -it clab-dc-fabric-leaf1 Cli
+```
+
+```text
+show bgp evpn summary
+```
+
+Two EVPN neighbors, the spines' loopbacks (`10.255.0.1` and `10.255.0.2`), each sending routes.
+
+**2. Type 3 routes.**
+
+```text
+show bgp evpn route-type imet
+```
+
+One route per VTEP and per VNI: leaf2 and leaf3 each advertise `10010`, `10020` and `10030`. That is the
+BUM replication list, built without any manual configuration. Each route is received twice, once per spine.
+
+**3. Type 2 routes.** Make the servers talk, then look at the learned addresses:
+
+```bash
+docker exec clab-dc-fabric-host2 ping -c 2 10.10.10.11
+docker exec clab-dc-fabric-host3 ping -c 2 10.10.20.1
+```
+
+```text
+show bgp evpn route-type mac-ip
+```
+
+You find `host2`'s MAC with its address `10.10.10.12`, behind leaf2's VTEP, and `host3`'s, behind leaf3.
+Note the two communities: the VLAN's RT (`10010:10010`) and the VRF's (`50001:50001`).
+
+**4. Symmetric routing.** From `host1` (VLAN 10), reach `host3` (VLAN 20, on leaf3):
+
+```bash
+docker exec clab-dc-fabric-host1 traceroute -n 10.10.20.13
+```
+
+Then, on leaf1:
+
+```text
+show ip route vrf PROD 10.10.20.13
+```
+
+The route to `10.10.20.13/32` is an EVPN route, via VTEP `10.255.1.13` and **VNI 50001**: VRF PROD's L3 VNI.
+Capturing on a spine as in the previous chapter, you see this traffic with `vni 50001`, not `vni 10010` or
+`10020`.
+
+**5. Prefixes and VRF isolation.**
+
+```text
+show bgp evpn route-type ip-prefix ipv4
+show ip route vrf DEV
+```
+
+Each leaf advertises its VRFs' subnets as type 5. VRF `DEV` only holds `10.10.10.0/24`: from `host4`,
+`10.10.20.13` stays unreachable, as in the first chapter. VRFs stay sealed across the whole fabric.
+
+## Key takeaways
+
+- **EVPN** is a BGP address family serving as the VXLAN **control plane**: leaves advertise MACs, IPs and
+  VNIs instead of discovering them by flooding.
+- Route types: **2** (MAC/IP), **3** (VNI membership, BUM replication list), **5** (IP prefixes); **1** and
+  **4** for multihoming.
+- **RD** and **RT** per VLAN (MAC-VRF) and per VRF (IP-VRF).
+- **ARP suppression**, **mobility** through sequence numbers, an **anycast gateway** identical on every leaf.
+- **Symmetric IRB**: each leaf routes once, and routed traffic travels in the VRF's **L3 VNI**.
+- An EVPN fabric is long to configure by hand, and ideal to generate with a tool such as AVD.
