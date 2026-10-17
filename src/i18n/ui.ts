@@ -65,6 +65,13 @@ export const ui = {
     'tools.howto': 'Mode d’emploi',
     'tools.learn': 'Comprendre la théorie',
     'tools.empty': 'Les premiers outils arrivent bientôt.',
+    'tools.community': 'Outils de la communauté',
+    'tools.communityIntro': "Des projets open source que j'utilise et recommande, développés par d'autres membres de la communauté réseau. Merci à leurs auteurs.",
+    'tools.by': 'Par',
+    'tools.license': 'Licence',
+    'tools.repo': 'Voir le projet',
+    'tools.docs': 'Documentation',
+    'tools.inTutorial': 'Utilisé dans le tutoriel',
   },
   en: {
     'site.description': 'Networking and security tutorials for students and career changers.',
@@ -121,6 +128,13 @@ export const ui = {
     'tools.howto': 'How to use it',
     'tools.learn': 'Learn the theory',
     'tools.empty': 'The first tools are coming soon.',
+    'tools.community': 'Community tools',
+    'tools.communityIntro': 'Open-source projects I use and recommend, built by other members of the networking community. Thanks to their authors.',
+    'tools.by': 'By',
+    'tools.license': 'License',
+    'tools.repo': 'View the project',
+    'tools.docs': 'Documentation',
+    'tools.inTutorial': 'Used in the tutorial',
   },
 } as const;
 

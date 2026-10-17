@@ -209,7 +209,9 @@ Mise en route (une seule fois) :
 - [ ] Formation Data center (VRF, spine/leaf, VXLAN, EVPN) : rédaction par Antoine
 - [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
-- [ ] Contenus à venir : OOB, Jinja2 en détail, Vault, installer ContainerLab et les images, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
+- [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
+- [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
+- [ ] Contenus à venir : OOB, Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
 ---
 
@@ -220,19 +222,6 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
 **8 Le réseau dans le cloud** (`cloud`). Les sauts 6 à 8 apparaissent déjà sur l'accueil, avec leurs chapitres marqués « bientôt ».
-
-### Monter son lab : ContainerLab et les images (tutoriel, prérequis de tous les labs)
-
-Le composant `<Lab>` suppose ContainerLab installé et l'image cEOS importée : un tutoriel dédié, lié depuis chaque lab.
-- Installer Docker puis ContainerLab (script officiel `bash -c "$(curl -sL https://get.containerlab.dev)"`), sous Linux
-  ou WSL2 ; ressources conseillées (RAM par nœud cEOS, CPU).
-- **Arista cEOS** : compte gratuit sur arista.com, page Software Downloads, archive `cEOS64-lab-<version>.tar.xz`,
-  `docker import … ceos:<version>` ; épingler la version dans les labs plutôt que `latest`.
-- **Pourquoi c'est plus compliqué chez Cisco** : pas d'image conteneur gratuite et libre d'accès comme cEOS ; les images
-  (IOL, IOS-XE CSR/Cat8000v, NX-OSv, XRd) passent par un abonnement (CML, contrat de support) et souvent par une machine
-  virtuelle emballée dans un conteneur (vrnetlab), plus lourde. Alternatives : Nokia SR Linux (libre), FRRouting, Cisco CML.
-- Commandes du quotidien : `deploy`, `destroy`, `inspect`, `graph`, se connecter (`docker exec`, SSH), sauvegarder une config.
-- Schéma : l'hôte, Docker, le réseau de management de ContainerLab et les liens veth entre nœuds.
 
 ### Saut 7 · Services et observabilité : management et accès hors bande (chapitre `oob`)
 

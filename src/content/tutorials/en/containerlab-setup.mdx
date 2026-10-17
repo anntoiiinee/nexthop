@@ -1,0 +1,301 @@
+---
+title: "Building your network lab with ContainerLab"
+description: "Install Docker and ContainerLab on Linux or WSL2, import the Arista cEOS image, understand why it's harder with Cisco, and master the everyday commands."
+pubDate: 2026-10-17
+level: beginner
+tags: [containerlab, lab, docker, ceos, wsl]
+vendor: [arista, cisco]
+---
+
+Every lab on this site runs on **ContainerLab**: a tool that runs routers and switches as Docker
+**containers**, wired together as if with real cables. A YAML file describes the topology, one command
+starts it, another destroys it. No hardware, no license to pay for Arista, and a complete lab that boots
+in a minute on a regular PC.
+
+This tutorial is the prerequisite for every lab: install it once, and you're set.
+
+## How it works
+
+ContainerLab reads a `topology.clab.yml` file, creates one container per device, then:
+
+- connects each container to a **management network** (a Docker bridge named `clab`, in
+  `172.20.20.0/24` by default): this is how you SSH into the devices;
+- creates the **links between devices** with pairs of virtual interfaces (*veth*): whatever goes in one
+  end comes out the other, exactly like a cable.
+
+<Topology
+  width={760}
+  height={360}
+  groups={[
+    { x: 16, y: 16, w: 728, h: 328, label: 'Your machine · Linux or WSL2', tone: 'slate' },
+    { x: 250, y: 50, w: 476, h: 278, label: 'Docker containers', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 'term', type: 'host', x: 110, y: 80, label: 'Your terminal', sub: 'ssh · docker exec' },
+    { id: 'br', type: 'switch', x: 110, y: 270, label: '"clab" bridge', sub: '172.20.20.1', tone: 'slate' },
+    { id: 'c1', type: 'switch', x: 370, y: 120, label: 'clab-lab-sw1', sub: 'eth0 · 172.20.20.2' },
+    { id: 'c2', type: 'switch', x: 610, y: 120, label: 'clab-lab-sw2', sub: 'eth0 · 172.20.20.3' },
+    { id: 'h1', type: 'host', x: 470, y: 265, label: 'clab-lab-host1', sub: 'Linux', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'term', to: 'br', label: 'management', style: 'dashed' },
+    { from: 'br', to: 'c1', style: 'dashed' },
+    { from: 'br', to: 'c2', style: 'dashed' },
+    { from: 'c1', to: 'c2', label: 'veth: eth1 ↔ eth1', tone: 'emerald' },
+    { from: 'c2', to: 'h1', label: 'veth: eth2 ↔ eth1', tone: 'emerald' },
+  ]}
+  caption="Each device is a container. Dashed: ContainerLab's management network; green: the veth links described in the topology, which act as cables."
+/>
+
+A device is named `clab-<lab name>-<node name>`. ContainerLab adds these names to your machine's
+`/etc/hosts` file: `ssh admin@clab-netops-spine1` just works.
+
+## Resources you need
+
+| Resource | Recommendation |
+|---|---|
+| **OS** | Linux (Ubuntu, Debian, Fedora…) or Windows 10/11 with **WSL2**. macOS isn't covered here: you need a Linux virtual machine. |
+| **Memory** | count **about 1 GB per cEOS node** (1.5 GB to be safe), a few tens of MB per Linux container, and 2 GB for the system |
+| **CPU** | 4 cores are enough for every lab on the site |
+| **Disk** | about 3 GB per cEOS image version, plus Docker |
+
+| Lab on the site | Contents | Recommended memory |
+|---|---|---|
+| [Static routing](/en/courses/fundamentals/static-routing) | 3 cEOS + 2 Linux | 6 GB |
+| [OSPF](/en/courses/routing/ospf) | 4 cEOS + 2 Linux | 8 GB |
+| [BGP](/en/courses/routing/bgp-basics) | 4 cEOS + 1 Linux | 8 GB |
+| [Automation (netops)](/formations/automation/python) (French only for now) | 3 cEOS | 6 GB |
+| [EVPN](/en/tutorials/bgp-evpn-route-types) | 3 cEOS + 2 Linux | 6 GB |
+
+## Installing on Linux
+
+ContainerLab needs **Docker**. Docker's official script installs it in one command, then you allow your
+user to run it without `sudo`:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
+newgrp docker                      # or log out and back in
+docker run --rm hello-world        # check
+```
+
+Then ContainerLab, with its official install script:
+
+```bash
+bash -c "$(curl -sL https://get.containerlab.dev)"
+containerlab version
+```
+
+<Callout type="warning">
+Running a script downloaded with `curl … | bash` means trusting its author. These two scripts are the
+official installation methods of Docker and ContainerLab; still, get into the habit of opening a script
+in your browser before running it, especially on a work machine.
+</Callout>
+
+## Installing on Windows with WSL2
+
+WSL2 runs a real Linux kernel inside Windows: ContainerLab works there just like on Linux.
+
+1. In an administrator PowerShell, install Ubuntu:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+2. Give WSL2 enough memory: create the `%UserProfile%\.wslconfig` file, then restart WSL with
+   `wsl --shutdown`.
+
+```ini title="%UserProfile%\.wslconfig"
+[wsl2]
+memory=8GB
+processors=4
+```
+
+3. In Ubuntu, enable **systemd** (Docker needs it to start automatically), then restart WSL once more:
+
+```ini title="/etc/wsl.conf (in Ubuntu)"
+[boot]
+systemd=true
+```
+
+4. Install Docker and ContainerLab **inside Ubuntu**, with the commands from the Linux section.
+
+<Callout type="tip">
+Install Docker directly in Ubuntu rather than Docker Desktop: it's lighter, free in every context, and
+the simplest setup for ContainerLab. ContainerLab's documentation also has a page dedicated to Windows,
+with a ready-to-use WSL distribution.
+</Callout>
+
+## The Arista cEOS image
+
+**cEOS** (containerized EOS) is the real Arista EOS operating system, packaged as a container. The *lab*
+edition is free, all you need is an account:
+
+1. Create a free account on **arista.com** (work or personal e-mail address).
+2. Open **Support > Software Downloads**, then under **EOS**, pick an active release (for example
+   `4.32`), and the **cEOS-lab** folder.
+3. Download the **`cEOS64-lab-<version>.tar.xz`** archive (the 64-bit version).
+4. Import it into Docker, **with its version number**:
+
+```bash
+docker import cEOS64-lab-4.32.0F.tar.xz ceos:4.32.0F
+docker tag ceos:4.32.0F ceos:latest     # alias used by the site's labs
+docker images | grep ceos
+```
+
+```text title="docker images | grep ceos"
+ceos         4.32.0F   3b1f2a9c7d10   2 minutes ago   2.47GB
+ceos         latest    3b1f2a9c7d10   2 minutes ago   2.47GB
+```
+
+<Callout type="note">
+The cEOS archive is a filesystem, not an exported Docker image: use `docker import`, not `docker load`.
+Both lines point to the same image (same ID): the alias takes no extra space.
+</Callout>
+
+### Why pin the version
+
+The site's labs use `image: ceos:latest`, so they work whatever version you downloaded. In **your own
+labs**, and especially in a team's, write the exact version:
+
+```yaml title="topology.clab.yml"
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:4.32.0F
+```
+
+EOS behavior changes from one version to the next (commands, defaults, bug fixes). A pinned lab gives the
+same result for everyone, and a year from now; a `latest` lab changes the day someone imports a new
+image. It's also what lets you reproduce a production issue on the exact version running there.
+
+### Save time with eos-downloader
+
+Downloading the archive by hand, then importing it, quickly gets repetitive: new version, new laptop,
+new colleague… **eos-downloader** does it all in one command. It's an open-source community project,
+created by **[TiTom73](https://github.com/titom73)** (@titom73), from an original idea by
+**[Mark Rayson](https://github.com/Sparky-python)** (@Sparky-python), and released under the Apache 2.0
+license.
+
+It connects to the Arista portal with an **API token**, which you generate from your profile on
+arista.com, then downloads and imports the image:
+
+```bash
+pipx install eos-downloader                 # or: pip install eos-downloader, in a venv
+export ARISTA_TOKEN='<your-token>'          # never in clear text in a script or a repository
+
+ardl info versions --branch 4.32            # which versions are available?
+ardl get eos --version 4.32.0F --format cEOS --import-docker --docker-name ceos --docker-tag 4.32.0F
+docker tag ceos:4.32.0F ceos:latest         # the alias used by the site's labs
+```
+
+And for a topology whose versions are **pinned**, it reads the file and fetches every cEOS version it
+uses, in a single command:
+
+```bash
+ardl get eos --clab topology.clab.yml --format cEOS
+```
+
+<Callout type="note" title="Thanks to its author">
+eos-downloader is a personal, community project, not an official one: it isn't supported by Arista.
+Options evolve between versions, check its [documentation](https://titom73.github.io/eos-downloader/).
+And if the tool saves you time, a star on its [GitHub repository](https://github.com/titom73/eos-downloader)
+is the best way to thank its author.
+</Callout>
+
+## What about Cisco?
+
+This is the most frequent question, and the answer is disappointing: **there is no Cisco equivalent of
+cEOS**, meaning a free container image you can download with a simple account.
+
+| Cisco image | Format | How to get it |
+|---|---|---|
+| **IOL** (IOS on Linux) | lightweight binary, supported by ContainerLab | shipped with **Cisco CML**, by subscription |
+| **IOS-XE** Cat8000v / CSR1000v | virtual machine | Cisco's website, an account and often a support contract |
+| **NX-OSv** 9000 | virtual machine | Cisco's website or CML |
+| **XRd** | container | Cisco's website, an account and depending on the image a contract |
+
+For virtual machines, ContainerLab relies on **vrnetlab**: a tool that "wraps" the VM in a container. It
+works, but it's much heavier:
+
+- the machine must support **nested virtualization** (KVM, `/dev/kvm`), which isn't always the case
+  under WSL2 or inside a VM;
+- each node uses **several GB of RAM** and takes **several minutes** to boot;
+- you have to build the container image yourself from the VM file.
+
+<Callout type="warning">
+Cisco images are licensed. Never download an image from an unofficial website: it's illegal, and a
+modified image can contain anything. Go through your Cisco account, your company contract or CML.
+</Callout>
+
+The alternatives, depending on what you want to learn:
+
+- **Arista cEOS**: free, lightweight, and the EOS syntax is very close to Cisco IOS. It's the choice made
+  for the site's labs.
+- **Nokia SR Linux**: completely free (`docker pull ghcr.io/nokia/srlinux`), great for routing and EVPN,
+  with a different syntax.
+- **FRRouting**: open-source routing (OSPF, BGP, IS-IS) in a Linux container, very lightweight.
+- **Cisco CML** (Modeling Labs): Cisco's official environment, paid, essential to prepare a Cisco
+  certification on the real operating systems.
+
+## Everyday commands
+
+| Command | Purpose |
+|---|---|
+| `sudo containerlab deploy -t topology.clab.yml` | start the lab |
+| `sudo containerlab inspect -t topology.clab.yml` | list the nodes, their state and management address |
+| `sudo containerlab inspect --all` | see every lab running on the machine |
+| `sudo containerlab graph -t topology.clab.yml` | interactive diagram in the browser (port 50080) |
+| `sudo containerlab save -t topology.clab.yml` | save each node's configuration |
+| `sudo containerlab destroy -t topology.clab.yml` | stop and remove the lab |
+| `sudo containerlab destroy -t topology.clab.yml --cleanup` | same, also removing the `clab-<lab>` folder |
+
+A typical session, on the `netops` lab:
+
+```text title="A lab session"
+$ sudo containerlab deploy -t topology.clab.yml
+…
++---+--------------------+--------------+-------------+---------+-----------------+
+| # |        Name        | Container ID |    Image    |  State  |  IPv4 Address   |
++---+--------------------+--------------+-------------+---------+-----------------+
+| 1 | clab-netops-leaf1  | 6c1d0b0a6f2e | ceos:latest | running | 172.20.30.12/24 |
+| 2 | clab-netops-leaf2  | 9a7e33c1d48b | ceos:latest | running | 172.20.30.13/24 |
+| 3 | clab-netops-spine1 | 1f0c9d2e7a55 | ceos:latest | running | 172.20.30.11/24 |
++---+--------------------+--------------+-------------+---------+-----------------+
+
+$ docker exec -it clab-netops-spine1 Cli      # the EOS CLI, no network needed
+spine1>enable
+spine1#show lldp neighbors
+
+$ ssh admin@clab-netops-leaf1                 # or over SSH (password: admin)
+```
+
+<Callout type="tip">
+Configurations saved with `containerlab save` live in `clab-<lab>/<node>/flash/startup-config`: on the
+next `deploy`, each node boots with them. To start over from the lab's original configuration, run
+`destroy --cleanup` before `deploy`.
+</Callout>
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `permission denied` on Docker | your user isn't in the `docker` group | `sudo usermod -aG docker $USER`, then log in again |
+| `image ceos:latest not found` | the image was imported under another name | `docker images`, then `docker tag <image> ceos:latest` |
+| a cEOS node stays unresponsive for a while | it's booting (one to two minutes) or short on memory | `docker logs clab-<lab>-<node>`, check free RAM (`free -h`) |
+| nodes stop on their own under WSL2 | WSL2 is short on memory | raise `memory` in `.wslconfig`, then `wsl --shutdown` |
+| `Ethernet1` doesn't exist | cEOS interfaces follow the topology's links | `eth1` in the topology becomes `Ethernet1` in EOS |
+
+## Key takeaways
+
+- ContainerLab runs each device in a **container**; links are **veth** pairs, management goes through the
+  `clab` Docker bridge.
+- Installation: **Docker**, then ContainerLab's official script, on Linux or **WSL2** (with enough memory
+  in `.wslconfig`).
+- **cEOS** is free with an Arista account: `docker import`, with the version in the tag, plus a
+  `ceos:latest` alias for the site's labs.
+- **Pin the version** in your own labs.
+- With **Cisco**, there's no free container image: CML, a contract, and often heavy VMs through vrnetlab.
+  Alternatives: cEOS, SR Linux, FRRouting.
+- Day to day: `deploy`, `inspect`, `graph`, `save`, `destroy`.

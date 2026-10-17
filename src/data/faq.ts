@@ -17,6 +17,10 @@ export const faq: FaqItem[] = [
       fr: "Non. Les labs utilisent ContainerLab, qui fait tourner des routeurs et des switches virtuels sur un simple PC sous Linux ou Windows avec WSL2. Les images de certains constructeurs, comme Arista cEOS, se téléchargent gratuitement après création d'un compte.",
       en: 'No. The labs use ContainerLab, which runs virtual routers and switches on a regular PC with Linux, or Windows with WSL2. Some vendor images, like Arista cEOS, can be downloaded for free after creating an account.',
     },
+    link: {
+      label: { fr: 'Monter son lab pas à pas', en: 'Build your lab step by step' },
+      href: { fr: '/tutoriels/containerlab-setup', en: '/en/tutorials/containerlab-setup' },
+    },
   },
   {
     question: { fr: "C'est gratuit ?", en: 'Is it free?' },
