@@ -1,0 +1,185 @@
+---
+title: "Centralising network logs with Loki"
+description: "Receiving switch and router syslog with Grafana Alloy, storing it in Loki and querying it with LogQL in Grafana: labels, the RFC 3164 format, searches, counts and flapping link detection, with a Docker Compose lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [loki, grafana, syslog, observability, monitoring]
+vendor: [multi]
+---
+
+A classic syslog server stores each device's logs in text files. It works, until the day you must answer, in the
+middle of an outage, "which switches saw an interface go down in the last ten minutes?" across three hundred
+devices. You end up chaining `grep` commands over huge files, hoping the clocks are right.
+
+**Loki**, by Grafana Labs, is a log database built for that question. It stores messages by **labels** (the
+device, the severity, the process), queries them with a language close to PromQL, and displays them in
+**Grafana**, next to Prometheus metrics. This tutorial builds the complete pipeline, tested with Loki 3.7, Grafana
+Alloy 1.20 and Grafana 11.2.
+
+## Architecture
+
+<Topology
+  width={720}
+  height={250}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 70, y: 60, label: 'leaf1' },
+    { id: 'sw2', type: 'switch', x: 70, y: 190, label: 'spine1' },
+    { id: 'alloy', type: 'server', x: 270, y: 125, label: 'Alloy', sub: 'syslog UDP 1514', tone: 'sky' },
+    { id: 'loki', type: 'server', x: 460, y: 125, label: 'Loki', sub: 'storage, LogQL', tone: 'amber' },
+    { id: 'graf', type: 'server', x: 640, y: 125, label: 'Grafana', sub: 'search, alerts', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'alloy' }, { from: 'sw2', to: 'alloy' }, { from: 'alloy', to: 'loki' }, { from: 'loki', to: 'graf' },
+  ]}
+  flows={[
+    { from: 'sw1', to: 'alloy', label: 'syslog', tone: 'sky', offset: -16 },
+    { from: 'alloy', to: 'loki', label: 'push', tone: 'amber', offset: -16 },
+  ]}
+  caption="Devices send their syslog to Alloy, which extracts labels and pushes messages into Loki. Grafana queries Loki."
+/>
+
+- **Grafana Alloy** is the collection agent: it receives syslog, transforms messages and sends them to Loki. It
+  replaces **Promtail**, Loki's former agent, which is no longer maintained.
+- **Loki** stores the messages. Unlike Elasticsearch, it does **not** index message text, only their labels: storage
+  is much lighter, and text search happens at query time, on the selected streams only.
+- **Grafana** queries Loki, displays logs, builds dashboards and fires alerts.
+
+## Labels, and the cardinality trap
+
+Loki groups messages into **streams**: one stream per label combination. `{host="leaf1", level="warning",
+app="Bgp"}` is a stream; every query starts by selecting streams by their labels.
+
+The golden rule: **few labels, with few distinct values**. The device, the severity, the process: a few hundred
+combinations, perfect. One label per interface, per IP address or per user means hundreds of thousands of tiny
+streams, and Loki collapses. That information stays **in the text**, and is extracted at query time.
+
+## The syslog format trap
+
+There are two syslog formats:
+
+| | RFC 3164 ("BSD") | RFC 5424 |
+|---|---|---|
+| **Example** | `<165>Oct 17 14:40:00 leaf1 Ebra: %LINEPROTO-5-UPDOWN: …` | `<165>1 2026-10-17T14:40:00.123Z leaf1 Ebra - - - %LINEPROTO-5-UPDOWN: …` |
+| **Timestamp** | No year, no time zone | Complete, with time zone |
+| **Who uses it** | Most network devices, by default | Recent systems |
+
+Alloy expects RFC 5424 by default, and **rejects** RFC 3164 messages: nothing reaches Loki, with no visible error on
+the device side. So you must set `syslog_format = "rfc3164"` (and for Cisco IOS devices, whose format has a few
+quirks, Alloy offers an `rfc3164_cisco_components` block).
+
+## The lab
+
+A small Docker Compose lab, with no switch at all: a `generator` service simulates three Arista switches sending
+their logs (interfaces going down and up, a BGP session, an administrator login, an optic near its limit).
+
+```bash title="Get the lab"
+mkdir loki-syslog && cd loki-syslog
+for f in docker-compose.yml alloy/config.alloy grafana/loki.yml generator/send-logs.sh; do
+  curl -fsSL --create-dirs -o "$f" "https://nexthop.alcpt.network/labs/loki-syslog/$f"
+done
+docker compose up -d
+```
+
+<CodeFile lab="loki-syslog" file="docker-compose.yml" />
+
+Alloy's configuration fits in three blocks: listen, label, write (comments in the lab files are in French).
+
+<CodeFile lab="loki-syslog" file="alloy/config.alloy" />
+
+- `loki.source.syslog` listens on UDP port 1514, in RFC 3164 format, and adds the `job="syslog-network"` label to
+  everything it receives;
+- `loki.relabel` turns the fields extracted from the message (`__syslog_message_hostname`, `…_severity`,
+  `…_app_name`) into `host`, `level` and `app` labels;
+- `loki.write` sends everything to Loki.
+
+Open Grafana on `http://localhost:3000`, **Explore** menu, **Loki** source. The first messages arrive after ten
+seconds.
+
+## Querying with LogQL
+
+**LogQL** always starts with a **stream selector**, in braces, then chains filters on the text.
+
+```text title="All of spine1's logs mentioning BGP"
+{job="syslog-network", host="spine1"} |= "BGP"
+```
+
+```text title="Messages of severity warning or worse, on every device"
+{job="syslog-network", level=~"emergency|alert|critical|error|warning"}
+```
+
+```text title="Interfaces going down, except on leaf2"
+{job="syslog-network", app="Ebra", host!="leaf2"} |= "changed state to down"
+```
+
+| Operator | Meaning |
+|---|---|
+| `\|=` / `!=` | Text contains / does not contain |
+| `\|~` / `!~` | Text matches / does not match a regular expression |
+| `\| regexp "…(?P<name>…)…"` | Extracts part of the text into a temporary label |
+| `\| json`, `\| logfmt` | Parses a structured message |
+
+LogQL can also **count**, like PromQL. How many messages per severity over the last five minutes:
+
+```text
+sum by (level) (count_over_time({job="syslog-network"}[5m]))
+```
+
+And above all, by extracting the interface from the text, how many times each interface went down in ten minutes:
+
+```text title="Flapping links"
+sum by (host, interface) (
+  count_over_time({job="syslog-network", app="Ebra"} |= "changed state to down"
+    | regexp "Interface (?P<interface>\\S+)" [10m])
+)
+```
+
+In the lab, the answer is `leaf1 Ethernet1` and `spine1 Ethernet1`, twice each: both ends of the same flapping link.
+It is the log-side equivalent of the flap detection in the [Prometheus and Grafana](/en/courses/operations/prometheus-grafana)
+chapter. The `interface` label only exists during the query: Loki's cardinality is untouched.
+
+## Alerting
+
+In Grafana, an **alert rule** can rely on a LogQL count query. For example: more than three outages of the same
+interface in ten minutes, or any `RX_POWER_LOW` message (an optic near its power limit, an early sign of failure).
+Alerts then go to the same channels as Prometheus's.
+
+<Callout type="field">
+The first day a team has centralised, queryable logs, a habit changes: at the start of an incident, instead of
+logging into switches one by one, you run one query across the whole fleet ("what happened everywhere between
+2:02 and 2:05 pm?"). The answer comes in seconds, and often points to a device nobody would have looked at first. It
+requires a single condition: clocks synchronised with NTP on every device, otherwise the order of events is wrong.
+</Callout>
+
+## Connecting real devices
+
+Just add the collector as a syslog server, on UDP port 1514. From the switches of the
+[`netops`](/en/courses/operations/monitoring) lab, the host machine is reachable at `172.20.30.1`:
+
+```text title="Arista EOS"
+logging host 172.20.30.1 1514 protocol udp
+logging trap informational
+```
+
+```text title="Cisco IOS"
+logging host 172.20.30.1 transport udp port 1514
+logging trap informational
+```
+
+## Moving to production
+
+- **Retention**: by default, the lab configuration keeps logs with no time limit. In production, set a duration
+  (`retention_period`) matching the company policy, and store data in object storage (S3 or compatible) rather than
+  on disk.
+- **High availability**: two Alloy agents behind a virtual address or a UDP load balancer, so collection survives the
+  loss of a server.
+- **Security**: UDP syslog is neither authenticated nor encrypted. Keep it on the management network, or use syslog
+  over TLS where devices support it.
+
+## Key takeaways
+
+- **Loki** stores logs by **labels**, without indexing their text: lightweight, and queryable like Prometheus.
+- **Grafana Alloy** receives syslog (and replaces Promtail); set **`syslog_format = "rfc3164"`** for network devices.
+- **Few labels** (device, severity, process); the rest is extracted at query time.
+- **LogQL**: a stream selector, filters (`|=`, `|~`, `regexp`), and counts (`count_over_time`) for dashboards and
+  alerts.
+- Clocks on **NTP**, or logs lie about the order of events.

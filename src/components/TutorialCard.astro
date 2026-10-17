@@ -12,7 +12,7 @@ interface Props {
 }
 
 const { post, lang } = Astro.props;
-const { title, description, level, tags, pubDate } = post.data;
+const { title, description, level, tags, pubDate, wip } = post.data;
 const updated = updatedDateOf(post);
 const href = tutorialUrl(lang, slugOf(post.id));
 ---
@@ -24,6 +24,11 @@ const href = tutorialUrl(lang, slugOf(post.id));
     <span class:list={['rounded-full px-2.5 py-1', levelColors[level]]}>
       {t(lang, `level.${level}`)}
     </span>
+    {wip && (
+      <span class="rounded-full border border-dashed border-slate-300 px-2.5 py-1 text-slate-500 dark:border-slate-600 dark:text-slate-400">
+        {t(lang, 'tutorials.wip')}
+      </span>
+    )}
   </div>
   <h3 class="text-lg font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
     {title}

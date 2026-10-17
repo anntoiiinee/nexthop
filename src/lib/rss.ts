@@ -9,7 +9,7 @@ import { profile } from '@/data/profile';
 export const rssUrl = (lang: Lang) => (lang === 'fr' ? '/rss.xml' : '/en/rss.xml');
 
 export async function buildFeed(lang: Lang) {
-  const tutorials = (await getTutorials(lang)).map((post) => ({
+  const tutorials = (await getTutorials(lang)).filter((post) => !post.data.wip).map((post) => ({
     title: post.data.title,
     description: post.data.description,
     pubDate: post.data.pubDate,

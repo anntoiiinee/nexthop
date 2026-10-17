@@ -1,13 +1,210 @@
 ---
 title: "Le SD-WAN expliqué"
-description: "Ce que le SD-WAN change par rapport au WAN classique : overlays, choix dynamique des liens, orchestration et sécurité."
+description: "Ce que change le SD-WAN par rapport au WAN MPLS classique : tunnels sur tous les transports, pilotage centralisé, routage par application selon la qualité des liens, sortie Internet locale, SASE, les solutions du marché et les pièges d'un projet."
 pubDate: 2026-10-17
 level: intermediate
-tags: [sdwan, wan, routing]
+tags: [sdwan, wan, ipsec, sase, routing]
 vendor: [multi]
-draft: true
 ---
 
-<Callout type="note" title="En cours d'écriture">
-Ce tutoriel est en cours de rédaction. Il sera publié très bientôt.
+Pendant vingt ans, le réseau étendu d'une entreprise a ressemblé à ceci : un VPN **MPLS** acheté à un opérateur,
+qui relie toutes les agences au siège, et une sortie Internet unique, au siège ou au data center, derrière les
+firewalls et le proxy. Les applications étaient dans le data center ; tout le trafic y allait, ça tombait bien.
+
+Aujourd'hui, la messagerie, la visioconférence, le CRM et le stockage sont dans le cloud. Le trafic d'une agence vers
+Microsoft 365 part vers le siège par le lien MPLS, sort sur Internet au siège, puis revient : lent, cher, et le lien
+MPLS sature. Le **SD-WAN** (*Software-Defined WAN*) est la réponse à ce changement.
+
+## Ce qui change
+
+<Topology
+  width={720}
+  height={320}
+  groups={[{ x: 20, y: 20, w: 220, h: 280, label: 'Agence', tone: 'emerald' }]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 160, label: 'Postes' },
+    { id: 'edge', type: 'router', x: 180, y: 160, label: 'Boîtier SD-WAN', tone: 'emerald' },
+    { id: 'mpls', type: 'cloud', x: 370, y: 70, label: 'MPLS', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 370, y: 170, label: 'Internet' },
+    { id: 'lte', type: 'cloud', x: 370, y: 265, label: '4G / 5G', tone: 'amber' },
+    { id: 'hq', type: 'server', x: 590, y: 90, label: 'Siège / data center', tone: 'violet' },
+    { id: 'saas', type: 'cloud', x: 590, y: 230, label: 'SaaS, cloud', tone: 'sky' },
+    { id: 'ctl', type: 'server', x: 590, y: 160, label: 'Orchestrateur', sub: 'politiques', tone: 'slate' },
+  ]}
+  links={[
+    { from: 'pc', to: 'edge' },
+    { from: 'edge', to: 'mpls', tone: 'violet' }, { from: 'edge', to: 'inet' }, { from: 'edge', to: 'lte', tone: 'amber', style: 'dashed' },
+    { from: 'mpls', to: 'hq', tone: 'violet' }, { from: 'inet', to: 'hq', style: 'dashed', label: 'tunnel IPsec' },
+    { from: 'inet', to: 'saas', tone: 'sky', label: 'accès direct' },
+  ]}
+  caption="Le boîtier SD-WAN de l'agence utilise tous ses liens à la fois, monte des tunnels chiffrés vers le siège sur chacun, et envoie le trafic SaaS directement sur Internet."
+/>
+
+| | WAN classique | SD-WAN |
+|---|---|---|
+| **Transports** | Un lien MPLS, parfois un secours | Tous à la fois : MPLS, fibre Internet, ADSL ou VDSL, 4G/5G |
+| **Choix du chemin** | Le routage : un chemin, l'autre en secours | **Par application**, selon la qualité mesurée de chaque lien |
+| **Accès au cloud** | Par le siège | **Directement** depuis l'agence (*local breakout*) |
+| **Configuration** | Routeur par routeur, en CLI | Centralisée, par politiques, depuis un orchestrateur |
+| **Déploiement d'une agence** | Un technicien sur place, des semaines | Boîtier envoyé sur site, branché, configuré à distance (*zero touch*) |
+
+## Les briques
+
+### Des tunnels sur tous les transports
+
+Chaque boîtier SD-WAN monte des **tunnels chiffrés** (le plus souvent <Term id="ipsec" />, voir
+[VPN IPsec](/formations/security/ipsec-vpn)) vers les autres sites, sur **chacun** de ses liens. Le réseau de
+l'entreprise devient un **overlay** qui ne dépend plus du transport : une agence peut n'avoir que deux accès
+Internet de deux opérateurs différents, sans aucun MPLS, et rester sur le même réseau privé que les autres.
+
+### Un pilotage centralisé
+
+On ne configure plus les boîtiers un par un. Un **orchestrateur** (ou console de gestion) porte les politiques :
+« la voix passe par le meilleur lien, la sauvegarde jamais par la 4G, le SaaS sort en local ». Un **contrôleur**
+distribue les routes et les clés de chiffrement entre les sites. Les boîtiers appliquent.
+
+### Le routage par application
+
+C'est le cœur du SD-WAN. Le boîtier :
+
+1. **identifie** chaque flux par son application (Teams, Salesforce, la sauvegarde), comme un <Term id="ngfw" /> ;
+2. **mesure en continu** la qualité de chaque lien, par des sondes : latence, gigue, pertes ;
+3. **choisit**, pour chaque application, le lien qui respecte son niveau de service (*SLA*), et bascule dès que la
+   qualité se dégrade.
+
+| Application | Exigence | Lien préféré | Si dégradé |
+|---|---|---|---|
+| Voix et visio | Latence < 150 ms, gigue < 30 ms, pertes < 1 % | Le meilleur lien du moment | Bascule immédiate sur un autre lien |
+| Application métier au data center | Pertes < 2 % | MPLS | Tunnel Internet |
+| Microsoft 365, SaaS | Débit | Internet, en direct | Autre accès Internet |
+| Sauvegardes, mises à jour | Aucune | Internet | Jamais la 4G/5G |
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'e', label: 'Boîtier SD-WAN', tone: 'emerald' },
+    { id: 'm', label: 'Lien MPLS', tone: 'violet' },
+    { id: 'i', label: 'Lien Internet' },
+  ]}
+  messages={[
+    { from: 'e', to: 'm', label: 'sondes : 18 ms, 0 % de pertes', tone: 'violet' },
+    { from: 'e', to: 'i', label: 'sondes : 25 ms, 0 % de pertes' },
+    { note: 'La visio passe par le MPLS, le meilleur lien', tone: 'slate' },
+    { from: 'e', to: 'm', label: 'sondes : 3 % de pertes', sub: 'SLA voix non respecté', style: 'blocked' },
+    { note: 'Bascule de la visio sur Internet, en moins d’une seconde', tone: 'emerald' },
+    { from: 'e', to: 'i', label: 'flux visio', tone: 'emerald' },
+  ]}
+  caption="Les sondes mesurent chaque lien en continu. Quand le MPLS se dégrade (sans tomber), la visio bascule sur Internet : l'utilisateur ne voit rien."
+/>
+
+C'est exactement la réponse aux **pannes grises** évoquées dans le chapitre
+[SNMP, syslog et NetFlow](/formations/operations/monitoring) : un lien qui perd 3 % de ses paquets n'est pas en panne,
+et un routage classique continue de l'utiliser. Le SD-WAN, lui, le mesure et l'évite.
+
+Certaines solutions vont plus loin pour les applications temps réel : **duplication** des paquets sur deux liens à la
+fois, ou **correction d'erreurs** (FEC) pour reconstituer les paquets perdus.
+
+### La sortie Internet locale, et le SASE
+
+Envoyer le trafic SaaS directement sur Internet depuis l'agence pose une question : où se fait la sécurité ? Deux
+réponses :
+
+- le boîtier SD-WAN est lui-même un **firewall** de nouvelle génération (c'est le cas de Fortinet ou de Palo Alto) ;
+- le trafic Internet part vers un service de sécurité **dans le cloud** (proxy, filtrage, inspection : voir
+  [Le proxy sortant](/formations/proxy/forward-proxy)).
+
+L'association du SD-WAN et de ces services de sécurité cloud s'appelle le **SASE** (*Secure Access Service Edge*) :
+le réseau et la sécurité livrés ensemble, au plus près de l'utilisateur, au bureau comme en télétravail.
+
+## Un exemple de politique
+
+Les configurations varient beaucoup d'un constructeur à l'autre, mais la logique est la même : des **membres** (les
+liens), des **sondes** avec des seuils, et des **règles** par application. Un extrait chez Fortinet :
+
+```text title="FortiGate (extrait) : la voix suit le lien qui respecte le SLA"
+config system sdwan
+    set status enable
+    config members
+        edit 1
+            set interface "wan1"
+        next
+        edit 2
+            set interface "wan2"
+        next
+    end
+    config health-check
+        edit "sla-voix"
+            set server "198.51.100.10"
+            set protocol ping
+            set members 1 2
+            config sla
+                edit 1
+                    set latency-threshold 150
+                    set jitter-threshold 30
+                    set packetloss-threshold 1
+                next
+            end
+        next
+    end
+    config service
+        edit 1
+            set name "voix"
+            set mode sla
+            set dst "SRV-VOIX"
+            config sla
+                edit "sla-voix"
+                    set id 1
+                next
+            end
+            set priority-members 1 2
+        next
+    end
+end
+```
+
+La sonde `sla-voix` mesure les deux liens vers un serveur de référence ; la règle `voix` envoie le trafic vers
+`SRV-VOIX` sur le premier lien qui respecte les seuils, dans l'ordre de préférence `1` puis `2`.
+
+## Les solutions du marché
+
+| Solution | Origine |
+|---|---|
+| **Cisco Catalyst SD-WAN** | Issue du rachat de Viptela |
+| **Fortinet Secure SD-WAN** | Intégré aux firewalls FortiGate |
+| **Palo Alto Prisma SD-WAN** | Issue du rachat de CloudGenix, intégrée à Prisma Access (SASE) |
+| **HPE Aruba EdgeConnect** | Issue du rachat de Silver Peak |
+| **Arista VeloCloud SD-WAN** | Ex-VMware VeloCloud, reprise par Arista |
+| **Versa Networks**, **Juniper Session Smart Routing** | Acteurs spécialisés |
+
+Les opérateurs proposent aussi du SD-WAN « managé », construit sur l'une de ces solutions.
+
+## Les pièges d'un projet SD-WAN
+
+- **Deux liens, deux chemins physiques.** Deux accès Internet de deux opérateurs qui passent par le même fourreau ou
+  le même boîtier de rue tomberont ensemble. Demandez les chemins physiques, et gardez une 4G/5G en dernier recours.
+- **Internet n'a pas de garantie.** Sans MPLS, la qualité dépend des opérateurs et de l'heure. Les sondes et les SLA
+  servent justement à le compenser, mais il faut des liens dimensionnés en conséquence.
+- **Le MTU des tunnels.** L'encapsulation IPsec réduit la taille utile des paquets : à régler (MSS), sous peine de
+  blocages sur les gros transferts (voir [TCP et UDP](/formations/fundamentals/tcp-udp)).
+- **Connaître ses applications.** Le routage par application suppose de savoir quelles applications comptent, et ce
+  qu'elles exigent. L'inventaire des flux est la première étape du projet, pas la dernière.
+- **La dépendance au constructeur.** L'overlay, l'orchestrateur et les boîtiers viennent du même constructeur : en
+  changer plus tard revient à refaire tout le WAN.
+
+<Callout type="field">
+L'incident classique d'une agence « redondante » : un accès fibre d'un opérateur, un accès fibre d'un autre, et une
+belle politique SD-WAN qui les utilise tous les deux. Une pelleteuse coupe un fourreau à cent mètres du site, et les
+deux liens tombent en même temps : les deux opérateurs louaient la même infrastructure pour le dernier kilomètre.
+Seul le lien 4G de secours, que personne n'avait pensé à tester depuis l'installation, aurait pu sauver la journée.
+Demandez aux opérateurs leurs chemins physiques, et testez le secours régulièrement.
 </Callout>
+
+## À retenir
+
+- Le SD-WAN construit un **overlay de tunnels chiffrés** sur tous les transports : MPLS, Internet, 4G/5G.
+- Un **orchestrateur** porte les politiques ; les boîtiers les appliquent, et se déploient sans technicien sur place.
+- Le **routage par application** mesure en continu chaque lien et choisit celui qui respecte le SLA de chaque
+  application : il évite les pannes grises qu'un routage classique ne voit pas.
+- Le **local breakout** envoie le SaaS directement sur Internet, sécurisé par le boîtier ou par un service cloud :
+  c'est le **SASE**.
+- Deux liens doivent avoir **deux chemins physiques**, et le secours doit être **testé**.

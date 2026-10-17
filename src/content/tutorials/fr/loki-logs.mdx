@@ -1,13 +1,192 @@
 ---
 title: "Centraliser les logs réseau avec Loki"
-description: "Collecter les logs syslog des équipements réseau avec Loki et les explorer dans Grafana."
+description: "Recevoir le syslog des switches et des routeurs avec Grafana Alloy, le stocker dans Loki et l'interroger en LogQL dans Grafana : étiquettes, format RFC 3164, recherches, comptages et détection des liens qui oscillent, avec un lab Docker Compose."
 pubDate: 2026-10-17
 level: intermediate
-tags: [observability, syslog, loki, grafana]
+tags: [loki, grafana, syslog, observability, monitoring]
 vendor: [multi]
-draft: true
 ---
 
-<Callout type="note" title="En cours d'écriture">
-Ce tutoriel est en cours de rédaction. Il sera publié très bientôt.
+Un serveur syslog classique range les journaux de chaque équipement dans des fichiers texte. Ça fonctionne,
+jusqu'au jour où il faut répondre en pleine panne à « quels switches ont vu une interface tomber dans les dix
+dernières minutes ? » sur trois cents équipements. On finit par enchaîner des `grep` sur des fichiers énormes, en
+espérant que les horloges soient à l'heure.
+
+**Loki**, de Grafana Labs, est une base de journaux conçue pour cette question. Il range les messages par
+**étiquettes** (l'équipement, la sévérité, le processus), les interroge avec un langage proche de PromQL, et les
+affiche dans **Grafana**, à côté des métriques de Prometheus. Ce tutoriel monte la chaîne complète, testée avec
+Loki 3.7, Grafana Alloy 1.20 et Grafana 11.2.
+
+## L'architecture
+
+<Topology
+  width={720}
+  height={250}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 70, y: 60, label: 'leaf1' },
+    { id: 'sw2', type: 'switch', x: 70, y: 190, label: 'spine1' },
+    { id: 'alloy', type: 'server', x: 270, y: 125, label: 'Alloy', sub: 'syslog UDP 1514', tone: 'sky' },
+    { id: 'loki', type: 'server', x: 460, y: 125, label: 'Loki', sub: 'stockage, LogQL', tone: 'amber' },
+    { id: 'graf', type: 'server', x: 640, y: 125, label: 'Grafana', sub: 'recherche, alertes', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'alloy' }, { from: 'sw2', to: 'alloy' }, { from: 'alloy', to: 'loki' }, { from: 'loki', to: 'graf' },
+  ]}
+  flows={[
+    { from: 'sw1', to: 'alloy', label: 'syslog', tone: 'sky', offset: -16 },
+    { from: 'alloy', to: 'loki', label: 'push', tone: 'amber', offset: -16 },
+  ]}
+  caption="Les équipements envoient leur syslog à Alloy, qui en extrait des étiquettes et pousse les messages dans Loki. Grafana interroge Loki."
+/>
+
+- **Grafana Alloy** est l'agent de collecte : il reçoit le syslog, transforme les messages et les envoie à Loki.
+  Il remplace **Promtail**, l'ancien agent de Loki, qui n'est plus maintenu.
+- **Loki** stocke les messages. Contrairement à Elasticsearch, il n'indexe **pas** le texte des messages, seulement
+  leurs étiquettes : le stockage est beaucoup plus léger, et la recherche dans le texte se fait au moment de la
+  requête, sur les seuls flux sélectionnés.
+- **Grafana** interroge Loki, affiche les journaux, construit des tableaux de bord et déclenche des alertes.
+
+## Les étiquettes, et le piège de la cardinalité
+
+Loki range les messages en **flux** (*streams*) : un flux par combinaison d'étiquettes. `{host="leaf1",
+level="warning", app="Bgp"}` est un flux ; chaque requête commence par choisir des flux par leurs étiquettes.
+
+La règle d'or : **peu d'étiquettes, avec peu de valeurs différentes**. L'équipement, la sévérité, le processus :
+quelques centaines de combinaisons, c'est parfait. Une étiquette par interface, par adresse IP ou par
+utilisateur, c'est des centaines de milliers de flux minuscules, et Loki s'effondre. Ces informations restent
+**dans le texte**, et on les extrait au moment de la requête.
+
+## Le piège du format syslog
+
+Il existe deux formats de syslog :
+
+| | RFC 3164 (« BSD ») | RFC 5424 |
+|---|---|---|
+| **Exemple** | `<165>Oct 17 14:40:00 leaf1 Ebra: %LINEPROTO-5-UPDOWN: …` | `<165>1 2026-10-17T14:40:00.123Z leaf1 Ebra - - - %LINEPROTO-5-UPDOWN: …` |
+| **Horodatage** | Sans année ni fuseau horaire | Complet, avec fuseau |
+| **Qui l'utilise** | La plupart des équipements réseau, par défaut | Les systèmes récents |
+
+Alloy attend du RFC 5424 par défaut, et **rejette** les messages au format RFC 3164 : rien n'arrive dans Loki, sans
+erreur visible côté équipement. Il faut donc préciser `syslog_format = "rfc3164"` (et pour les équipements Cisco IOS,
+dont le format a quelques particularités, Alloy propose un bloc `rfc3164_cisco_components`).
+
+## Le lab
+
+Un petit lab Docker Compose, sans aucun switch : un service `generator` simule trois switches Arista qui envoient
+leurs journaux (interfaces qui tombent et remontent, session BGP, connexion d'un administrateur, optique en limite).
+
+```bash title="Récupérer le lab"
+mkdir loki-syslog && cd loki-syslog
+for f in docker-compose.yml alloy/config.alloy grafana/loki.yml generator/send-logs.sh; do
+  curl -fsSL --create-dirs -o "$f" "https://nexthop.alcpt.network/labs/loki-syslog/$f"
+done
+docker compose up -d
+```
+
+<CodeFile lab="loki-syslog" file="docker-compose.yml" />
+
+La configuration d'Alloy tient en trois blocs : écouter, étiqueter, écrire.
+
+<CodeFile lab="loki-syslog" file="alloy/config.alloy" />
+
+- `loki.source.syslog` écoute en UDP sur le port 1514, au format RFC 3164, et ajoute l'étiquette
+  `job="syslog-network"` à tout ce qu'il reçoit ;
+- `loki.relabel` transforme les champs extraits du message (`__syslog_message_hostname`, `…_severity`, `…_app_name`)
+  en étiquettes `host`, `level` et `app` ;
+- `loki.write` envoie le tout à Loki.
+
+Ouvrez Grafana sur `http://localhost:3000`, menu **Explore**, source **Loki**. Les premiers messages arrivent au bout
+de dix secondes.
+
+## Interroger avec LogQL
+
+**LogQL** commence toujours par un **sélecteur de flux**, entre accolades, puis enchaîne des filtres sur le texte.
+
+```text title="Tous les journaux de spine1 qui parlent de BGP"
+{job="syslog-network", host="spine1"} |= "BGP"
+```
+
+```text title="Les messages de sévérité warning ou pire, sur tous les équipements"
+{job="syslog-network", level=~"emergency|alert|critical|error|warning"}
+```
+
+```text title="Les interfaces qui tombent, sauf sur leaf2"
+{job="syslog-network", app="Ebra", host!="leaf2"} |= "changed state to down"
+```
+
+| Opérateur | Sens |
+|---|---|
+| `\|=` / `!=` | Le texte contient / ne contient pas |
+| `\|~` / `!~` | Le texte correspond / ne correspond pas à une expression régulière |
+| `\| regexp "…(?P<nom>…)…"` | Extrait une partie du texte dans une étiquette temporaire |
+| `\| json`, `\| logfmt` | Analyse un message structuré |
+
+LogQL sait aussi **compter**, comme PromQL. Combien de messages par sévérité sur les cinq dernières minutes :
+
+```text
+sum by (level) (count_over_time({job="syslog-network"}[5m]))
+```
+
+Et surtout, en extrayant l'interface du texte, combien de fois chaque interface est tombée en dix minutes :
+
+```text title="Les liens qui oscillent"
+sum by (host, interface) (
+  count_over_time({job="syslog-network", app="Ebra"} |= "changed state to down"
+    | regexp "Interface (?P<interface>\\S+)" [10m])
+)
+```
+
+Dans le lab, la réponse est `leaf1 Ethernet1` et `spine1 Ethernet1`, deux fois chacune : les deux extrémités du même
+lien, qui oscille. C'est l'équivalent, côté journaux, de la détection d'oscillations du chapitre
+[Prometheus et Grafana](/formations/operations/prometheus-grafana). L'étiquette `interface` n'existe que le temps de la
+requête : la cardinalité de Loki n'est pas touchée.
+
+## Alerter
+
+Dans Grafana, une **règle d'alerte** peut reposer sur une requête LogQL de comptage. Par exemple : plus de trois
+coupures de la même interface en dix minutes, ou le moindre message `RX_POWER_LOW` (une optique en limite de
+puissance, signe avant-coureur d'une panne). Les alertes partent ensuite vers les mêmes canaux que celles de
+Prometheus.
+
+<Callout type="field">
+Le premier jour où l'équipe dispose de journaux centralisés et interrogeables, une habitude change : en début
+d'incident, au lieu de se connecter switch par switch, on lance une requête sur toute la flotte (« qu'est-ce qui
+s'est passé partout entre 14 h 02 et 14 h 05 ? »). La réponse arrive en quelques secondes, et pointe souvent vers un
+équipement que personne n'aurait regardé en premier. Cela suppose une seule condition : des horloges synchronisées
+en NTP sur tous les équipements, sinon l'ordre des événements est faux.
 </Callout>
+
+## Raccorder de vrais équipements
+
+Il suffit d'ajouter le collecteur comme serveur syslog, sur le port 1514 en UDP. Depuis les switches du lab
+[`netops`](/formations/operations/monitoring), la machine hôte est joignable en `172.20.30.1` :
+
+```text title="Arista EOS"
+logging host 172.20.30.1 1514 protocol udp
+logging trap informational
+```
+
+```text title="Cisco IOS"
+logging host 172.20.30.1 transport udp port 1514
+logging trap informational
+```
+
+## Aller vers la production
+
+- **Rétention** : par défaut, la configuration du lab garde les journaux sans limite de durée. En production, on fixe
+  une durée (`retention_period`) conforme à la politique de l'entreprise, et on stocke les données dans un stockage
+  objet (S3 ou compatible) plutôt que sur disque.
+- **Haute disponibilité** : deux agents Alloy derrière une adresse virtuelle ou un load balancer UDP, pour que la
+  collecte survive à la perte d'un serveur.
+- **Sécurité** : le syslog UDP n'est ni authentifié ni chiffré. Gardez-le sur le réseau de management, ou utilisez
+  syslog sur TLS quand les équipements le permettent.
+
+## À retenir
+
+- **Loki** stocke les journaux par **étiquettes**, sans indexer leur texte : léger, et interrogeable comme Prometheus.
+- **Grafana Alloy** reçoit le syslog (et remplace Promtail) ; précisez **`syslog_format = "rfc3164"`** pour les
+  équipements réseau.
+- **Peu d'étiquettes** (équipement, sévérité, processus) ; le reste s'extrait au moment de la requête.
+- **LogQL** : un sélecteur de flux, des filtres (`|=`, `|~`, `regexp`), et des comptages (`count_over_time`) pour les
+  tableaux de bord et les alertes.
+- Des horloges en **NTP**, sinon les journaux mentent sur l'ordre des événements.

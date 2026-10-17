@@ -4,6 +4,7 @@ import type { CollectionEntry } from 'astro:content';
 import type { MarkdownHeading } from 'astro';
 import { t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
+import Callout from '@/components/Callout.astro';
 import SupportCard from '@/components/SupportCard.astro';
 import ShareButtons from '@/components/ShareButtons.astro';
 import ContentDates from '@/components/ContentDates.astro';
@@ -22,6 +23,7 @@ interface Props {
 const { post, headings, lang, alternates, breadcrumbs } = Astro.props;
 const { title, description, pubDate, level, tags } = post.data;
 const updatedDate = updatedDateOf(post);
+const wip = post.data.wip; // tutoriel en cours de rédaction : visible, mais pas indexé
 const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
 
 const path = Astro.url.pathname;
@@ -56,6 +58,7 @@ const jsonLd = [
   alternates={alternates}
   article={{ published: pubDate, modified: updatedDate, tags }}
   jsonLd={jsonLd}
+  noindex={wip}
 >
   <div class="mx-auto grid max-w-6xl gap-12 px-4 py-12 lg:grid-cols-[minmax(0,1fr)_14rem]">
     <article>
@@ -77,6 +80,7 @@ const jsonLd = [
       </header>
 
       <div class="prose prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-a:text-sky-600 dark:prose-a:text-sky-400">
+        {wip && <Callout type="note" title={t(lang, 'tutorials.wip')} lang={lang}>{t(lang, 'tutorials.wipBanner')}</Callout>}
         <slot />
       </div>
       <ShareButtons title={title} url={absoluteUrl(path)} lang={lang} class="mt-16 border-t border-slate-200 pt-8 dark:border-slate-800" />

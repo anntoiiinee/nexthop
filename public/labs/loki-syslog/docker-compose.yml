@@ -1,0 +1,42 @@
+# Lab du tutoriel « Centraliser les logs réseau avec Loki »
+# Loki stocke les journaux, Alloy reçoit le syslog des équipements, Grafana les affiche.
+# Le service « generator » simule trois switches qui envoient leurs journaux.
+#   docker compose up -d        puis    http://localhost:3000  (Explore > Loki)
+#   docker compose down -v      pour tout supprimer
+services:
+  loki:
+    image: grafana/loki:3.7.8
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  alloy:
+    image: grafana/alloy:v1.20.1
+    command: run --server.http.listen-addr=0.0.0.0:12345 /etc/alloy/config.alloy
+    volumes:
+      - ./alloy:/etc/alloy:ro
+    ports:
+      - "1514:1514/udp"   # syslog des équipements
+      - "12345:12345"     # interface web d'Alloy
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+    volumes:
+      - ./grafana:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - loki
+
+  generator:
+    image: alpine:3.20
+    command: sh /generator/send-logs.sh
+    volumes:
+      - ./generator:/generator:ro
+    depends_on:
+      - alloy

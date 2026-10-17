@@ -1,0 +1,41 @@
+// Grafana Alloy : reçoit le syslog des équipements réseau et l'envoie à Loki.
+
+// 1. Écouter le syslog en UDP. Les équipements réseau envoient le plus souvent le format
+//    BSD (RFC 3164) : on le précise, sinon Alloy attend du RFC 5424 et rejette les messages.
+loki.source.syslog "network" {
+  listener {
+    address                         = "0.0.0.0:1514"
+    protocol                        = "udp"
+    syslog_format                   = "rfc3164"
+    rfc3164_default_to_current_year = true
+    labels                          = { job = "syslog-network" }
+  }
+  relabel_rules = loki.relabel.syslog.rules
+  forward_to    = [loki.write.default.receiver]
+}
+
+// 2. Transformer les champs du message syslog en étiquettes Loki.
+//    Peu d'étiquettes, à faible cardinalité : l'équipement, la sévérité, le processus.
+loki.relabel "syslog" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__syslog_message_hostname"]
+    target_label  = "host"
+  }
+  rule {
+    source_labels = ["__syslog_message_severity"]
+    target_label  = "level"
+  }
+  rule {
+    source_labels = ["__syslog_message_app_name"]
+    target_label  = "app"
+  }
+}
+
+// 3. Écrire dans Loki.
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
