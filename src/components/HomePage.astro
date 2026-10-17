@@ -3,7 +3,7 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import { Image } from 'astro:assets';
 import TutorialCard from './TutorialCard.astro';
 import LogoMarquee from './LogoMarquee.astro';
-import ToolCard from './ToolCard.astro';
+import ToolCarousel from './ToolCarousel.astro';
 import TermOfTheDay from './TermOfTheDay.astro';
 import Faq from './Faq.astro';
 import { readdirSync } from 'node:fs';
@@ -69,7 +69,7 @@ const copy = {
       terms: ['terme défini', 'termes définis'],
     },
     toolsTitle: 'Des outils pour s’entraîner',
-    toolsIntro: 'Calculer, découper, se tester : directement dans le navigateur, sans rien installer.',
+    toolsIntro: 'Calculer, découper, décoder, se tester : directement dans le navigateur, sans rien installer.',
     toolsAll: 'Tous les outils →',
     faqTitle: 'Questions fréquentes',
     audience: [
@@ -112,7 +112,7 @@ const copy = {
       terms: ['defined term', 'defined terms'],
     },
     toolsTitle: 'Tools to practice',
-    toolsIntro: 'Calculate, split, test yourself: right in your browser, nothing to install.',
+    toolsIntro: 'Calculate, split, decode, test yourself: right in your browser, nothing to install.',
     toolsAll: 'All tools →',
     faqTitle: 'Frequently asked questions',
     audience: [
@@ -300,9 +300,7 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
         </div>
         <a href={routes.tools[lang]} class="shrink-0 text-sm font-medium text-sky-600 hover:underline dark:text-sky-400">{copy.toolsAll}</a>
       </div>
-      <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {tools.slice(0, 3).map((tool) => <ToolCard tool={tool} lang={lang} />)}
-      </div>
+      <ToolCarousel lang={lang} />
     </section>
   )}
 
