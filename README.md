@@ -234,6 +234,8 @@ Mise en route (une seule fois) :
 - [ ] Lab `dc-fabric` : valider sur un vrai ContainerLab avec cEOS, puis remplacer les descriptions des sorties par de vraies sorties
 - [x] Saut 7 · Services et observabilité complet en FR et EN : DDI (lab `ddi` Kea + BIND + DDNS, section Infoblox / EfficientIP), SNMP / syslog / NetFlow (pannes réseau silencieuses, démonstration `tc netem`), télémétrie gNMI / gNMIc, Prometheus / Grafana (alertes sur pannes grises, weather map) ; supervision ajoutée au lab `netops`
 - [ ] Labs `ddi` (relais cEOS) et supervision de `netops` (gNMI, SNMP, syslog depuis cEOS) : valider sur un vrai ContainerLab
+- [x] Tutoriels en FR et EN : CVP, Internet à l'échelle mondiale, LAN / WAN / PAN, MPLS, plugins NetBox (procédure netbox-docker testée avec NetBox 4.7.3 et netbox-bgp 0.20.2)
+- [ ] Tutoriels à écrire, en brouillon (`draft: true`) en attendant : `ldaps-arista`, `loki-logs`, `sdwan` ; `bgp-evpn-route-types` à étoffer
 - [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
 
 ---
