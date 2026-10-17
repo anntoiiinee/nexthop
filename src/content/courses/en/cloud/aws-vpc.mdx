@@ -1,0 +1,190 @@
+---
+title: "AWS networking basics"
+description: "Regions and availability zones, VPCs and addressing plans, public and private subnets, route tables, Internet Gateway, NAT Gateway and Elastic IPs, and what changes compared with a traditional network."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, vpc, cloud, routing, nat]
+vendor: [multi]
+order: 1
+---
+
+In a data center, you start with switches, VLANs and a router. In AWS there is nothing to cable: you create
+a **VPC**, split it into subnets and write route tables. The words are familiar, but some behaviors
+surprise a network engineer: there is no broadcast, no VLAN, and the router appears nowhere. This chapter
+lays the building blocks every following chapter reuses.
+
+## Regions and availability zones
+
+A **region** is a geographic area (`eu-west-3` in Paris, `eu-central-1` in Frankfurt). Each region contains
+several <Term id="az">availability zones</Term>: separate data centers, with their own power and networking,
+connected by low-latency links. Paris has three: `eu-west-3a`, `eu-west-3b` and `eu-west-3c`.
+
+The golden rule of cloud availability follows: **everything that matters is deployed in at least two
+zones**. A zone can fail (power or network incident), and the region keeps running.
+
+## The VPC and its addressing plan
+
+A <Term id="vpc" /> is an isolated private network, specific to a region. Its first characteristic is its
+address block, chosen at creation, between a /16 and a /28.
+
+<Callout type="warning">
+A VPC's block is chosen like any other block in the addressing plan: it must **overlap neither the data
+center, nor the branches, nor the other VPCs**. Two overlapping networks can never be routed to each other
+without NAT, and that need always comes, often on the day the VPN is built. The "default" VPC AWS creates in
+every region uses `172.31.0.0/16`, identical in every account: don't use it for production. The rules from
+the [Naming conventions and IPAM](/en/courses/automation/naming-ipam) chapter apply as they are.
+</Callout>
+
+In the common thread, the production VPC gets `10.50.0.0/16`, split into /24 subnets:
+
+<AddressSpace
+  base="10.50.0.0/19"
+  subnets={[
+    { cidr: '10.50.0.0/24', label: 'public-a' },
+    { cidr: '10.50.1.0/24', label: 'public-b' },
+    { cidr: '10.50.10.0/24', label: 'private-a' },
+    { cidr: '10.50.11.0/24', label: 'private-b' },
+  ]}
+  caption="The start of VPC 10.50.0.0/16: two public subnets and two private ones, one of each per zone. The free space between them leaves room for future zones and uses."
+/>
+
+The [VLSM planner](/en/tools/vlsm-planner) helps prepare this split from requirements.
+
+## Subnets
+
+A subnet belongs to **a single availability zone**. To be present in two zones, you therefore need two
+subnets. And in each subnet, AWS **reserves five addresses**:
+
+| Address (in `10.50.0.0/24`) | Reserved for |
+|---|---|
+| `10.50.0.0` | the network address |
+| `10.50.0.1` | the VPC router (every machine's gateway) |
+| `10.50.0.2` | the AWS DNS server (at "VPC base + 2", reserved in every subnet) |
+| `10.50.0.3` | future AWS use |
+| `10.50.0.255` | the broadcast address (broadcast isn't supported, but the address is reserved) |
+
+A /24 therefore offers 251 usable addresses, and a /28 only 11. Keep that in mind when sizing small subnets.
+
+## Route tables: what makes a subnet "public"
+
+Each subnet is associated with a **route table**. They all contain a `local` route to the VPC block, which
+can't be removed: inside a VPC, every subnet reaches every other one (filtering happens elsewhere, in the
+next chapter).
+
+The difference between a public subnet and a private one comes down to **a single route**:
+
+| Table | Destination | Target | Effect |
+|---|---|---|---|
+| public | `10.50.0.0/16` | `local` | the VPC |
+| public | `0.0.0.0/0` | `igw-…` (Internet Gateway) | **public subnet**: reachable from the Internet if the machine has a public IP |
+| private | `10.50.0.0/16` | `local` | the VPC |
+| private | `0.0.0.0/0` | `nat-…` (NAT Gateway) | **private subnet**: can go out to the Internet, but nobody can come in |
+
+<Topology
+  width={780}
+  height={450}
+  groups={[
+    { x: 20, y: 100, w: 740, h: 330, label: 'VPC 10.50.0.0/16', tone: 'sky' },
+    { x: 40, y: 175, w: 330, h: 235, label: 'Zone eu-west-3a', tone: 'slate' },
+    { x: 410, y: 175, w: 330, h: 235, label: 'Zone eu-west-3b', tone: 'slate' },
+  ]}
+  nodes={[
+    { id: 'net', type: 'cloud', x: 390, y: 35, label: 'Internet' },
+    { id: 'igw', type: 'router', x: 390, y: 118, label: 'Internet Gateway', tone: 'amber' },
+    { id: 'nat', type: 'router', x: 120, y: 250, label: 'NAT Gateway', sub: 'public-a', tone: 'amber' },
+    { id: 'weba', type: 'server', x: 270, y: 250, label: 'web-a', sub: 'public-a' },
+    { id: 'webb', type: 'server', x: 560, y: 250, label: 'web-b', sub: 'public-b' },
+    { id: 'appa', type: 'server', x: 200, y: 355, label: 'app-a', sub: 'private-a', tone: 'emerald' },
+    { id: 'appb', type: 'server', x: 580, y: 355, label: 'app-b', sub: 'private-b', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'net', to: 'igw' }, { from: 'igw', to: 'weba' }, { from: 'igw', to: 'webb' }, { from: 'igw', to: 'nat' },
+    { from: 'appa', to: 'nat', style: 'dashed' }, { from: 'appb', to: 'nat', style: 'dashed' },
+  ]}
+  caption="Web servers, in public subnets, are reachable from the Internet. Application servers, in private subnets, go out through the NAT Gateway (a single one here, as in the lab; one per zone in production)."
+/>
+
+## Internet Gateway, NAT Gateway and Elastic IPs
+
+- The **Internet Gateway** (IGW) connects the VPC to the Internet. It is redundant by design, free, and
+  there is only one per VPC. It also does **1:1 NAT**: a machine with a public IPv4 doesn't see it on its
+  interface, it only knows its private address. The IGW translates.
+- The **NAT Gateway** lets private subnets go out to the Internet (updates, API calls) without being
+  reachable. It sits in a **public** subnet and is tied to a zone: in production, deploy one per zone,
+  otherwise the failure of its zone cuts Internet access for all the others. It is billed by the hour and
+  by volume processed.
+- An **Elastic IP** is a fixed public IPv4, reserved for the account, that you attach to a NAT Gateway or a
+  machine. Since 2024, **every public IPv4 is billed** by the hour, attached or not: don't allocate them
+  "just in case".
+
+<Callout type="tip">
+In IPv6, every address is public and there is no NAT. To get the same effect as a private subnet (go out
+without being reachable), AWS offers the **Egress-only Internet Gateway**, free by the hour: it lets
+connections out and refuses those coming in from outside.
+</Callout>
+
+## What changes compared with a traditional network
+
+A VPC looks like a routed network, but it is not an Ethernet network. Several data center reflexes no longer
+work:
+
+| In the data center | In a VPC |
+|---|---|
+| VLANs and trunks | No VLANs: a subnet is a logical object, with no visible layer 2 |
+| Broadcast and multicast | Neither broadcast nor multicast (except multicast through Transit Gateway) |
+| ARP between machines | ARP is intercepted and answered by the infrastructure: no gratuitous ARP, no spoofing |
+| A VRRP gateway that fails over with gratuitous ARP | Impossible: high availability goes through a load balancer or a route table update |
+| The router is a device | The router is implicit (`.1` of each subnet) and is driven by route tables |
+| An appliance (firewall, router) routes other machines' traffic | Its interface's source/destination check must be disabled, otherwise AWS drops that traffic |
+| MTU 1500, jumbo frames if configured | 9001 bytes inside the VPC, 1500 to the Internet and across a VPN |
+
+<Callout type="field">
+The source/destination check is the classic trap of the first virtual firewall deployed in a VPC:
+everything is configured, routes point to it, and nothing goes through. By default, AWS drops any packet
+whose machine is neither the source nor the destination. On an appliance that routes, disable that check
+(`source_dest_check = false` in Terraform).
+</Callout>
+
+## Azure and Google Cloud equivalents
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| VPC (regional) | Virtual Network, VNet (regional) | VPC (**global**: one VPC spans every region) |
+| Subnet, tied to one zone | Subnet, spans every zone of the region | Subnet, regional |
+| 5 reserved addresses per subnet | 5 reserved addresses per subnet | 4 reserved addresses per subnet |
+| Route table | Route table (system routes + UDRs) | VPC routes |
+| Internet Gateway | Implicit (default outbound access, being retired) | Default Internet gateway (`0.0.0.0/0` route) |
+| NAT Gateway | Azure NAT Gateway | Cloud NAT |
+
+## In the lab
+
+You need an AWS account, an IAM user (never the root account) with its keys configured through
+`aws configure`, and Terraform 1.10 or later. The [Terraform](/en/courses/cloud/terraform) chapter details
+the files; here we deploy them.
+
+```bash
+cd cloud-aws
+terraform init          # downloads the AWS provider
+terraform plan          # shows what will be created: Plan: 24 to add, 0 to change, 0 to destroy.
+terraform apply         # creates the VPC, the 4 subnets, the route tables, the IGW…
+```
+
+1. In the AWS console (*VPC > Your VPCs*), find `nexthop-vpc`, then its subnets: check each one's zone and the
+   number of available addresses (251 for a /24).
+2. Open both route tables: only the public one has a `0.0.0.0/0` route to the IGW. The private one also has
+   a route to an S3 *prefix list*: that is the lab's *gateway endpoint*, which reaches S3 without NAT.
+3. Enable the NAT Gateway (`terraform apply -var enable_nat_gateway=true`) and look at the private table: a
+   `0.0.0.0/0` route to the NAT Gateway has appeared. Note the Elastic IP from `terraform output nat_public_ip`.
+4. Disable it (`terraform apply`), then, at the end of the session: `terraform destroy`.
+
+## Key takeaways
+
+- A **region** contains several **availability zones**; everything that matters is deployed in at least two.
+- The **VPC** block is part of the company's addressing plan: **no overlap, ever**.
+- A **subnet** lives in a single zone, and AWS **reserves five addresses** in it.
+- A subnet is **public** if it has a default route to the **Internet Gateway**; a **private** subnet goes out
+  through a **NAT Gateway**, which is billed, one per zone in production.
+- No broadcast, no VLAN, no gratuitous ARP: high availability and routing go through **route tables** and
+  load balancers.
+
+Next chapter: **security groups and NACLs**, to decide who talks to whom in the VPC.

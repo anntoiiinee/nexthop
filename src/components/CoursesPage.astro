@@ -5,6 +5,7 @@ import { routes, t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import { getCourses } from '@/lib/courses';
 import { courseDates } from '@/lib/dates';
+import { roadmap } from '@/data/roadmap';
 import ContentDates from './ContentDates.astro';
 
 interface Props { lang: Lang; }
@@ -12,6 +13,12 @@ const { lang } = Astro.props;
 
 const entries = await getCollection('courses',
   ({ id, data }) => id.startsWith(`${lang}/`) && !data.draft);
+
+const levelRank = { beginner: 0, intermediate: 1, advanced: 2 } as const;
+const hop = (slug: string) => {
+  const i = roadmap.findIndex((step) => step.course === slug);
+  return i < 0 ? roadmap.length : i;
+};
 
 const courses = entries
   .filter((e) => e.data.order === 0)
@@ -21,7 +28,10 @@ const courses = entries
       (e) => e.id.split('/')[1] === slug && e.data.order > 0
     ).length;
     return { course, slug, chapters };
-  });
+  })
+  // Du débutant à l'avancé ; à niveau égal, dans l'ordre des sauts du parcours
+  .sort((a, b) =>
+    levelRank[a.course.data.level] - levelRank[b.course.data.level] || hop(a.slug) - hop(b.slug));
 const dates = Object.fromEntries((await getCourses(lang)).map((c) => [c.slug, courseDates(c)]));
 ---
 <BaseLayout title={`${t(lang, 'courses.title')} | Next Hop`} lang={lang} alternates={routes.courses}>

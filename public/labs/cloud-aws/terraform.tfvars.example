@@ -1,0 +1,8 @@
+# Copier en terraform.tfvars et adapter. Les options payantes restent à false par défaut.
+region             = "eu-west-3"
+vpc_cidr           = "10.50.0.0/16"
+enable_nat_gateway = false
+enable_flow_logs   = false
+enable_vpn         = false
+# onprem_public_ip = "203.0.113.10"
+# onprem_asn       = 65001

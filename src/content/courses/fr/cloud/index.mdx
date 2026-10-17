@@ -1,0 +1,88 @@
+---
+title: "Le réseau dans le cloud"
+description: "Étendre le réseau de l'entreprise jusque dans le cloud : VPC, sous-réseaux et routage AWS, security groups et NACL, Transit Gateway, VPN et Direct Connect vers le data center, et tout le réseau décrit en Terraform. Équivalents Azure et GCP à chaque chapitre."
+pubDate: 2026-10-17
+level: intermediate
+tags: [cloud, aws, azure, gcp, vpc, terraform, vpn, bgp]
+vendor: [multi]
+order: 0
+---
+
+Le parcours a commencé par un câble et une trame Ethernet. Il se termine là où vont aujourd'hui une bonne
+partie des applications : dans le **cloud public**. Un réseau cloud se configure par une API plutôt qu'en
+CLI, mais on y retrouve tout ce que les sauts précédents ont construit : un plan d'adressage, des tables de
+routage, des firewalls, du BGP, des tunnels IPsec et du code versionné. Ce saut montre ce qui reste
+identique, ce qui change vraiment, et comment relier proprement le cloud au data center.
+
+## Le fil rouge : l'entreprise s'installe dans la région de Paris
+
+L'entreprise des formations précédentes déploie ses nouvelles applications chez **AWS**, dans la région
+`eu-west-3` (Paris). Le réseau doit suivre : un VPC bien découpé, un filtrage aussi rigoureux qu'au data
+center, plusieurs VPC qui communiquent sans devenir un plat de spaghettis, un lien fiable vers le data
+center, et le tout décrit en code.
+
+<Topology
+  width={780}
+  height={330}
+  groups={[
+    { x: 330, y: 20, w: 430, h: 290, label: 'AWS · région eu-west-3 (Paris)', tone: 'amber' },
+    { x: 20, y: 60, w: 250, h: 210, label: 'Data center', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 'dc', type: 'router', x: 145, y: 120, label: 'Routeur VPN', sub: 'AS 65001' },
+    { id: 'srv', type: 'server', x: 145, y: 225, label: 'Serveurs', sub: '10.10.0.0/16' },
+    { id: 'tgw', type: 'router', x: 450, y: 165, label: 'Transit Gateway', sub: 'le hub', tone: 'violet' },
+    { id: 'prod', type: 'cloud', x: 660, y: 85, label: 'VPC prod', sub: '10.50.0.0/16', tone: 'emerald' },
+    { id: 'dev', type: 'cloud', x: 660, y: 175, label: 'VPC dev', sub: '10.70.0.0/16', tone: 'emerald' },
+    { id: 'shared', type: 'cloud', x: 660, y: 265, label: 'VPC partagé', sub: '10.60.0.0/16', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'srv', to: 'dc' },
+    { from: 'dc', to: 'tgw', label: 'IPsec + BGP', tone: 'violet' },
+    { from: 'tgw', to: 'prod' }, { from: 'tgw', to: 'dev' }, { from: 'tgw', to: 'shared' },
+  ]}
+  caption="La cible du saut : des VPC séparés par environnement, reliés par un Transit Gateway, lui-même relié au data center par un VPN IPsec avec BGP (puis, plus tard, par Direct Connect)."
+/>
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **1. Les bases du réseau AWS** | Découper un VPC en sous-réseaux publics et privés, router vers Internet, comprendre ce qui change par rapport à un LAN |
+| **2. Security groups et NACL** | Filtrer avec et sans état, référencer des groupes plutôt que des adresses, dépanner avec les VPC Flow Logs |
+| **3. Interconnecter des VPC** | Choisir entre peering, Transit Gateway et PrivateLink, et segmenter avec des tables de routage |
+| **4. Le cloud hybride** | Monter un VPN site à site avec BGP, comprendre Direct Connect, maîtriser le chemin emprunté |
+| **5. Le réseau en code avec Terraform** | Décrire tout le réseau en code, gérer l'état, et déployer par un pipeline |
+
+Les exemples sont pris sur **AWS**, le plus répandu. Chaque chapitre signale les équivalents **Azure** et
+**Google Cloud** : les noms changent, les principes restent.
+
+## Prérequis
+
+- La formation [Fondamentaux](/formations/fundamentals), surtout l'[adressage IPv4](/formations/fundamentals/ipv4-subnetting).
+- Le [routage dynamique](/formations/routing) (BGP) et le [VPN IPsec](/formations/security/ipsec-vpn) pour le chapitre hybride.
+- L'[automatisation](/formations/automation) aide pour le chapitre Terraform : on y retrouve Git, les pipelines et l'idempotence.
+
+## Le lab : du Terraform, pas du ContainerLab
+
+Un VPC ne s'émule pas dans un conteneur : le lab de ce saut est un ensemble de fichiers
+<Term id="iac">Terraform</Term> qui construit un vrai réseau dans **votre compte AWS**. Il est conçu pour
+coûter zéro par défaut : VPC, sous-réseaux, tables de routage, Internet Gateway, security groups et NACL ne
+sont pas facturés.
+
+```bash title="Récupérer le lab"
+mkdir cloud-aws && cd cloud-aws
+for f in versions.tf variables.tf vpc.tf security.tf vpn.tf outputs.tf terraform.tfvars.example; do
+  curl -fsSL -o "$f" "https://nexthop.alcpt.network/labs/cloud-aws/$f"
+done
+```
+
+<Callout type="warning">
+Certaines ressources sont **facturées à l'heure**, qu'elles servent ou non : la NAT Gateway, les
+attachements de Transit Gateway, les connexions VPN, et chaque adresse IPv4 publique. Comptez de l'ordre de
+quelques centimes de dollar par heure et par ressource, soit plusieurs dizaines de dollars par mois si on
+les oublie. Dans le lab, elles sont désactivées par défaut (`enable_nat_gateway`, `enable_vpn`…). Activez-les
+le temps d'un exercice, puis lancez **toujours** `terraform destroy` en fin de séance. Créez aussi une
+**alerte de budget** (*Billing > Budgets*) dès l'ouverture du compte, et vérifiez les conditions de l'offre
+gratuite sur la page *AWS Free Tier* : elles évoluent régulièrement.
+</Callout>

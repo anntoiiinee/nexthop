@@ -1,0 +1,185 @@
+---
+title: "Security groups and NACLs"
+description: "Filtering traffic in a VPC: stateful security groups attached to interfaces, stateless NACLs attached to subnets, referencing groups rather than addresses, and troubleshooting with VPC Flow Logs."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, security-groups, nacl, firewall, flow-logs, cloud]
+vendor: [multi]
+order: 2
+---
+
+{/* Output declared in JavaScript: MDX strips leading whitespace inside tags */}
+export const flowLogs = `2 123456789010 eni-1235b8ca123456789 172.31.16.139 172.31.16.21 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK
+2 123456789010 eni-1235b8ca123456789 172.31.9.69 172.31.9.12 49761 3389 6 20 4249 1418530010 1418530070 REJECT OK`;
+
+The previous chapter showed that the `local` route connects every subnet of a VPC: by default, nothing stops
+one machine from reaching another. Filtering happens at two levels, with two very different tools: the
+**security group**, a stateful firewall stuck to each interface, and the **NACL**, a stateless access control
+list placed on the subnet. Telling them apart saves hours of troubleshooting.
+
+## The security group: a stateful firewall on each interface
+
+A **security group** (SG) attaches to a resource's network interface (a machine, a database, a load
+balancer), not to the subnet. Its rules have four properties worth knowing:
+
+- **stateful**: if an inbound connection is allowed, its reply goes back automatically, with no outbound
+  rule. It is a firewall's [session table](/en/courses/security/ngfw-basics);
+- **allow rules only**: you can't write "deny". Whatever isn't allowed is denied;
+- **no order**: all rules are evaluated together, the most permissive wins;
+- **cumulative**: an interface can carry several groups (five by default), and their rules add up.
+
+A newly created group denies all inbound traffic and allows all outbound traffic.
+
+<Callout type="note">
+Terraform behaves differently from the console: when it creates a security group, it **removes** the
+"allow all" outbound rule AWS usually adds. The lab therefore declares its outbound rules explicitly. That is
+rather a good thing: every flow, even outbound, is a written decision.
+</Callout>
+
+## Referencing a group rather than an address
+
+This is the feature that changes how you think about filtering. A rule's source can be **another security
+group**: "allow port 8080 from anything carrying the `web` group". The web servers' addresses don't matter,
+nor how many there are, nor whether autoscaling recreates them every night: as soon as an interface carries
+the `web` group, it is allowed.
+
+<Topology
+  width={780}
+  height={260}
+  groups={[
+    { x: 20, y: 30, w: 220, h: 200, label: 'sg web', tone: 'sky' },
+    { x: 280, y: 30, w: 220, h: 200, label: 'sg app', tone: 'emerald' },
+    { x: 540, y: 30, w: 220, h: 200, label: 'sg db', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'w1', type: 'server', x: 130, y: 95, label: 'web-a' },
+    { id: 'w2', type: 'server', x: 130, y: 180, label: 'web-b' },
+    { id: 'a1', type: 'server', x: 390, y: 95, label: 'app-a' },
+    { id: 'a2', type: 'server', x: 390, y: 180, label: 'app-b' },
+    { id: 'd1', type: 'server', x: 650, y: 135, label: 'database', sub: 'PostgreSQL' },
+  ]}
+  links={[{ from: 'w1', to: 'a1' }, { from: 'w2', to: 'a2' }, { from: 'a1', to: 'd1' }, { from: 'a2', to: 'd1' }]}
+  notes={[
+    { x: 260, y: 252, text: 'app: 8080 from sg web', tone: 'emerald', mono: true },
+    { x: 520, y: 252, text: 'db: 5432 from sg app', tone: 'violet', mono: true },
+  ]}
+  caption="A three-tier architecture filtered only by group references: no IP address in the rules. A web server can't reach the database, only the application tier can."
+/>
+
+In the lab, that is exactly the `app` group's rule:
+
+```hcl title="security.tf (excerpt)"
+resource "aws_vpc_security_group_ingress_rule" "app_from_web" {
+  security_group_id            = aws_security_group.app.id
+  description                  = "Application depuis les serveurs web"
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+  referenced_security_group_id = aws_security_group.web.id
+}
+```
+
+<Callout type="tip">
+Name groups after roles (`web`, `app`, `db`, `bastion`), never after addresses or people. It is the same
+logic as firewall objects in the [Security policies](/en/courses/security/security-policies) chapter: the
+rule describes an intent, members can change.
+</Callout>
+
+## The NACL: a stateless ACL on the subnet
+
+The **Network ACL** (NACL) applies to all traffic **entering or leaving a subnet**. It works like a router
+<Term id="acl" />:
+
+- **stateless**: each packet is evaluated on its own. Allowing inbound traffic to port 443 isn't enough, you
+  must also allow the **outbound** replies to the client's ephemeral ports (1024 to 65535);
+- **numbered rules**, evaluated in increasing order: the first match decides;
+- **allow and deny**: it is the only place in a VPC where you can write an explicit deny;
+- **an implicit deny** at the end (the `*` rule).
+
+A VPC's default NACL allows everything; a NACL created by hand denies everything until you add rules.
+
+| Rule (inbound) | Protocol | Ports | Source | Action |
+|---|---|---|---|---|
+| 100 | all | all | `10.50.0.0/16` | allow |
+| 200 | TCP | 1024-65535 | `0.0.0.0/0` | allow (replies to outbound traffic through the NAT Gateway) |
+| `*` | all | all | `0.0.0.0/0` | deny |
+
+This is the NACL of the lab's private subnets. The second rule illustrates the lack of state: without it,
+private machines could send their requests to the Internet, but the replies would be dropped on entering the
+subnet.
+
+## Security group or NACL?
+
+| | Security group | NACL |
+|---|---|---|
+| Applies to | an interface | a whole subnet |
+| State | **stateful** | **stateless** (think about replies) |
+| Rules | allow only | allow and deny |
+| Evaluation | all rules together | in numeric order, first match wins |
+| Possible source | address, prefix or **another group** | address or prefix |
+| Use | **fine-grained, everyday filtering** | coarse barriers: block a range, isolate a tier |
+
+In practice, filtering happens in security groups, and NACLs stay close to the default, with a few broad
+rules. A packet must get through **both**: the subnet's NACL, then the interface's security group, and the
+reverse path for the reply.
+
+## Troubleshooting with VPC Flow Logs
+
+When a connection fails, you can't plug a probe into a VPC. **VPC Flow Logs** record one line per flow,
+accepted or rejected, at VPC, subnet or interface level. They are sent to CloudWatch Logs or S3, with no
+performance impact. The default format, with two examples from the AWS documentation:
+
+<CliOutput
+  title="VPC Flow Logs (default format)"
+  output={flowLogs}
+  notes={[
+    { line: 1, match: '172.31.16.139 172.31.16.21', text: 'Source and destination addresses, as the interface sees them (private addresses).', tone: 'sky' },
+    { line: 1, match: '20641 22 6', text: 'Source port, destination port and protocol (`6` = TCP): an SSH connection.', tone: 'violet' },
+    { line: 1, match: 'ACCEPT', text: 'The flow was accepted by both the security group and the NACL.', tone: 'emerald' },
+    { line: 2, match: 'REJECT', text: 'Here, an RDP connection (port `3389`) rejected: by the security group or by the NACL, the log does not say which.', tone: 'rose' },
+  ]}
+/>
+
+The fields, in order: version, account, interface, source address, destination address, source port,
+destination port, protocol, packets, bytes, start and end of the aggregation window, action, log status.
+
+<Callout type="field">
+A tip from the AWS documentation to find out who rejected a flow: if the inbound flow shows as `ACCEPT` but
+the outbound reply shows as `REJECT`, the culprit is a **NACL**, because a stateful security group would have
+let the reply through. For an analysis without real traffic, *Reachability Analyzer* computes the path
+between two resources and points at the blocking rule (each analysis is billed).
+</Callout>
+
+## Azure and Google Cloud equivalents
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| Security group (interface, stateful, allow only) | **NSG**: stateful, allow **and** deny, numbered priorities, attachable to the subnet **or** the interface | VPC **firewall rules**: stateful, priorities, allow and deny |
+| Reference to another group | **Application Security Group** (ASG) | **Network tags** or **service accounts** as source and target |
+| NACL (subnet, stateless) | no separate equivalent: an NSG on the subnet plays that role | no equivalent; hierarchical firewall policies at organization level |
+| VPC Flow Logs | VNet flow logs (through Network Watcher) | VPC Flow Logs |
+
+## In the lab
+
+1. Deploy the lab (`terraform apply`) and open *VPC > Security groups*: the `nexthop-app` group has a single
+   inbound rule, whose source is the `nexthop-web` group ID (`sg-…`), not an address.
+2. Open *VPC > Network ACLs*: the `nexthop-nacl-private` NACL is associated with both private subnets. Find
+   its rules 100 and 200 and the `*` rule.
+3. Remove rule 200 from `security.tf` and run `terraform plan`: Terraform announces the destruction of a
+   single resource. Put it back.
+4. Enable Flow Logs (`terraform apply -var enable_flow_logs=true`) and open the `/vpc/nexthop/flow-logs` log
+   group in CloudWatch. With no machine in the VPC, it stays nearly empty: to see traffic, launch a small
+   instance in a public subnet (and remember to delete it).
+5. At the end of the session: `terraform destroy`.
+
+## Key takeaways
+
+- The **security group** is attached to the **interface**: **stateful**, allow only, all rules evaluated
+  together.
+- **Reference groups** rather than addresses: the rule survives address changes and autoscaling.
+- The **NACL** is attached to the **subnet**: **stateless** (allow replies on ephemeral ports), numbered,
+  with possible denies.
+- Fine-grained filtering in security groups, coarse barriers in NACLs; a packet must pass both.
+- **VPC Flow Logs** show every accepted or rejected flow: the first troubleshooting tool.
+
+Next chapter: **interconnecting VPCs**, when one is no longer enough.

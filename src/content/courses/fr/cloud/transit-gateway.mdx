@@ -1,0 +1,219 @@
+---
+title: "Interconnecter des VPC"
+description: "Relier plusieurs VPC : VPC peering et ses limites, Transit Gateway avec ses tables de routage, associations et propagations, segmentation à la façon des VRF, architecture hub and spoke et PrivateLink pour exposer un service."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, vpc, transit-gateway, peering, privatelink, cloud, routing]
+vendor: [multi]
+order: 3
+---
+
+Un seul VPC ne reste jamais seul longtemps. On sépare la production du développement, chaque équipe ou
+chaque application obtient son compte AWS et ses VPC, un VPC « partagé » héberge les services communs
+(annuaire, DNS, supervision). Très vite, il faut relier une dizaine de VPC entre eux et au data center, sans
+perdre le contrôle de qui parle à qui. AWS propose trois outils, qui répondent à trois besoins différents.
+
+## Prérequis : un plan d'adressage sans chevauchement
+
+Les trois solutions ont une contrainte commune avec le routage classique : on ne route pas entre deux
+réseaux qui se chevauchent. C'est pourquoi le plan du fil rouge attribue un bloc distinct à chaque VPC
+(`10.50.0.0/16` pour la production, `10.60.0.0/16` pour le partagé, `10.70.0.0/16` pour le développement),
+et un IPAM pour les attribuer (AWS en propose un, *VPC IPAM* ; NetBox fait aussi l'affaire).
+
+## Le VPC peering : un lien direct entre deux VPC
+
+Un **peering** relie deux VPC, du même compte ou non, de la même région ou non. Le trafic reste sur le réseau
+d'AWS, sans passerelle ni goulot d'étranglement, et le peering lui-même n'est pas facturé à l'heure (seul le
+trafic l'est). Il faut ensuite ajouter une route de chaque côté, vers le bloc de l'autre VPC :
+
+```hcl title="Peering et route (extrait)"
+resource "aws_vpc_peering_connection" "prod_shared" {
+  vpc_id      = aws_vpc.prod.id
+  peer_vpc_id = aws_vpc.shared.id
+  auto_accept = true # même compte et même région : acceptation automatique
+}
+
+resource "aws_route" "prod_to_shared" {
+  route_table_id            = aws_route_table.prod_private.id
+  destination_cidr_block    = aws_vpc.shared.cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.prod_shared.id
+}
+```
+
+Le peering a une limite majeure : il **n'est pas transitif**. Si A est relié à B, et B à C, A ne peut pas
+joindre C en passant par B. De même, A ne peut pas utiliser l'Internet Gateway ou le VPN de B (*pas de
+routage edge-to-edge*).
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'a', type: 'cloud', x: 110, y: 120, label: 'VPC A', tone: 'emerald' },
+    { id: 'b', type: 'cloud', x: 380, y: 120, label: 'VPC B', tone: 'emerald' },
+    { id: 'c', type: 'cloud', x: 650, y: 120, label: 'VPC C', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'a', to: 'b', label: 'peering' },
+    { from: 'b', to: 'c', label: 'peering' },
+  ]}
+  flows={[{ from: 'a', to: 'c', label: 'A → C : impossible', tone: 'rose', offset: -55 }]}
+  caption="Le peering n'est pas transitif : B n'est pas un routeur de transit. Pour que A joigne C, il faut un troisième peering, direct, entre A et C."
+/>
+
+Relier n VPC tous ensemble demande donc n × (n − 1) / 2 peerings, et autant de paires de routes : 3 pour
+3 VPC, 45 pour 10, 190 pour 20. Le peering reste parfait pour relier **quelques** VPC, ou pour un besoin
+ponctuel à fort débit ; au-delà, il faut un hub.
+
+## Le Transit Gateway : un routeur central
+
+Le **Transit Gateway** (TGW) est un routeur régional géré par AWS. Chaque VPC s'y raccorde par un
+**attachement** ; les VPN, Direct Connect et d'autres Transit Gateway (d'autres régions) aussi. Au lieu d'un
+maillage complet, on obtient une étoile : un attachement par VPC, et le hub route entre eux.
+
+<Topology
+  width={780}
+  height={345}
+  groups={[{ x: 470, y: 20, w: 290, h: 310, label: 'VPC', tone: 'emerald' }]}
+  nodes={[
+    { id: 'dc', type: 'router', x: 90, y: 165, label: 'Data center', sub: 'VPN IPsec + BGP', tone: 'sky' },
+    { id: 'tgw', type: 'router', x: 320, y: 165, label: 'Transit Gateway', sub: 'AS 64513', tone: 'violet' },
+    { id: 'prod', type: 'cloud', x: 620, y: 75, label: 'prod', sub: '10.50.0.0/16' },
+    { id: 'shared', type: 'cloud', x: 620, y: 165, label: 'partagé', sub: '10.60.0.0/16' },
+    { id: 'dev', type: 'cloud', x: 620, y: 255, label: 'dev', sub: '10.70.0.0/16' },
+  ]}
+  links={[
+    { from: 'dc', to: 'tgw', label: 'attachement VPN' },
+    { from: 'tgw', to: 'prod' }, { from: 'tgw', to: 'shared' }, { from: 'tgw', to: 'dev' },
+  ]}
+  caption="Hub and spoke : chaque VPC et le data center ont un seul attachement, vers le Transit Gateway. Ajouter un VPC, c'est un attachement de plus, pas un peering avec chacun des autres."
+/>
+
+Dans chaque VPC, on réserve un petit sous-réseau par zone (un /28 suffit) pour l'interface de
+l'attachement, et on ajoute dans les tables de routage du VPC une route vers le Transit Gateway, par exemple
+`10.0.0.0/8` pour tout le réseau interne de l'entreprise.
+
+## Segmenter : tables de routage, associations et propagations
+
+Le Transit Gateway a ses propres **tables de routage**, et c'est là qu'il devient intéressant pour un
+ingénieur réseau. Deux opérations relient un attachement à une table :
+
+- **l'association** : la table dans laquelle le TGW cherche la route pour le trafic **qui arrive** de cet
+  attachement. Un attachement est associé à une seule table ;
+- **la propagation** : l'attachement **inscrit ses routes** (le bloc du VPC, ou les routes BGP d'un VPN)
+  dans une table. Il peut propager dans plusieurs tables.
+
+Si cela rappelle quelque chose, c'est normal : une table de TGW se comporte comme une
+[VRF](/formations/datacenter/vrf). L'association place l'attachement dans la VRF, la propagation importe ses
+routes dans d'autres VRF, comme un *route target*.
+
+| Table du TGW | Associés | Routes propagées depuis | Résultat |
+|---|---|---|---|
+| `spokes` | prod, dev | partagé, data center | prod et dev joignent le partagé et le data center, **mais pas l'un l'autre** |
+| `shared` | partagé, data center | prod, dev, partagé, data center | le partagé et le data center joignent tout le monde |
+
+```hcl title="Segmentation avec deux tables (extrait)"
+resource "aws_ec2_transit_gateway" "hub" {
+  description                     = "Hub réseau de la région"
+  amazon_side_asn                 = 64513
+  default_route_table_association = "disable"
+  default_route_table_propagation = "disable"
+}
+
+resource "aws_ec2_transit_gateway_route_table" "spokes" {
+  transit_gateway_id = aws_ec2_transit_gateway.hub.id
+  tags               = { Name = "spokes" }
+}
+
+# prod cherche ses routes dans la table spokes…
+resource "aws_ec2_transit_gateway_route_table_association" "prod" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.prod.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.spokes.id
+}
+
+# … où seul le VPC partagé (et le data center) inscrit ses routes : prod ne voit pas dev
+resource "aws_ec2_transit_gateway_route_table_propagation" "shared_to_spokes" {
+  transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.shared.id
+  transit_gateway_route_table_id = aws_ec2_transit_gateway_route_table.spokes.id
+}
+```
+
+<Callout type="tip">
+Désactiver l'association et la propagation par défaut (`default_route_table_… = "disable"`) est un bon
+réflexe : sinon, tout nouvel attachement rejoint automatiquement une table commune, et chaque VPC ajouté
+peut joindre tous les autres. Mieux vaut que chaque raccordement soit une décision explicite.
+</Callout>
+
+### Inspecter le trafic entre VPC
+
+Pour faire passer le trafic entre VPC par un firewall, on ajoute un **VPC d'inspection** qui héberge des
+firewalls (AWS Network Firewall, ou des appliances FortiGate, Palo Alto… derrière un *Gateway Load
+Balancer*), et les tables du TGW envoient le trafic vers lui. Un détail compte : activer le **mode
+appliance** sur l'attachement de ce VPC, pour que l'aller et le retour d'une même connexion passent par le
+**même** firewall, sans quoi sa table de sessions ne voit qu'un sens et jette le trafic.
+
+<Callout type="warning">
+Le Transit Gateway est facturé **par attachement et par heure**, plus le volume de données traité. Avec une
+dizaine de VPC, c'est un poste de coût réel, à comparer au temps passé à gérer des dizaines de peerings.
+</Callout>
+
+## PrivateLink : exposer un service, pas un réseau
+
+Parfois, on ne veut pas relier deux réseaux, seulement **rendre un service accessible**. Exemple : l'équipe
+plateforme publie une API interne utilisée par trente VPC d'autres équipes, dont certains utilisent les
+mêmes adresses que le sien. Router entre eux est impossible, et inutile.
+
+**PrivateLink** répond à ce besoin : le service est placé derrière un *Network Load Balancer* et publié
+comme *endpoint service* ; chaque consommateur crée dans son VPC un **interface endpoint**, une interface
+réseau avec une adresse de **son propre** sous-réseau. Les consommateurs joignent le service à cette adresse
+locale :
+
+- aucune route n'est échangée, les blocs peuvent **se chevaucher** ;
+- le flux est **à sens unique** : le consommateur joint le service, jamais l'inverse ;
+- c'est aussi ainsi qu'on joint la plupart des services AWS sans passer par Internet.
+
+Pour S3 et DynamoDB, il existe en plus des **gateway endpoints**, gratuits, qui ajoutent une simple route
+dans les tables du VPC. Le lab en déploie un pour S3.
+
+## Quel outil choisir ?
+
+| Besoin | Outil |
+|---|---|
+| Relier deux ou trois VPC, simplement, sans coût fixe | VPC peering |
+| Relier de nombreux VPC et le data center, avec segmentation | Transit Gateway |
+| Inspecter le trafic entre VPC | Transit Gateway + VPC d'inspection |
+| Exposer un service à d'autres VPC, même avec des adresses qui se chevauchent | PrivateLink |
+| Joindre S3 ou DynamoDB depuis un sous-réseau privé | Gateway endpoint |
+
+## Les équivalents Azure et Google Cloud
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| VPC peering (non transitif) | VNet peering (non transitif) | VPC Network Peering (non transitif) |
+| Transit Gateway | **Virtual WAN** (hub géré), ou un VNet hub avec Azure Firewall / une appliance et des routes UDR | **Network Connectivity Center** ; ou un **Shared VPC**, un seul VPC partagé entre projets |
+| PrivateLink, interface endpoint | Private Link, Private Endpoint | Private Service Connect |
+| Gateway endpoint S3 | Service endpoint | Private Google Access |
+
+## Dans le lab
+
+Le Transit Gateway n'est pas dans le lab, car il est facturé à l'heure. Le peering, lui, est gratuit :
+
+1. Dessinez le plan d'adressage de cinq VPC (prod, préprod, dev, partagé, inspection) qui ne chevauchent ni
+   `10.10.0.0/16` (le data center), ni les uns les autres.
+2. Combien de peerings faudrait-il pour les relier tous ? Et combien d'attachements de Transit Gateway ?
+3. Ajoutez au lab un second VPC (`10.60.0.0/16`) et un peering vers le premier, en vous inspirant de
+   l'extrait ci-dessus. Après `terraform apply`, vérifiez les routes des deux côtés dans la console.
+4. Écrivez la table « Associés / Propagés depuis » qui laisse prod et préprod joindre le partagé, mais pas
+   le dev.
+5. `terraform destroy` en fin de séance.
+
+## À retenir
+
+- Pas de routage entre réseaux qui se chevauchent : un **bloc distinct par VPC**, attribué par un IPAM.
+- Le **VPC peering** relie deux VPC directement, **sans transitivité** : parfait pour quelques VPC, ingérable
+  au-delà.
+- Le **Transit Gateway** est un hub régional : un **attachement** par VPC ou VPN, des **tables de routage**
+  qui se comportent comme des VRF (**association** = où l'on cherche, **propagation** = où l'on s'inscrit).
+- Pour inspecter le trafic entre VPC : un VPC d'inspection et le **mode appliance** pour garder la symétrie.
+- **PrivateLink** expose un service sans relier les réseaux, même si les adresses se chevauchent.
+
+Prochain chapitre : **le cloud hybride**, pour relier ce hub au data center.

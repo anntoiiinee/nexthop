@@ -1,0 +1,195 @@
+---
+title: "Les bases du réseau AWS"
+description: "Régions et zones de disponibilité, VPC et plan d'adressage, sous-réseaux publics et privés, tables de routage, Internet Gateway, NAT Gateway et Elastic IP, et ce qui change par rapport à un réseau classique."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, vpc, cloud, routing, nat]
+vendor: [multi]
+order: 1
+---
+
+Dans un data center, on commence par des switches, des VLAN et un routeur. Dans AWS, il n'y a rien à
+câbler : on crée un **VPC**, on le découpe en sous-réseaux et on écrit des tables de routage. Les mots sont
+familiers, mais certains comportements surprennent un ingénieur réseau : il n'y a pas de broadcast, pas de
+VLAN, et le routeur n'apparaît nulle part. Ce chapitre pose les briques que tous les suivants réutilisent.
+
+## Régions et zones de disponibilité
+
+Une **région** est une zone géographique (`eu-west-3` à Paris, `eu-central-1` à Francfort). Chaque région
+contient plusieurs <Term id="az">zones de disponibilité</Term> : des data centers distincts, avec leur
+propre alimentation et leur propre réseau, reliés entre eux par des liens à faible latence. Paris en compte
+trois : `eu-west-3a`, `eu-west-3b` et `eu-west-3c`.
+
+La règle d'or de la disponibilité dans le cloud en découle : **tout ce qui compte est déployé dans au
+moins deux zones**. Une zone peut tomber (incident électrique, réseau), la région continue de fonctionner.
+
+## Le VPC et son plan d'adressage
+
+Un <Term id="vpc" /> est un réseau privé isolé, propre à une région. Sa première caractéristique est son
+bloc d'adresses, choisi à la création, entre un /16 et un /28.
+
+<Callout type="warning">
+Le bloc d'un VPC se choisit comme n'importe quel bloc du plan d'adressage : il ne doit **chevaucher ni le
+data center, ni les agences, ni les autres VPC**. Deux réseaux qui se chevauchent ne pourront jamais être
+routés l'un vers l'autre sans NAT, et ce besoin arrive toujours, souvent le jour où l'on monte le VPN. Le
+VPC « par défaut » qu'AWS crée dans chaque région utilise `172.31.0.0/16`, identique dans tous les comptes :
+ne l'utilisez pas pour la production. Les règles du chapitre
+[Conventions de nommage et IPAM](/formations/automation/naming-ipam) s'appliquent telles quelles.
+</Callout>
+
+Dans le fil rouge, le VPC de production reçoit `10.50.0.0/16`, découpé en sous-réseaux de /24 :
+
+<AddressSpace
+  base="10.50.0.0/19"
+  subnets={[
+    { cidr: '10.50.0.0/24', label: 'public-a' },
+    { cidr: '10.50.1.0/24', label: 'public-b' },
+    { cidr: '10.50.10.0/24', label: 'private-a' },
+    { cidr: '10.50.11.0/24', label: 'private-b' },
+  ]}
+  caption="Le début du VPC 10.50.0.0/16 : deux sous-réseaux publics et deux privés, un de chaque par zone. L'espace libre entre eux laisse la place aux zones et aux usages à venir."
+/>
+
+Le [découpeur VLSM](/outils/vlsm-planner) aide à préparer ce découpage à partir des besoins.
+
+## Les sous-réseaux
+
+Un sous-réseau appartient à **une seule zone de disponibilité**. Pour être présent dans deux zones, il faut
+donc deux sous-réseaux. Et dans chaque sous-réseau, AWS **réserve cinq adresses** :
+
+| Adresse (dans `10.50.0.0/24`) | Réservée pour |
+|---|---|
+| `10.50.0.0` | l'adresse du réseau |
+| `10.50.0.1` | le routeur du VPC (la passerelle de chaque machine) |
+| `10.50.0.2` | le serveur DNS d'AWS (à l'adresse « base du VPC + 2 », réservée dans chaque sous-réseau) |
+| `10.50.0.3` | usage futur d'AWS |
+| `10.50.0.255` | l'adresse de broadcast (le broadcast n'est pas pris en charge, mais l'adresse est réservée) |
+
+Un /24 offre donc 251 adresses utilisables, et un /28 seulement 11. Pensez-y en dimensionnant les petits
+sous-réseaux.
+
+## Tables de routage : ce qui rend un sous-réseau « public »
+
+Chaque sous-réseau est associé à une **table de routage**. Toutes contiennent une route `local` vers le bloc
+du VPC, impossible à supprimer : à l'intérieur d'un VPC, tout sous-réseau joint tous les autres (le
+filtrage se fait ailleurs, au chapitre suivant).
+
+La différence entre un sous-réseau public et un sous-réseau privé tient en **une seule route** :
+
+| Table | Destination | Cible | Effet |
+|---|---|---|---|
+| publique | `10.50.0.0/16` | `local` | le VPC |
+| publique | `0.0.0.0/0` | `igw-…` (Internet Gateway) | **sous-réseau public** : accessible depuis Internet si la machine a une IP publique |
+| privée | `10.50.0.0/16` | `local` | le VPC |
+| privée | `0.0.0.0/0` | `nat-…` (NAT Gateway) | **sous-réseau privé** : peut sortir vers Internet, mais personne ne peut y entrer |
+
+<Topology
+  width={780}
+  height={450}
+  groups={[
+    { x: 20, y: 100, w: 740, h: 330, label: 'VPC 10.50.0.0/16', tone: 'sky' },
+    { x: 40, y: 175, w: 330, h: 235, label: 'Zone eu-west-3a', tone: 'slate' },
+    { x: 410, y: 175, w: 330, h: 235, label: 'Zone eu-west-3b', tone: 'slate' },
+  ]}
+  nodes={[
+    { id: 'net', type: 'cloud', x: 390, y: 35, label: 'Internet' },
+    { id: 'igw', type: 'router', x: 390, y: 118, label: 'Internet Gateway', tone: 'amber' },
+    { id: 'nat', type: 'router', x: 120, y: 250, label: 'NAT Gateway', sub: 'public-a', tone: 'amber' },
+    { id: 'weba', type: 'server', x: 270, y: 250, label: 'web-a', sub: 'public-a' },
+    { id: 'webb', type: 'server', x: 560, y: 250, label: 'web-b', sub: 'public-b' },
+    { id: 'appa', type: 'server', x: 200, y: 355, label: 'app-a', sub: 'private-a', tone: 'emerald' },
+    { id: 'appb', type: 'server', x: 580, y: 355, label: 'app-b', sub: 'private-b', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'net', to: 'igw' }, { from: 'igw', to: 'weba' }, { from: 'igw', to: 'webb' }, { from: 'igw', to: 'nat' },
+    { from: 'appa', to: 'nat', style: 'dashed' }, { from: 'appb', to: 'nat', style: 'dashed' },
+  ]}
+  caption="Les serveurs web, en sous-réseau public, sont joignables depuis Internet. Les serveurs applicatifs, en sous-réseau privé, sortent par la NAT Gateway (une seule ici, comme dans le lab ; une par zone en production)."
+/>
+
+## Internet Gateway, NAT Gateway et Elastic IP
+
+- L'**Internet Gateway** (IGW) relie le VPC à Internet. Elle est redondante par construction, gratuite, et
+  il n'y en a qu'une par VPC. Elle fait aussi du **NAT 1:1** : une machine avec une IPv4 publique ne la voit
+  pas sur son interface, elle ne connaît que son adresse privée. C'est l'IGW qui traduit.
+- La **NAT Gateway** permet aux sous-réseaux privés de sortir vers Internet (mises à jour, appels d'API)
+  sans être joignables. Elle se place dans un sous-réseau **public**, et elle est liée à une zone : en
+  production, on en déploie une par zone, sinon la panne de sa zone coupe Internet à toutes les autres.
+  Elle est facturée à l'heure et au volume traité.
+- Une **Elastic IP** est une IPv4 publique fixe, réservée au compte, qu'on attache à une NAT Gateway ou à
+  une machine. Depuis 2024, **toute IPv4 publique est facturée** à l'heure, attachée ou non : on n'en
+  attribue pas « au cas où ».
+
+<Callout type="tip">
+En IPv6, toutes les adresses sont publiques et il n'y a pas de NAT. Pour obtenir le même effet qu'un
+sous-réseau privé (sortir sans être joignable), AWS propose l'**Egress-only Internet Gateway**, gratuite à
+l'heure : elle laisse sortir les connexions et refuse celles qui arrivent de l'extérieur.
+</Callout>
+
+## Ce qui change par rapport à un réseau classique
+
+Le VPC ressemble à un réseau routé, mais ce n'est pas un réseau Ethernet. Plusieurs réflexes du data center
+ne fonctionnent plus :
+
+| Dans le data center | Dans un VPC |
+|---|---|
+| Des VLAN et des trunks | Aucun VLAN : un sous-réseau est un objet logique, sans couche 2 visible |
+| Du broadcast et du multicast | Ni broadcast ni multicast (sauf multicast via Transit Gateway) |
+| ARP entre les machines | ARP est intercepté et répondu par l'infrastructure : pas d'ARP gratuit, pas d'usurpation possible |
+| Une passerelle VRRP qui bascule par ARP gratuit | Impossible : la haute disponibilité passe par un load balancer ou par la mise à jour d'une table de routage |
+| Le routeur est un équipement | Le routeur est implicite (`.1` de chaque sous-réseau) et se pilote par les tables de routage |
+| Une appliance (firewall, routeur) route le trafic des autres | Il faut désactiver le contrôle source/destination de son interface, sinon AWS jette ce trafic |
+| MTU 1500, jumbo frames si on les configure | 9001 octets à l'intérieur du VPC, 1500 vers Internet et à travers un VPN |
+
+<Callout type="field">
+Le contrôle source/destination est le piège classique du premier firewall virtuel déployé dans un VPC :
+tout est configuré, les routes pointent vers lui, et rien ne passe. Par défaut, AWS jette tout paquet dont
+la machine n'est ni la source ni la destination. Sur une appliance qui route, il faut désactiver ce
+contrôle (`source_dest_check = false` en Terraform).
+</Callout>
+
+## Les équivalents Azure et Google Cloud
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| VPC (régional) | Virtual Network, VNet (régional) | VPC (**global** : un seul VPC couvre toutes les régions) |
+| Sous-réseau, lié à une zone | Sous-réseau, couvre toutes les zones de la région | Sous-réseau, régional |
+| 5 adresses réservées par sous-réseau | 5 adresses réservées par sous-réseau | 4 adresses réservées par sous-réseau |
+| Table de routage | Route table (routes système + UDR) | Routes du VPC |
+| Internet Gateway | Implicite (accès sortant par défaut, en cours de retrait) | Passerelle Internet par défaut (route `0.0.0.0/0`) |
+| NAT Gateway | Azure NAT Gateway | Cloud NAT |
+
+## Dans le lab
+
+Il vous faut un compte AWS, un utilisateur IAM (jamais le compte racine) et ses clés configurées avec
+`aws configure`, ainsi que Terraform 1.10 ou plus. Le chapitre [Terraform](/formations/cloud/terraform)
+détaille les fichiers ; ici, on les déploie.
+
+```bash
+cd cloud-aws
+terraform init          # télécharge le fournisseur AWS
+terraform plan          # montre ce qui va être créé : Plan: 24 to add, 0 to change, 0 to destroy.
+terraform apply         # crée le VPC, les 4 sous-réseaux, les tables de routage, l'IGW…
+```
+
+1. Dans la console AWS (*VPC > Your VPCs*), retrouvez `nexthop-vpc`, puis ses sous-réseaux : vérifiez la
+   zone de chacun et le nombre d'adresses disponibles (251 pour un /24).
+2. Ouvrez les deux tables de routage : seule la publique a une route `0.0.0.0/0` vers l'IGW. La privée
+   contient aussi une route vers un *prefix list* S3 : c'est le *gateway endpoint* du lab, qui permet
+   d'atteindre S3 sans NAT.
+3. Activez la NAT Gateway (`terraform apply -var enable_nat_gateway=true`) et regardez la table privée :
+   une route `0.0.0.0/0` vers la NAT Gateway est apparue. Notez l'Elastic IP en sortie de
+   `terraform output nat_public_ip`.
+4. Désactivez-la (`terraform apply`), puis, en fin de séance : `terraform destroy`.
+
+## À retenir
+
+- Une **région** contient plusieurs **zones de disponibilité** ; tout ce qui compte est déployé dans au moins deux.
+- Le bloc du **VPC** fait partie du plan d'adressage de l'entreprise : **jamais de chevauchement**.
+- Un **sous-réseau** vit dans une seule zone, et AWS y **réserve cinq adresses**.
+- Un sous-réseau est **public** s'il a une route par défaut vers l'**Internet Gateway** ; un sous-réseau
+  **privé** sort par une **NAT Gateway**, payante, une par zone en production.
+- Pas de broadcast, pas de VLAN, pas d'ARP gratuit : la haute disponibilité et le routage passent par les
+  **tables de routage** et les load balancers.
+
+Prochain chapitre : **security groups et NACL**, pour décider qui parle à qui dans le VPC.

@@ -10,7 +10,7 @@ interface Props { lab: string; file: string; title?: string }
 const { lab, file, title } = Astro.props;
 
 const languages: Record<string, string> = {
-  py: 'python', yml: 'yaml', yaml: 'yaml', json: 'json', sh: 'bash', cfg: 'text', txt: 'text', j2: 'jinja',
+  py: 'python', yml: 'yaml', yaml: 'yaml', json: 'json', sh: 'bash', cfg: 'text', txt: 'text', j2: 'jinja', tf: 'hcl',
 };
 const ext = file.split('.').pop() ?? '';
 const code = fs.readFileSync(path.join(process.cwd(), 'public', 'labs', lab, file), 'utf-8').trimEnd();
