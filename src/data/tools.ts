@@ -5,6 +5,11 @@ import SubnetQuiz from '@/components/SubnetQuiz.astro';
 import VlsmPlanner from '@/components/VlsmPlanner.astro';
 import CertDecoder from '@/components/CertDecoder.astro';
 import PortsReference from '@/components/PortsReference.astro';
+import Ipv6Calculator from '@/components/Ipv6Calculator.astro';
+import MtuCalculator from '@/components/MtuCalculator.astro';
+import ClabVisualizer from '@/components/ClabVisualizer.astro';
+import BaseConverter from '@/components/BaseConverter.astro';
+import { tutorialUrl } from '@/lib/content';
 
 export interface Tool {
   slug: string;                                  // segment d'URL, identique en FR et EN
@@ -168,6 +173,136 @@ export const tools: Tool[] = [
     },
     tags: ['ports', 'protocols', 'firewall'],
     component: PortsReference,
+  },
+  {
+    slug: 'ipv6-calculator',
+    badge: '::/64',
+    title: {
+      fr: 'Calculateur IPv6',
+      en: 'IPv6 calculator',
+    },
+    description: {
+      fr: 'Forme compressée et complète, préfixe, première et dernière adresse, nombre de /64, type d’adresse, nom DNS inverse et identifiant EUI-64 à partir d’une adresse MAC.',
+      en: 'Compressed and full forms, prefix, first and last address, number of /64s, address type, reverse DNS name and EUI-64 identifier from a MAC address.',
+    },
+    howto: {
+      fr: [
+        'Saisissez une adresse suivie de son préfixe (2001:db8:acad:10::37/64). Toutes les écritures sont acceptées : complète, compressée avec « :: », ou terminée par une IPv4 (::ffff:192.0.2.1).',
+        'La forme compressée suit la RFC 5952 : zéros de tête retirés, et « :: » remplace la plus longue suite de groupes nuls. C’est l’écriture à utiliser dans la documentation et les configurations.',
+        'Un sous-réseau IPv6 standard est un /64 : un site reçoit en général un /48 ou un /56, soit 65 536 ou 256 sous-réseaux /64.',
+        'Ajoutez une adresse MAC pour voir l’adresse EUI-64 : le bit U/L du premier octet est inversé et ff:fe est inséré au milieu. Les systèmes récents utilisent plutôt des identifiants aléatoires (RFC 7217, RFC 8981) pour ne pas exposer la MAC.',
+        'Les exemples utilisent 2001:db8::/32, le préfixe réservé à la documentation (RFC 3849).',
+      ],
+      en: [
+        'Enter an address followed by its prefix (2001:db8:acad:10::37/64). Every notation is accepted: full, compressed with "::", or ending with an IPv4 address (::ffff:192.0.2.1).',
+        'The compressed form follows RFC 5952: leading zeros removed, and "::" replaces the longest run of zero groups. It is the notation to use in documentation and configurations.',
+        'A standard IPv6 subnet is a /64: a site usually receives a /48 or a /56, that is 65,536 or 256 /64 subnets.',
+        'Add a MAC address to see the EUI-64 address: the U/L bit of the first byte is flipped and ff:fe is inserted in the middle. Recent systems rather use random identifiers (RFC 7217, RFC 8981) so as not to expose the MAC.',
+        'Examples use 2001:db8::/32, the prefix reserved for documentation (RFC 3849).',
+      ],
+    },
+    tags: ['ipv6', 'subnetting'],
+    component: Ipv6Calculator,
+  },
+  {
+    slug: 'mtu-calculator',
+    badge: '1450',
+    title: {
+      fr: 'Calculateur MTU et overhead',
+      en: 'MTU and overhead calculator',
+    },
+    description: {
+      fr: 'Empilez VXLAN, GRE, IPsec, NAT-T, WireGuard, MPLS ou PPPoE et obtenez la MTU disponible, le MSS TCP et la MTU nécessaire sur le lien, bourrage compris.',
+      en: 'Stack VXLAN, GRE, IPsec, NAT-T, WireGuard, MPLS or PPPoE and get the available MTU, the TCP MSS and the link MTU needed, padding included.',
+    },
+    howto: {
+      fr: [
+        'Indiquez la MTU du lien qui transporte le tout, puis ajoutez les encapsulations dans l’ordre : la dernière ajoutée est la plus extérieure. GRE puis IPsec donne donc du GRE dans IPsec.',
+        'La « MTU disponible à l’intérieur » est la taille du plus grand paquet qui passe sans fragmentation. Le MSS en découle : c’est la valeur à configurer avec ip tcp adjust-mss (ou équivalent) sur l’interface du tunnel.',
+        'IPsec et WireGuard bourrent les données pour les aligner sur la taille de bloc du chiffrement : leur surcoût varie de quelques octets selon la taille du paquet. Le calcul en tient compte.',
+        'La « MTU de lien nécessaire » répond à la question inverse : quelle MTU configurer sur l’underlay pour que les machines gardent une MTU de 1500. Pour VXLAN, c’est 1550 au minimum, d’où les MTU de 9000 et plus dans les fabrics.',
+        'Le symptôme d’une MTU trop petite est trompeur : le ping et les petites requêtes passent, les gros transferts se bloquent. Testez avec ping -M do -s 1472 (Linux) ou ping -f -l 1472 (Windows).',
+      ],
+      en: [
+        'Enter the MTU of the link carrying everything, then add encapsulations in order: the last one added is the outermost. GRE then IPsec therefore gives GRE inside IPsec.',
+        'The "MTU available inside" is the size of the largest packet that goes through without fragmentation. The MSS follows from it: it is the value to set with ip tcp adjust-mss (or equivalent) on the tunnel interface.',
+        'IPsec and WireGuard pad data to align it on the cipher block size: their overhead varies by a few bytes depending on packet size. The calculation accounts for it.',
+        'The "link MTU needed" answers the opposite question: which MTU to set on the underlay so that hosts keep a 1500 MTU. For VXLAN it is at least 1550, hence the 9000+ MTUs in fabrics.',
+        'The symptom of an MTU that is too small is misleading: ping and small requests work, large transfers hang. Test with ping -M do -s 1472 (Linux) or ping -f -l 1472 (Windows).',
+      ],
+    },
+    tags: ['mtu', 'vxlan', 'ipsec', 'tcp'],
+    learnMore: {
+      fr: chapterUrl('fr', 'fundamentals', 'tcp-udp'),
+      en: chapterUrl('en', 'fundamentals', 'tcp-udp'),
+    },
+    component: MtuCalculator,
+  },
+  {
+    slug: 'containerlab-visualizer',
+    badge: '.clab',
+    title: {
+      fr: 'Visualiseur ContainerLab',
+      en: 'ContainerLab visualizer',
+    },
+    description: {
+      fr: 'Collez un fichier topology.clab.yml et obtenez le schéma de la topologie, avec les noms d’interfaces sur chaque lien, sans rien installer.',
+      en: 'Paste a topology.clab.yml file and get the topology diagram, with interface names on every link, without installing anything.',
+    },
+    howto: {
+      fr: [
+        'Collez le contenu d’un fichier topology.clab.yml, ou partez d’un des labs du site avec la liste d’exemples. Le schéma se met à jour pendant la saisie.',
+        'Les équipements sont rangés par niveau : spines en haut, leafs au milieu, machines Linux en bas, d’après leur nom et leur type. Pour forcer un niveau, ajoutez un label graph-level: 1, 2 ou 3 à l’équipement, comme dans ContainerLab.',
+        'Un lien vers un équipement absent de topology.nodes est signalé et ignoré : c’est souvent une faute de frappe qui empêcherait aussi le déploiement.',
+        'Les interfaces eth1, eth2… des équipements cEOS sont affichées Et1, Et2…, comme dans la CLI d’EOS.',
+        'Rien n’est envoyé : l’analyse du YAML et le dessin se font dans votre navigateur.',
+      ],
+      en: [
+        'Paste the content of a topology.clab.yml file, or start from one of the site’s labs with the example list. The diagram updates as you type.',
+        'Nodes are arranged by level: spines at the top, leaves in the middle, Linux hosts at the bottom, based on their name and kind. To force a level, add a graph-level: 1, 2 or 3 label to the node, as in ContainerLab.',
+        'A link to a node missing from topology.nodes is reported and ignored: it is often a typo that would also break the deployment.',
+        'The eth1, eth2… interfaces of cEOS nodes are shown as Et1, Et2…, as in the EOS CLI.',
+        'Nothing is sent: YAML parsing and drawing happen in your browser.',
+      ],
+    },
+    tags: ['containerlab', 'lab', 'yaml'],
+    learnMore: {
+      fr: tutorialUrl('fr', 'containerlab-setup'),
+      en: tutorialUrl('en', 'containerlab-setup'),
+    },
+    component: ClabVisualizer,
+  },
+  {
+    slug: 'base-converter',
+    badge: '0xC0',
+    title: {
+      fr: 'Convertisseur binaire, hexadécimal et décimal',
+      en: 'Binary, hexadecimal and decimal converter',
+    },
+    description: {
+      fr: 'Convertissez un nombre entre décimal, hexadécimal et binaire avec le poids de chaque bit, et décomposez une adresse IPv4 ou MAC octet par octet.',
+      en: 'Convert a number between decimal, hexadecimal and binary with the weight of each bit, and break down an IPv4 or MAC address byte by byte.',
+    },
+    howto: {
+      fr: [
+        'Modifiez le champ décimal, hexadécimal ou binaire : les deux autres suivent. Les préfixes 0x et 0b sont acceptés mais pas obligatoires.',
+        'La grille montre le poids de chaque bit (128, 64, 32… pour un octet) : additionner les poids des bits à 1 redonne la valeur décimale. C’est la méthode à connaître pour les masques : 255.255.255.192 se termine par 11000000, soit 128 + 64.',
+        'Un chiffre hexadécimal correspond exactement à 4 bits : C0 = 1100 0000. C’est pourquoi les adresses MAC et IPv6 s’écrivent en hexadécimal.',
+        'Dans la partie adresse, une MAC révèle deux bits utiles au dépannage : I/G (unicast ou groupe) et U/L (adresse du constructeur ou administrée localement, typique des machines virtuelles et des adresses aléatoires des téléphones).',
+      ],
+      en: [
+        'Edit the decimal, hexadecimal or binary field: the other two follow. The 0x and 0b prefixes are accepted but not required.',
+        'The grid shows the weight of each bit (128, 64, 32… for a byte): adding the weights of the bits set to 1 gives back the decimal value. It is the method to know for masks: 255.255.255.192 ends with 11000000, that is 128 + 64.',
+        'One hexadecimal digit maps exactly to 4 bits: C0 = 1100 0000. That is why MAC and IPv6 addresses are written in hexadecimal.',
+        'In the address part, a MAC reveals two bits useful for troubleshooting: I/G (unicast or group) and U/L (manufacturer address or locally administered, typical of virtual machines and of phones’ random addresses).',
+      ],
+    },
+    tags: ['binary', 'hexadecimal', 'ipv4', 'mac'],
+    learnMore: {
+      fr: chapterUrl('fr', 'fundamentals', 'ipv4-subnetting'),
+      en: chapterUrl('en', 'fundamentals', 'ipv4-subnetting'),
+    },
+    component: BaseConverter,
   },
 ];
 

@@ -1,0 +1,204 @@
+---
+import type { Lang } from '@/i18n/ui';
+
+interface Props {
+  lang?: Lang;
+  value?: string;
+}
+
+const { lang = 'fr', value = '2001:db8:acad:10::37/64' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Calculateur IPv6',
+    hint: 'Format : 2001:db8:acad:10::37/64 (sans préfixe, l’adresse est traitée comme un /128)',
+    macLabel: 'Adresse MAC pour EUI-64 (facultatif)',
+    macHint: 'Formats : 00:1a:2b:3c:4d:5e, 00-1A-2B-3C-4D-5E ou 001a.2b3c.4d5e',
+    error: 'Format invalide : saisissez une adresse IPv6, suivie ou non de /préfixe (0 à 128).',
+    macError: 'Adresse MAC invalide : 12 chiffres hexadécimaux attendus.',
+    compressed: 'Forme compressée',
+    full: 'Forme complète',
+    network: 'Préfixe réseau',
+    first: 'Première adresse',
+    last: 'Dernière adresse',
+    count: 'Adresses dans le préfixe',
+    subnets: 'Sous-réseaux /64',
+    type: 'Type',
+    reverse: 'Nom DNS inverse (PTR)',
+    eui: 'Adresse EUI-64',
+    euiNeeds64: 'EUI-64 suppose un préfixe de /64 ou plus court.',
+    binary: 'Préfixe et identifiant d’interface',
+    prefixPart: 'préfixe',
+    hostPart: 'identifiant d’interface',
+    none: '— (préfixe plus long que /64)',
+    types: {
+      unspecified: 'Non spécifiée (::)',
+      loopback: 'Loopback (::1)',
+      mapped: 'IPv4 mappée (::ffff:0:0/96)',
+      nat64: 'NAT64 (64:ff9b::/96)',
+      documentation: 'Documentation (2001:db8::/32)',
+      sixToFour: '6to4 (2002::/16, obsolète)',
+      linkLocal: 'Link-local (fe80::/10)',
+      ula: 'Unique local, ULA (fc00::/7)',
+      multicast: 'Multicast (ff00::/8)',
+      global: 'Globale unicast (2000::/3)',
+      reserved: 'Réservée par l’IETF',
+    },
+  },
+  en: {
+    title: 'IPv6 calculator',
+    hint: 'Format: 2001:db8:acad:10::37/64 (without a prefix, the address is treated as a /128)',
+    macLabel: 'MAC address for EUI-64 (optional)',
+    macHint: 'Formats: 00:1a:2b:3c:4d:5e, 00-1A-2B-3C-4D-5E or 001a.2b3c.4d5e',
+    error: 'Invalid format: enter an IPv6 address, optionally followed by /prefix (0 to 128).',
+    macError: 'Invalid MAC address: 12 hexadecimal digits expected.',
+    compressed: 'Compressed form',
+    full: 'Full form',
+    network: 'Network prefix',
+    first: 'First address',
+    last: 'Last address',
+    count: 'Addresses in the prefix',
+    subnets: '/64 subnets',
+    type: 'Type',
+    reverse: 'Reverse DNS name (PTR)',
+    eui: 'EUI-64 address',
+    euiNeeds64: 'EUI-64 assumes a /64 or shorter prefix.',
+    binary: 'Prefix and interface identifier',
+    prefixPart: 'prefix',
+    hostPart: 'interface identifier',
+    none: '— (prefix longer than /64)',
+    types: {
+      unspecified: 'Unspecified (::)',
+      loopback: 'Loopback (::1)',
+      mapped: 'IPv4-mapped (::ffff:0:0/96)',
+      nat64: 'NAT64 (64:ff9b::/96)',
+      documentation: 'Documentation (2001:db8::/32)',
+      sixToFour: '6to4 (2002::/16, deprecated)',
+      linkLocal: 'Link-local (fe80::/10)',
+      ula: 'Unique local, ULA (fc00::/7)',
+      multicast: 'Multicast (ff00::/8)',
+      global: 'Global unicast (2000::/3)',
+      reserved: 'Reserved by the IETF',
+    },
+  },
+}[lang];
+
+const fields = ['compressed', 'network', 'type', 'first', 'last', 'count', 'subnets'] as const;
+const input = 'w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+---
+<div
+  data-ipv6-calc
+  data-lang={lang}
+  data-i18n={JSON.stringify(copy)}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <label class="block">
+    <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.title}</span>
+    <input type="text" value={value} spellcheck="false" autocomplete="off" data-input class:list={[input, 'mt-2 text-lg']} />
+  </label>
+  <p class="mt-2 text-xs text-slate-500">{copy.hint}</p>
+  <p data-error hidden class="mt-2 text-sm text-rose-600 dark:text-rose-400">{copy.error}</p>
+
+  <div data-results class="transition-opacity">
+    <dl class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {fields.map((f) => (
+        <div class="min-w-0">
+          <dt class="text-xs text-slate-500">{copy[f]}</dt>
+          <dd data-field={f} class="mt-1 break-all font-mono text-sm font-medium text-slate-900 dark:text-white">—</dd>
+        </div>
+      ))}
+    </dl>
+
+    <div class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+      <p class="text-xs text-slate-500">{copy.full}</p>
+      <p data-full class="mt-1 break-all font-mono text-sm tracking-wide"></p>
+      <p class="mt-2 flex flex-wrap gap-4 text-xs text-slate-500">
+        <span><span class="font-semibold text-sky-600 dark:text-sky-400">■</span> {copy.prefixPart}</span>
+        <span><span class="text-slate-400">■</span> {copy.hostPart}</span>
+      </p>
+      <p class="mt-4 text-xs text-slate-500">{copy.reverse}</p>
+      <p data-field="reverse" class="mt-1 break-all font-mono text-xs text-slate-700 dark:text-slate-300"></p>
+    </div>
+  </div>
+
+  <div class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+    <label class="block">
+      <span class="text-xs text-slate-500">{copy.macLabel}</span>
+      <input type="text" spellcheck="false" autocomplete="off" placeholder="00:1a:2b:3c:4d:5e" data-mac class:list={[input, 'mt-1 text-sm']} />
+    </label>
+    <p class="mt-1 text-xs text-slate-500">{copy.macHint}</p>
+    <p data-mac-error hidden class="mt-2 text-sm text-rose-600 dark:text-rose-400">{copy.macError}</p>
+    <div data-eui hidden class="mt-3">
+      <p class="text-xs text-slate-500">{copy.eui}</p>
+      <p data-eui-value class="mt-1 break-all font-mono text-sm font-medium text-slate-900 dark:text-white"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+  import { parseCidr6, compressedForm, fullForm, networkOf, lastOf, addressType, eui64, reverseDns, powerOfTwo } from '@/lib/ipv6';
+
+  document.querySelectorAll<HTMLElement>('[data-ipv6-calc]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const locale = root.dataset.lang === 'en' ? 'en-US' : 'fr-FR';
+    const input = root.querySelector<HTMLInputElement>('[data-input]')!;
+    const mac = root.querySelector<HTMLInputElement>('[data-mac]')!;
+    const error = root.querySelector<HTMLElement>('[data-error]')!;
+    const macError = root.querySelector<HTMLElement>('[data-mac-error]')!;
+    const results = root.querySelector<HTMLElement>('[data-results]')!;
+    const full = root.querySelector<HTMLElement>('[data-full]')!;
+    const euiBox = root.querySelector<HTMLElement>('[data-eui]')!;
+    const euiValue = root.querySelector<HTMLElement>('[data-eui-value]')!;
+    const set = (field: string, value: string) => {
+      root.querySelector<HTMLElement>(`[data-field="${field}"]`)!.textContent = value;
+    };
+
+    const update = () => {
+      const parsed = parseCidr6(input.value);
+      error.hidden = parsed !== null;
+      results.classList.toggle('opacity-40', parsed === null);
+
+      if (parsed) {
+        const { address, prefix } = parsed;
+        const network = networkOf(address, prefix);
+        set('compressed', compressedForm(address));
+        set('network', `${compressedForm(network)}/${prefix}`);
+        set('type', t.types[addressType(address)]);
+        set('first', compressedForm(network));
+        set('last', compressedForm(lastOf(address, prefix)));
+        set('count', powerOfTwo(128 - prefix, locale));
+        set('subnets', prefix <= 64 ? powerOfTwo(64 - prefix, locale) : t.none);
+        set('reverse', reverseDns(address));
+
+        // Forme complète, avec les chiffres du préfixe mis en avant (un chiffre hexadécimal = 4 bits)
+        const digits = fullForm(address);
+        let html = '';
+        let bit = 0;
+        for (const ch of digits) {
+          if (ch === ':') { html += '<span class="text-slate-400">:</span>'; continue; }
+          const cls = bit < prefix ? 'font-semibold text-sky-600 dark:text-sky-400' : 'text-slate-400';
+          html += `<span class="${cls}">${ch}</span>`;
+          bit += 4;
+        }
+        full.innerHTML = html;
+      }
+
+      // EUI-64 : identifiant d'interface déduit de la MAC, ajouté au préfixe /64
+      const raw = mac.value.trim();
+      const id = raw ? eui64(raw) : null;
+      macError.hidden = !raw || id !== null;
+      euiBox.hidden = id === null;
+      if (id !== null) {
+        if (parsed && parsed.prefix <= 64) {
+          euiValue.textContent = compressedForm(networkOf(parsed.address, 64) | id);
+        } else {
+          euiValue.textContent = `${compressedForm(id)} · ${t.euiNeeds64}`;
+        }
+      }
+    };
+
+    input.addEventListener('input', update);
+    mac.addEventListener('input', update);
+    update();
+  });
+</script>
