@@ -1,0 +1,179 @@
+---
+title: "Prometheus et Grafana"
+description: "Stocker et exploiter la télémétrie : le modèle de données de Prometheus, les requêtes PromQL de base (rate, sum, changes), des alertes qui voient les pannes silencieuses, puis des tableaux de bord Grafana, des variables et une weather map du réseau."
+pubDate: 2026-10-17
+level: intermediate
+tags: [prometheus, grafana, promql, monitoring, observability]
+vendor: [arista]
+order: 5
+---
+
+Le chapitre précédent a mis en place la collecte : gNMIc reçoit la télémétrie des switches toutes les dix
+secondes. Reste à la **stocker**, à l'**interroger**, à **alerter** quand quelque chose se dégrade, et à la
+**montrer**. C'est le rôle du couple le plus répandu dans le monde de l'observabilité : **Prometheus** pour le
+stockage, les requêtes et les alertes, **Grafana** pour les tableaux de bord.
+
+<Topology
+  width={720}
+  height={230}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 70, y: 110, label: 'Switches', sub: 'gNMI' },
+    { id: 'g', type: 'server', x: 230, y: 110, label: 'gNMIc', sub: ':9804/metrics', tone: 'sky' },
+    { id: 'p', type: 'server', x: 400, y: 110, label: 'Prometheus', sub: 'stockage, PromQL', tone: 'amber' },
+    { id: 'gr', type: 'server', x: 570, y: 60, label: 'Grafana', sub: 'tableaux de bord', tone: 'emerald' },
+    { id: 'am', type: 'server', x: 570, y: 175, label: 'Alertmanager', sub: 'mail, Teams, astreinte', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'sw', to: 'g' }, { from: 'g', to: 'p' }, { from: 'p', to: 'gr' }, { from: 'p', to: 'am' },
+  ]}
+  flows={[
+    { from: 'sw', to: 'g', label: 'push', tone: 'sky', offset: -16 },
+    { from: 'p', to: 'g', label: 'scrape', tone: 'amber', offset: -16 },
+  ]}
+  caption="La chaîne complète : les switches poussent vers gNMIc, Prometheus vient chercher les mesures chez gNMIc toutes les 10 secondes, Grafana les affiche et Alertmanager distribue les alertes."
+/>
+
+## Prometheus
+
+### Le modèle de données
+
+Prometheus stocke des **séries temporelles** : pour chaque série, une suite de valeurs horodatées. Une série
+est identifiée par un **nom de métrique** et des **étiquettes** (*labels*) :
+
+```text
+gnmic_counters_interfaces_interface_state_counters_in_octets{source="leaf1", interface_name="Ethernet1"}  48213377
+```
+
+- le nom dit **ce qu'on mesure** (ici, les octets reçus) ;
+- les étiquettes disent **où** : quel équipement (`source`), quelle interface ;
+- chaque combinaison d'étiquettes est une série distincte. Ce sont les étiquettes qui permettent de filtrer,
+  d'agréger et de comparer.
+
+Prometheus fonctionne en **pull** : il vient lui-même chercher (*scrape*) les mesures, à intervalle régulier,
+sur des points d'accès HTTP. Ici, il interroge gNMIc, qui expose les dernières valeurs reçues des switches.
+
+<CodeFile lab="netops" file="observability/prometheus.yml" />
+
+### PromQL, l'essentiel
+
+**PromQL** est le langage de requête de Prometheus. Les compteurs réseau ne font qu'augmenter ; ce qui intéresse,
+c'est leur **vitesse** d'augmentation. D'où la fonction la plus utilisée : `rate()`.
+
+| Requête | Résultat |
+|---|---|
+| `…_in_octets{source="leaf1"}` | La valeur brute des compteurs de leaf1 : peu utile seule |
+| `rate(…_in_octets[1m]) * 8` | Le **débit** en bit/s, moyenné sur la dernière minute |
+| `sum by (source) (rate(…_in_octets[1m]) * 8)` | Le débit total entrant par équipement |
+| `topk(5, rate(…_out_octets[5m]) * 8)` | Les 5 interfaces les plus chargées |
+| `increase(…_in_errors[1h])` | Le nombre d'erreurs reçues dans la dernière heure |
+| `changes(…_oper_status[10m])` | Le nombre de changements d'état en 10 minutes : un lien qui oscille |
+
+Les noms de métriques produits par gNMIc sont longs : dans le lab, les requêtes utilisent une expression
+régulière sur le nom (`{__name__=~"gnmic_counters_.*_in_errors"}`), qui fonctionne quelle que soit la version.
+
+## Des alertes qui voient les pannes silencieuses
+
+Prometheus évalue en continu des **règles d'alerte** : une requête PromQL et une durée. Si la requête renvoie un
+résultat pendant toute la durée, l'alerte se déclenche et part vers **Alertmanager**, qui la regroupe, la
+déduplique et la distribue (messagerie, Teams ou Slack, outil d'astreinte).
+
+L'erreur classique est de n'alerter que sur les pannes **franches** (« interface down », « équipement
+injoignable »). Elles sont utiles, mais ce sont rarement elles qui font perdre des heures. Les alertes du lab
+visent aussi les **pannes grises** :
+
+<CodeFile lab="netops" file="observability/alerts.yml" />
+
+| Alerte | Ce qu'elle détecte | Panne silencieuse correspondante |
+|---|---|---|
+| `InterfaceDown` | Une interface à l'état down | Panne franche |
+| `InterfaceFlapping` | Plus de 2 changements d'état en 10 minutes | Lien qui oscille, invisible à 5 minutes |
+| `InterfaceErrors` | Des erreurs reçues pendant 2 minutes | Câble, optique, connecteur qui se dégradent |
+| `InterfaceDiscards` | Des rejets en sortie pendant 5 minutes | Saturation, microbursts |
+| `UplinkImbalance` | Un lien porte 5 fois plus que son jumeau | Un membre ECMP ou port-channel défaillant, ou un hash déséquilibré |
+
+<Callout type="warning">
+Une alerte doit appeler une **action**. Si une alerte sonne tous les jours sans que personne ne fasse rien,
+l'équipe apprend à l'ignorer, et ignorera aussi celle qui comptait. Commencez par peu d'alertes, avec des seuils et
+des durées réalistes (`for:`), et réservez les notifications d'astreinte aux impacts réels. Le reste va dans un
+tableau de bord consulté chaque matin.
+</Callout>
+
+## Grafana
+
+**Grafana** se connecte à Prometheus (et à bien d'autres sources) et construit des **tableaux de bord** : des
+panneaux de courbes, de jauges, d'états, de tableaux, chacun alimenté par une requête PromQL.
+
+- **Les variables** rendent un tableau de bord réutilisable : une liste déroulante `switch`, alimentée par les
+  valeurs de l'étiquette `source`, filtre tous les panneaux d'un coup (`source=~"$switch"`).
+- **Le provisioning** décrit les sources de données et les tableaux de bord dans des fichiers, versionnés dans Git
+  et chargés au démarrage : le tableau de bord du lab est créé ainsi, sans clic.
+- **Les unités** : Grafana convertit les `bps` et les `pps` en Mb/s ou Gb/s lisibles.
+
+### La weather map
+
+Une **weather map** dessine le réseau (équipements et liens), et colore chaque lien selon son taux d'utilisation :
+vert, jaune, orange, rouge. En un coup d'œil, on voit où le trafic passe et quel lien sature. Grafana n'en a pas
+nativement : on utilise un plugin, comme **Network Weathermap** (`knightss27-weathermap-panel`), installé dans le
+lab. On y place les nœuds, on trace les liens, et on associe à chaque sens d'un lien une requête PromQL de débit
+et la capacité du lien.
+
+<Callout type="field">
+Projetée sur un écran de l'équipe réseau, une weather map de la fabric alimentée à dix secondes change les
+réflexes. Le jour où un lien de spine passe au rouge pendant une sauvegarde, l'équipe le voit avant les
+utilisateurs, et peut déplacer la sauvegarde ou ajouter un lien avant que ça ne devienne un incident. Elle sert
+aussi de preuve : quand une application est lente et que toute la carte est verte, avec zéro erreur et zéro rejet,
+la discussion avec l'équipe applicative change de ton, chiffres à l'appui.
+</Callout>
+
+## Dans le lab
+
+Le lab `netops` contient `prometheus` (`172.20.30.62`) et `grafana` (`172.20.30.63`). Le réseau de management est
+joignable depuis votre machine : ouvrez les deux interfaces dans votre navigateur.
+
+<Lab name="netops" lang="fr" />
+
+**1. Prometheus.** Ouvrez `http://172.20.30.62:9090`. Dans *Status > Targets*, la cible `gnmic` doit être `UP`.
+Dans l'onglet de requête, essayez :
+
+```text
+{__name__=~"gnmic_counters_.*_in_octets", interface_name="Ethernet1"}
+rate({__name__=~"gnmic_counters_.*_in_octets", interface_name=~"Ethernet.*"}[1m]) * 8
+{__name__=~"gnmic_oper_.*oper_status"}
+```
+
+La première montre les compteurs bruts, la deuxième le débit en bit/s de chaque interface Ethernet, la
+troisième l'état de toutes les interfaces (1 ou 0).
+
+**2. Générer du trafic.** Depuis `leaf1`, envoyez un flot de pings vers `spine1`, et suivez le débit dans
+Prometheus :
+
+```bash
+docker exec clab-netops-leaf1 bash -c 'ping -s 1400 -i 0.01 -c 3000 10.0.1.0 >/dev/null'
+```
+
+**3. Grafana.** Ouvrez `http://172.20.30.63:3000` (identifiants `admin` / `admin`, Grafana demande ensuite d'en
+changer). Le tableau de bord **Réseau netops**, dans le dossier *Réseau*, a été créé au démarrage : état des
+interfaces, débits, et un panneau **Erreurs et rejets** qui doit rester vide. Changez la variable `switch` pour
+filtrer.
+
+**4. Déclencher des alertes.** Éteignez `Ethernet1` sur `leaf1` (`shutdown`), et regardez *Alerts* dans
+Prometheus : `InterfaceDown` passe en *pending*, puis *firing* au bout de 30 secondes. Rallumez, puis éteignez et
+rallumez l'interface trois fois de suite : c'est `InterfaceFlapping` qui se déclenche. Sur le tableau de bord, la
+frise d'état montre chaque oscillation.
+
+**5. La weather map.** Dans Grafana, créez un tableau de bord, ajoutez un panneau de type *Network Weathermap*,
+placez `spine1`, `leaf1` et `leaf2`, puis reliez-les. Pour chaque lien, utilisez la requête de débit de
+l'interface correspondante (par exemple `Ethernet1` de `spine1` vers `leaf1`) et une capacité de 1 Gb/s. Relancez
+le flot de pings de l'étape 2 : le lien se colore.
+
+## À retenir
+
+- **Prometheus** stocke des **séries temporelles** identifiées par un nom et des **étiquettes**, qu'il vient
+  chercher (*scrape*) à intervalle régulier.
+- PromQL : **`rate()`** sur les compteurs (× 8 pour des bit/s), `sum by`, `topk`, `increase`, `changes`.
+- Des **alertes** qui voient aussi les pannes grises : erreurs, rejets, oscillations, déséquilibre entre liens.
+  Chaque alerte doit appeler une action.
+- **Grafana** : tableaux de bord, **variables**, provisioning dans Git, et une **weather map** pour voir le réseau
+  en un coup d'œil.
+- Une supervision qui montre, chiffres à l'appui, que le réseau va bien est aussi précieuse que celle qui
+  montre qu'il va mal.

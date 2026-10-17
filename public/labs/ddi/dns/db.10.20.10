@@ -1,0 +1,5 @@
+$TTL 300
+@       IN SOA  dns.corp.example.com. hostmaster.corp.example.com. (
+                2026101701 3600 600 604800 300 )
+        IN NS   dns.corp.example.com.
+1       IN PTR  r1.corp.example.com.

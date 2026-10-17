@@ -1,0 +1,215 @@
+---
+title: "Télémétrie avec gNMI et gNMIc"
+description: "Recevoir l'état du réseau en flux continu plutôt que l'interroger : pourquoi la télémétrie en streaming, gNMI et les modèles OpenConfig, chemins et abonnements (sample, on-change), et gNMIc pour tester et collecter, avec Arista EOS."
+pubDate: 2026-10-17
+level: intermediate
+tags: [telemetry, gnmi, gnmic, openconfig, monitoring]
+vendor: [arista, cisco]
+order: 4
+---
+
+Le chapitre précédent s'est arrêté sur les limites de SNMP : une interrogation toutes les cinq minutes, qui
+noie les pics et les oscillations dans une moyenne, et une charge qui grandit avec le nombre de compteurs. La
+**télémétrie en streaming** inverse le modèle : au lieu que la supervision demande, c'est l'équipement qui
+**envoie** ses données, en continu, aussi souvent qu'on le souhaite, dans un format structuré commun à tous les
+constructeurs.
+
+## Interroger ou recevoir
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'm', label: 'Supervision', tone: 'violet' },
+    { id: 'd', label: 'Switch', tone: 'emerald' },
+  ]}
+  messages={[
+    { note: 'SNMP : la supervision demande, une valeur à la fois', tone: 'slate' },
+    { from: 'm', to: 'd', label: 'GET ifHCInOctets.1, .2, .3…', tone: 'violet' },
+    { from: 'd', to: 'm', label: 'valeurs', style: 'dashed' },
+    { note: '… 5 minutes plus tard, on recommence', tone: 'slate' },
+    { note: 'gNMI : un abonnement, puis le switch envoie seul', tone: 'emerald' },
+    { from: 'm', to: 'd', label: 'Subscribe /interfaces/…/counters, toutes les 10 s', tone: 'violet' },
+    { from: 'd', to: 'm', label: 'compteurs', sub: 't = 10 s', style: 'dashed', tone: 'emerald' },
+    { from: 'd', to: 'm', label: 'compteurs', sub: 't = 20 s', style: 'dashed', tone: 'emerald' },
+    { from: 'd', to: 'm', label: 'Ethernet1 : DOWN', sub: 'immédiatement, sur changement', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="SNMP interroge à intervalles fixes. Avec la télémétrie, on s'abonne une fois, et l'équipement envoie ses données à la fréquence demandée, ou dès qu'un état change."
+/>
+
+| | SNMP | Télémétrie (gNMI) |
+|---|---|---|
+| **Qui initie** | Le gestionnaire interroge | L'équipement pousse, après abonnement |
+| **Fréquence typique** | 1 à 5 minutes | 1 à 30 secondes, ou à chaque changement |
+| **Format** | OID et MIB, propres à chaque constructeur | Modèles **YANG**, souvent **OpenConfig**, communs à tous |
+| **Transport** | UDP, sans chiffrement en v2c | gRPC sur HTTP/2, chiffré en TLS |
+| **Coût** | Élevé pour l'équipement à haute fréquence | Faible : l'équipement envoie ce qu'il a déjà |
+
+La fréquence change ce que l'on voit. Avec une mesure toutes les dix secondes, une rafale d'erreurs ou un lien
+qui tombe pendant vingt secondes laisse une trace nette ; avec les abonnements **sur changement**, un lien qui
+oscille est signalé à chaque transition, même s'il ne reste en panne qu'une seconde. C'est un outil direct contre
+les pannes silencieuses du chapitre précédent.
+
+## gNMI et les modèles OpenConfig
+
+<Term id="gnmi" /> (*gRPC Network Management Interface*) est un protocole défini par le projet OpenConfig, et
+implémenté par Arista, Cisco (IOS XR, NX-OS, IOS XE), Juniper, Nokia et bien d'autres. Quatre opérations :
+
+| Opération | Rôle |
+|---|---|
+| `Capabilities` | Quels modèles et quels encodages l'équipement supporte |
+| `Get` | Lire une valeur, une fois |
+| `Set` | Modifier la configuration |
+| `Subscribe` | S'abonner à des données, en continu |
+
+Les données sont décrites par des **modèles YANG**. Les modèles **OpenConfig**, écrits par des opérateurs
+(Google, Microsoft, AT&T…), sont **communs** à tous les constructeurs : le compteur d'octets reçus d'une interface
+a le même chemin sur un Arista, un Cisco ou un Juniper. Les constructeurs publient aussi leurs modèles natifs,
+plus complets mais spécifiques.
+
+### Les chemins
+
+Une donnée se désigne par un **chemin**, comme un fichier dans une arborescence, avec des **clés** entre
+crochets pour choisir un élément d'une liste :
+
+```text title="Quelques chemins OpenConfig"
+/interfaces/interface[name=Ethernet1]/state/oper-status
+/interfaces/interface[name=Ethernet1]/state/counters/in-octets
+/interfaces/interface[name=Ethernet1]/state/counters/in-errors
+/interfaces/interface/state/counters                      # toutes les interfaces, tous les compteurs
+/network-instances/network-instance[name=default]/protocols/protocol/bgp/neighbors/neighbor/state/session-state
+```
+
+### Les abonnements
+
+| Mode | Comportement | Pour quoi |
+|---|---|---|
+| `ONCE` | Une réponse, puis fin | Un instantané |
+| `POLL` | Le client redemande quand il veut | Rarement utilisé |
+| `STREAM` / `sample` | Envoi à intervalle fixe (`sample-interval`) | Compteurs : débit, erreurs, rejets |
+| `STREAM` / `on-change` | Envoi à chaque changement | États : interface, session BGP, voisin LLDP |
+| `STREAM` / `target-defined` | L'équipement choisit le meilleur mode pour chaque donnée | Quand on ne sait pas |
+
+On combine en général des abonnements `sample` (toutes les 10 à 30 secondes) pour les compteurs, et `on-change`
+pour les états.
+
+### Activer gNMI
+
+```text title="Arista EOS"
+management api gnmi
+   transport grpc default
+      ssl profile TELEMETRY
+      vrf MGMT
+```
+
+Le profil TLS (certificat de l'équipement, autorité de confiance) se définit dans `management security`, avec la
+PKI de l'entreprise (voir [TLS, certificats et inspection](/formations/proxy/tls-pki)). Le port par défaut est
+**6030** chez Arista ; chez Cisco, il dépend de la plateforme (50051 pour NX-OS avec `feature grpc`, 9339 pour
+IOS XE, 57400 pour IOS XR).
+
+<Callout type="note">
+On distingue deux modes : le **dial-in**, où le collecteur se connecte à l'équipement et s'abonne (c'est le
+cas de gNMI, et du lab), et le **dial-out**, où l'équipement se connecte lui-même à un collecteur configuré.
+Le dial-in est plus simple à exploiter : toute la logique est côté collecteur.
+</Callout>
+
+## gNMIc
+
+**gNMIc** est un client gNMI libre, issu du projet OpenConfig. Il sert à deux choses :
+
+- **tester en ligne de commande** : lister les capacités, lire un chemin, s'abonner et voir les données arriver ;
+- **collecter en continu** : s'abonner à toute une flotte d'équipements et envoyer les données vers des
+  **sorties** (Prometheus, InfluxDB, Kafka, fichiers…), avec des **processeurs** pour les transformer au passage.
+
+```bash title="gNMIc en ligne de commande"
+gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure capabilities
+gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure get \
+      --path "/interfaces/interface[name=Ethernet1]/state/counters"
+gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure subscribe \
+      --path "/interfaces/interface[name=Ethernet1]/state/oper-status" --stream-mode on-change
+```
+
+En mode collecteur, tout est décrit dans un fichier : les équipements, les abonnements, les sorties.
+
+<CodeFile lab="netops" file="observability/gnmic.yml" />
+
+Le processeur `oper-status-to-number` transforme l'état `UP` en `1` et les autres états en `0`, parce que
+Prometheus (chapitre suivant) ne stocke que des nombres.
+
+## Ce qu'il faut collecter
+
+Pour voir les pannes silencieuses, la liste est la même qu'au chapitre précédent ; la télémétrie permet
+simplement de la collecter **finement** :
+
+| Donnée | Chemin OpenConfig | Mode |
+|---|---|---|
+| Débit | `…/state/counters/in-octets`, `out-octets` | `sample`, 10 s |
+| Erreurs | `…/state/counters/in-errors`, `in-fcs-errors` | `sample`, 10 s |
+| Rejets | `…/state/counters/in-discards`, `out-discards` | `sample`, 10 s |
+| État des interfaces | `…/state/oper-status` | `on-change` |
+| Niveau optique | `/components/component/transceiver/…/input-power` | `sample`, 60 s |
+| Sessions BGP | `…/bgp/neighbors/neighbor/state/session-state` | `on-change` |
+
+<Callout type="field">
+Une fabric de data center supervisée par télémétrie à dix secondes change la façon de travailler. Une carte de
+débit en temps réel montre un lien de spine qui sature pendant une sauvegarde, alors que la moyenne sur cinq
+minutes de l'ancien outil restait sous 60 %. Et l'abonnement sur changement des états d'interface fait apparaître
+un lien qui oscillait plusieurs fois par heure depuis des semaines, invisible jusque-là parce qu'il remontait
+toujours avant l'interrogation suivante. Les deux étaient la cause de lenteurs « inexpliquées » remontées par les
+équipes applicatives.
+</Callout>
+
+## Dans le lab
+
+Le lab `netops` contient un collecteur `gnmic` (`172.20.30.61`), déjà abonné aux trois switches. Les switches ont
+gNMI activé (sans TLS, pour la simplicité du lab).
+
+<Lab name="netops" lang="fr" />
+
+**1. Les capacités de leaf1.**
+
+```bash
+docker exec clab-netops-gnmic /app/gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure capabilities
+```
+
+La version de gNMI, les encodages supportés (`JSON_IETF`, `PROTO`…) et la longue liste des modèles YANG, dont
+les modèles `openconfig-*`.
+
+**2. Lire des compteurs.**
+
+```bash
+docker exec clab-netops-gnmic /app/gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure \
+  get --path "/interfaces/interface[name=Ethernet1]/state/counters"
+```
+
+Une réponse JSON avec tous les compteurs de l'interface : `in-octets`, `in-errors`, `in-discards`…
+
+**3. Un abonnement sur changement.** Dans un premier terminal :
+
+```bash
+docker exec -it clab-netops-gnmic /app/gnmic -a 172.20.30.12:6030 -u svc-netops -p netops-lab --insecure \
+  subscribe --path "/interfaces/interface[name=Ethernet1]/state/oper-status" --stream-mode on-change
+```
+
+Dans un second, éteignez puis rallumez `Ethernet1` sur `leaf1` (comme au chapitre précédent). Chaque transition
+arrive **instantanément** dans le premier terminal : `DOWN`, puis `UP`. Recommencez trois fois de suite, très
+vite : les trois oscillations apparaissent, là où une interrogation toutes les cinq minutes n'aurait rien vu.
+
+**4. Ce que le collecteur expose.** Le collecteur `gnmic` publie ses données au format Prometheus :
+
+```bash
+docker exec clab-netops-nms wget -qO- http://172.20.30.61:9804/metrics | grep -E "in_errors|oper_status" | head
+```
+
+Chaque ligne est une **série** : un nom de métrique, des étiquettes (`source="leaf1"`, `interface_name="Ethernet1"`)
+et une valeur. C'est ce que Prometheus va stocker, au chapitre suivant.
+
+## À retenir
+
+- La **télémétrie en streaming** inverse SNMP : on s'abonne, l'équipement **pousse** ses données, à la seconde si
+  besoin.
+- **gNMI** (sur gRPC et TLS) : `Capabilities`, `Get`, `Set`, `Subscribe`. Les modèles **OpenConfig** sont communs
+  aux constructeurs.
+- Une donnée = un **chemin**, avec des **clés** : `/interfaces/interface[name=Ethernet1]/state/counters`.
+- Abonnements **`sample`** pour les compteurs, **`on-change`** pour les états : les oscillations et les rafales
+  d'erreurs deviennent visibles.
+- **gNMIc** teste en ligne de commande et collecte en continu vers Prometheus, InfluxDB ou Kafka.

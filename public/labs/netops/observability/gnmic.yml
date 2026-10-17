@@ -1,0 +1,56 @@
+# gNMIc : collecte la télémétrie des trois switches et l'expose à Prometheus
+# (chapitres « Télémétrie avec gNMI et gNMIc » et « Prometheus et Grafana »)
+username: svc-netops
+password: netops-lab
+insecure: true            # gNMI sans TLS dans le lab ; en production : TLS et certificats
+encoding: json_ietf
+
+targets:
+  spine1:
+    address: 172.20.30.11:6030
+  leaf1:
+    address: 172.20.30.12:6030
+  leaf2:
+    address: 172.20.30.13:6030
+
+subscriptions:
+  # Compteurs d'interfaces, envoyés toutes les 10 secondes
+  counters:
+    paths:
+      - /interfaces/interface/state/counters
+    mode: stream
+    stream-mode: sample
+    sample-interval: 10s
+  # État des interfaces, envoyé seulement quand il change
+  oper:
+    paths:
+      - /interfaces/interface/state/oper-status
+    mode: stream
+    stream-mode: on-change
+
+processors:
+  # Prometheus ne stocke que des nombres : UP devient 1, le reste 0
+  oper-status-to-number:
+    event-strings:
+      value-names:
+        - ".*oper-status$"
+      transforms:
+        - replace:
+            apply-on: "value"
+            old: "UP"
+            new: "1"
+        - replace:
+            apply-on: "value"
+            old: "^(DOWN|LOWER_LAYER_DOWN|NOT_PRESENT|DORMANT|TESTING|UNKNOWN)$"
+            new: "0"
+
+outputs:
+  prom:
+    type: prometheus
+    listen: ":9804"
+    path: /metrics
+    metric-prefix: gnmic
+    append-subscription-name: true
+    export-timestamps: true
+    event-processors:
+      - oper-status-to-number

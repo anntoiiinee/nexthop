@@ -1,0 +1,287 @@
+---
+title: "SNMP, syslog and NetFlow"
+description: "Classic network monitoring, still everywhere: SNMP (MIB, OID, v2c and v3), traps, syslog and NTP, NetFlow, IPFIX and sFlow. Why network failures are silent, what to measure to see them, and the limits that lead to telemetry."
+pubDate: 2026-10-17
+level: intermediate
+tags: [monitoring, snmp, syslog, netflow, sflow, observability]
+vendor: [arista, cisco]
+order: 3
+---
+
+Monitoring a network means answering three questions: **what state** devices and links are in (SNMP), **what
+happened** (syslog), and **who uses** the bandwidth (NetFlow). These three tools are more than twenty years old,
+and they are still at the heart of monitoring in almost every company. This chapter presents them, then tackles
+the real difficulty: network problems are often **invisible** to them.
+
+## Why the network is hard to monitor
+
+Let us compare two incidents:
+
+| | A server going down | A link losing 3% of packets |
+|---|---|---|
+| **What the user sees** | "The site no longer answers" | "It is slow", "it drops now and then" |
+| **What the tools say** | Service stopped, probe failing, red alert | Interface `up`, device reachable, no alert |
+| **Error message** | Explicit: `Connection refused`, error 500, authentication failure | None: TCP retransmissions, growing delays |
+| **Who gets blamed** | The server, rightly | The application, the workstation, or "the network" without proof |
+
+A server failure is **clean**: it stops, it says so. A failed authentication writes a message in a log. A network
+problem is most often **partial and silent**: nothing is down, but something degrades. These are called **gray
+failures**.
+
+The classic examples:
+
+- **partial losses**: an ageing optic, a damaged cable, a loose connector. The link stays `up`, but one frame in
+  fifty is corrupted. TCP retransmits, the application slows down, nobody sees an error;
+- **one path out of four failing**: in a port-channel or ECMP, a single member loses packets. Only the flows the
+  hash sends over that member are affected: one user in four complains, the others do not, and the problem looks
+  random;
+- **an MTU too small**: the TCP handshake and ping go through, large transfers hang (see
+  [TCP and UDP](/en/courses/fundamentals/tcp-udp));
+- **asymmetric routing**: the way out goes through one firewall, the way back through another, which drops the
+  replies of a session it does not know;
+- **microbursts**: traffic spikes lasting a few milliseconds that fill a buffer. The five-minute average shows
+  20% utilisation, yet packets are dropped;
+- **a flapping link**: it goes down and up several times a minute, too fast for monitoring that polls every five
+  minutes to see it.
+
+<Callout type="field">
+The scenario repeats from one company to the next: a business application has been "sluggish" for two weeks. The
+application team checked its servers, the systems team its virtual machines, and everyone ends up looking at the
+network, which is "all green" in monitoring. It takes a packet capture to see TCP retransmissions, then hours to
+trace the cause: one of the two links of a port-channel between two racks has been piling up CRC errors since a
+hardware move. The error counters had been increasing since day one; nobody looked at them, because no alert was
+defined on them.
+</Callout>
+
+### What to measure to see these failures
+
+Monitoring that only checks that devices answer ping and that interfaces are `up` sees **none** of the failures
+above. You need to watch:
+
+| Measurement | What it reveals |
+|---|---|
+| **Input errors** (CRC, *input errors*) | Cable, optic, connector, duplex problem |
+| **Output discards** (*drops*) | Saturation, buffers too small, microbursts |
+| **State changes** (transition counter, logs) | Flapping link |
+| **Optical level** (received power in dBm) | An optic or fibre degrading, **before** errors appear |
+| **Comparison between members of a group** | One port-channel member or ECMP path more loaded, or erroring, than the others |
+| **End-to-end active measurements** (ping, TWAMP, synthetic probes) | Losses, latency and jitter actually suffered, even when no counter moves |
+
+The last line is essential: some losses leave **no trace** in device counters (a packet dropped by carrier
+equipment, a problem inside a tunnel). Only an active measurement, sending traffic and counting what comes back,
+sees them. Most vendors offer one (IP SLA at Cisco, *connectivity monitor* at Arista), and software probes do the
+same.
+
+## SNMP
+
+### The principle
+
+<Term id="snmp" /> works by **polling**: a **manager** (the monitoring server) regularly asks **agents** (the
+devices) for their values. Each value is identified by an **OID** (*Object Identifier*), a sequence of numbers
+organised in a tree; the **MIB** (*Management Information Base*) is the dictionary giving their name and meaning.
+
+| Object | OID | Content |
+|---|---|---|
+| `sysUpTime` | `1.3.6.1.2.1.1.3` | Time since the last boot |
+| `ifName` | `1.3.6.1.2.1.31.1.1.1.1` | Interface names |
+| `ifOperStatus` | `1.3.6.1.2.1.2.2.1.8` | Interface state (1 = up, 2 = down) |
+| `ifHCInOctets` | `1.3.6.1.2.1.31.1.1.1.6` | Bytes received, 64-bit counter |
+| `ifInErrors` | `1.3.6.1.2.1.2.2.1.14` | Frames received with errors |
+| `ifOutDiscards` | `1.3.6.1.2.1.2.2.1.19` | Packets dropped on output |
+
+Counters only go up: the manager computes the rate from the difference between two polls. Use **64-bit**
+counters (`ifHC…`): a 32-bit counter on a 10 Gb/s interface wraps around roughly every three seconds, much faster
+than the polling cycle.
+
+Devices can also send **traps** (or *informs*, acknowledged) to the manager on their own: interface down, reboot,
+fan failure.
+
+### v2c or v3
+
+| | SNMPv2c | SNMPv3 |
+|---|---|---|
+| **Authentication** | A **community**, a shared password, sent in clear | A **user**, with a hashed password (SHA-2) |
+| **Encryption** | None: everything travels in clear | AES |
+| **Use** | Still very common, keep it to an isolated management network | The standard to aim for |
+
+<Callout type="warning">
+A **read-write** SNMP community (`rw`), with the default value `private`, lets anyone change a device's
+configuration. It has no place on a production network. With SNMPv2c, only use read-only communities, long and
+different from `public`, filtered by an access list to the monitoring servers' addresses only.
+</Callout>
+
+```text title="Arista EOS: read-only SNMPv3, traps to monitoring"
+snmp-server group SUPERVISION v3 priv
+snmp-server user supervision SUPERVISION v3 auth sha256 <password> priv aes <key>
+snmp-server host 172.20.30.60 version 3 priv supervision
+snmp-server enable traps
+```
+
+## Syslog
+
+Every device writes **messages**: an interface changing state, a BGP session going down, an administrator
+logging in, a hardware error. By default, they stay in the device's memory, and vanish at reboot, precisely when
+you need them. So they are sent to a **central syslog server**.
+
+Each message has a **severity**, from 0 to 7:
+
+| Level | Name | Example |
+|---|---|---|
+| 0 | Emergency | System unusable |
+| 1 | Alert | Immediate action required |
+| 2 | Critical | Hardware failure |
+| 3 | Error | Process error |
+| 4 | Warning | BGP session down, threshold exceeded |
+| 5 | Notice | Interface up or down, configuration changed |
+| 6 | Informational | Administrator login |
+| 7 | Debug | Debug traces, never permanently in production |
+
+You usually send up to level 6 (`informational`). The server sorts messages per device, keeps them as long as
+the company policy requires, and forwards them to the security team's SIEM.
+
+```text title="Arista EOS: logs to the central server"
+logging host 172.20.30.60
+logging trap informational
+logging source-interface Management0
+```
+
+### Time, essential
+
+An incident is reconstructed by putting together logs from several devices. If their clocks drift by a few
+minutes, the order of events becomes wrong, and so does the analysis. All devices must be synchronised with
+<Term id="ntp" /> to the same servers, and timestamp their messages with the time zone (or all in UTC). Without
+NTP, certificates and Kerberos authentication fail too.
+
+## NetFlow, IPFIX and sFlow
+
+SNMP says **how much** traffic crosses an interface, not **which** traffic. <Term id="netflow" /> answers "who
+talks to whom?": the device summarises each **flow** (addresses, ports, protocol, interfaces) and regularly
+exports these summaries, with their volumes, to a **collector**.
+
+| | NetFlow v5 / v9 | IPFIX | sFlow |
+|---|---|---|---|
+| **Origin** | Cisco | IETF standard, derived from NetFlow v9 | Industry standard (Arista, HPE, Juniper…) |
+| **Principle** | Each flow tracked in a cache, then exported | Same, extensible format | **Sampling**: one frame in N is copied, along with interface counters |
+| **Accuracy** | Every flow (or sampled) | Same | Statistical, but very light on the device |
+
+Uses: finding what saturates an Internet link, charging consumption between entities, detecting a workstation
+contacting thousands of addresses (a worm, an exfiltration), sizing a new link. Collectors: the flow modules of
+LibreNMS or Zabbix, ntopng, Elastic, Kentik, or `goflow2` to feed your own pipeline.
+
+```text title="Arista EOS: sFlow to a collector"
+sflow sample 16384
+sflow destination 172.20.30.60
+sflow source-interface Management0
+sflow run
+```
+
+## Tools
+
+- **LibreNMS**: open source, automatic discovery, SNMP graphs, alerts, maps; very common for networks.
+- **Zabbix**: open source, general purpose (network, systems, applications), highly configurable.
+- **PRTG**, **SolarWinds**, **Centreon**: commercial or mixed solutions, frequent in companies.
+
+## The limits of classic monitoring
+
+SNMP was designed when a router had a few interfaces. Today:
+
+- **frequency**: polling typically happens every **5 minutes**, at best every minute. A spike of a few seconds, a
+  flapping link, a microburst disappear in the average;
+- **load**: polling thousands of counters on hundreds of devices every minute is costly, for the manager and for
+  the devices' CPU;
+- **the model**: the manager asks, one value at a time, with different MIBs depending on the vendor.
+
+**Streaming telemetry**, in the next chapter, reverses the model: the device **pushes** its data, every second if
+needed, in a common structured format.
+
+## In the lab
+
+The `netops` lab (Automation course) contains a monitoring server, `nms` (`172.20.30.60`), which receives logs
+from the three switches and has the SNMP tools. The switches are configured to use it.
+
+<Lab name="netops" lang="en" />
+
+**1. Syslog.** On `leaf1`, shut then re-enable the interface to `spine1`:
+
+```bash
+docker exec -it clab-netops-leaf1 Cli
+```
+
+```text
+enable
+configure
+interface Ethernet1
+   shutdown
+   no shutdown
+```
+
+Then read the logs received by the central server, one file per device:
+
+```bash
+docker exec clab-netops-nms sh -c 'tail /var/log/network/*.log'
+```
+
+Both ends of the link reported the outage: `leaf1` and `spine1`.
+
+**2. SNMP v2c, in clear.** From `nms`, read the name and state of `leaf1`'s interfaces:
+
+```bash
+docker exec clab-netops-nms snmpwalk -v2c -c nexthop-ro 172.20.30.12 1.3.6.1.2.1.31.1.1.1.1
+docker exec clab-netops-nms snmpwalk -v2c -c nexthop-ro 172.20.30.12 1.3.6.1.2.1.2.2.1.8
+```
+
+Run the first command again while capturing `nms`'s traffic: the `nexthop-ro` community shows in clear in the
+packets.
+
+```bash
+docker run --rm -it --net container:clab-netops-nms nicolaka/netshoot tcpdump -nni eth0 -A udp port 161
+```
+
+**3. SNMP v3, encrypted.**
+
+```bash
+docker exec clab-netops-nms snmpwalk -v3 -l authPriv -u supervision -a SHA-256 -A Sup3rvision-lab -x AES -X Chiffr3ment-lab 172.20.30.12 1.3.6.1.2.1.31.1.1.1.1
+```
+
+Same result; in the capture, nothing readable anymore.
+
+**4. A silent failure.** Let us simulate a link losing 5% of its packets between `leaf1` and `spine1`, like a
+tired optic. The `tc netem` command applies to `leaf1`'s `eth1` interface, from a container sharing its network
+stack:
+
+```bash
+docker run --rm --privileged --net container:clab-netops-leaf1 nicolaka/netshoot tc qdisc add dev eth1 root netem loss 5%
+```
+
+Now look at what monitoring sees:
+
+```bash
+docker exec clab-netops-nms snmpwalk -v2c -c nexthop-ro 172.20.30.12 1.3.6.1.2.1.2.2.1.8
+docker exec clab-netops-nms snmpwalk -v2c -c nexthop-ro 172.20.30.12 1.3.6.1.2.1.2.2.1.14
+docker exec clab-netops-nms sh -c 'tail -3 /var/log/network/leaf1.log'
+```
+
+Interfaces at `1` (*up*), no input errors, no new message: for SNMP and syslog, **all is well**. An active
+measurement, however, sees the problem:
+
+```bash
+docker exec clab-netops-leaf1 Cli -p 15 -c "ping 10.0.1.0 repeat 200"
+```
+
+A few percent of packets lost. That is exactly the situation in the "from the field" box: a link `up`, green
+monitoring, and users complaining. Remove the simulation:
+
+```bash
+docker run --rm --privileged --net container:clab-netops-leaf1 nicolaka/netshoot tc qdisc del dev eth1 root
+```
+
+## Key takeaways
+
+- Network failures are often **gray**: partial, silent, with no error message. The network gets blamed without
+  proof, or wrongly cleared.
+- To see them: **errors**, **discards**, **state changes**, **optical level**, **comparison between members** of a
+  group, and end-to-end **active measurements**.
+- **SNMP**: OID polling, **64-bit** counters, traps; **v3** with authentication and encryption.
+- **Syslog** to a central server, severities 0 to 7, and clocks synchronised with **NTP**.
+- **NetFlow / IPFIX / sFlow**: who talks to whom, and how much.
+- Polling every five minutes sees neither spikes nor flapping: hence **telemetry**.

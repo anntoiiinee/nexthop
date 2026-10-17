@@ -1,0 +1,50 @@
+# Règles d'alerte du lab. Les problèmes réseau sont souvent silencieux : on alerte sur les signes
+# de dégradation (erreurs, rejets, déséquilibre), pas seulement sur les pannes franches.
+groups:
+  - name: reseau
+    rules:
+      - alert: InterfaceDown
+        expr: '{__name__=~"gnmic_oper_.*oper_status"} == 0'
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.source }} {{ $labels.interface_name }} est down"
+
+      - alert: InterfaceFlapping
+        # Un lien qui tombe et remonte : invisible pour une interrogation toutes les 5 minutes
+        expr: 'changes({__name__=~"gnmic_oper_.*oper_status"}[10m]) > 2'
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.source }} {{ $labels.interface_name }} oscille ({{ $value }} changements en 10 min)"
+
+      - alert: InterfaceErrors
+        expr: 'rate({__name__=~"gnmic_counters_.*_in_errors"}[2m]) > 0'
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.source }} {{ $labels.interface_name }} reçoit des trames en erreur (câble, optique, duplex ?)"
+
+      - alert: InterfaceDiscards
+        expr: 'rate({__name__=~"gnmic_counters_.*_out_discards"}[5m]) > 1'
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.source }} {{ $labels.interface_name }} jette des paquets en sortie (saturation, microbursts ?)"
+
+      - alert: UplinkImbalance
+        # Deux liens censés se partager la charge (ECMP, port-channel) : l'un porte 5 fois plus que l'autre
+        expr: |
+          (
+            max by (source) (rate({__name__=~"gnmic_counters_.*_out_octets", source="spine1", interface_name=~"Ethernet[12]"}[5m]))
+            /
+            min by (source) (rate({__name__=~"gnmic_counters_.*_out_octets", source="spine1", interface_name=~"Ethernet[12]"}[5m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Charge déséquilibrée entre les liens de {{ $labels.source }}"
