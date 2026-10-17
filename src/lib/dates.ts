@@ -37,7 +37,9 @@ function gitUpdatedDate(filePath?: string): Date | undefined {
   return date;
 }
 
-const sameDay = (a: Date, b: Date) => a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);
+// Jour calendaire à Paris (AAAA-MM-JJ), quel que soit le fuseau de la machine de build
+const parisDay = (d: Date) => d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Paris' });
+const sameDay = (a: Date, b: Date) => parisDay(a) === parisDay(b);
 
 /** Date de mise à jour à afficher, ou undefined si le contenu n'a pas changé depuis sa publication. */
 export function updatedDateOf(entry: Dated): Date | undefined {
