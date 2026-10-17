@@ -1,0 +1,175 @@
+---
+title: "Prometheus and Grafana"
+description: "Storing and using telemetry: Prometheus's data model, basic PromQL queries (rate, sum, changes), alerts that catch silent failures, then Grafana dashboards, variables and a network weather map."
+pubDate: 2026-10-17
+level: intermediate
+tags: [prometheus, grafana, promql, monitoring, observability]
+vendor: [arista]
+order: 5
+---
+
+The previous chapter set up collection: gNMIc receives the switches' telemetry every ten seconds. What remains is
+to **store** it, **query** it, **alert** when something degrades, and **show** it. That is the job of the most
+widespread pair in the observability world: **Prometheus** for storage, queries and alerts, **Grafana** for
+dashboards.
+
+<Topology
+  width={720}
+  height={230}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 70, y: 110, label: 'Switches', sub: 'gNMI' },
+    { id: 'g', type: 'server', x: 230, y: 110, label: 'gNMIc', sub: ':9804/metrics', tone: 'sky' },
+    { id: 'p', type: 'server', x: 400, y: 110, label: 'Prometheus', sub: 'storage, PromQL', tone: 'amber' },
+    { id: 'gr', type: 'server', x: 570, y: 60, label: 'Grafana', sub: 'dashboards', tone: 'emerald' },
+    { id: 'am', type: 'server', x: 570, y: 175, label: 'Alertmanager', sub: 'mail, Teams, on-call', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'sw', to: 'g' }, { from: 'g', to: 'p' }, { from: 'p', to: 'gr' }, { from: 'p', to: 'am' },
+  ]}
+  flows={[
+    { from: 'sw', to: 'g', label: 'push', tone: 'sky', offset: -16 },
+    { from: 'p', to: 'g', label: 'scrape', tone: 'amber', offset: -16 },
+  ]}
+  caption="The complete pipeline: switches push to gNMIc, Prometheus fetches the measurements from gNMIc every 10 seconds, Grafana displays them and Alertmanager dispatches alerts."
+/>
+
+## Prometheus
+
+### The data model
+
+Prometheus stores **time series**: for each series, a sequence of timestamped values. A series is identified by a
+**metric name** and **labels**:
+
+```text
+gnmic_counters_interfaces_interface_state_counters_in_octets{source="leaf1", interface_name="Ethernet1"}  48213377
+```
+
+- the name says **what is measured** (here, received bytes);
+- the labels say **where**: which device (`source`), which interface;
+- each label combination is a distinct series. Labels are what let you filter, aggregate and compare.
+
+Prometheus works by **pull**: it fetches (*scrapes*) measurements itself, at regular intervals, from HTTP
+endpoints. Here, it queries gNMIc, which exposes the latest values received from the switches.
+
+<CodeFile lab="netops" file="observability/prometheus.yml" />
+
+### PromQL essentials
+
+**PromQL** is Prometheus's query language. Network counters only go up; what matters is how **fast** they
+increase. Hence the most used function: `rate()`.
+
+| Query | Result |
+|---|---|
+| `…_in_octets{source="leaf1"}` | leaf1's raw counter values: of little use alone |
+| `rate(…_in_octets[1m]) * 8` | **Throughput** in bit/s, averaged over the last minute |
+| `sum by (source) (rate(…_in_octets[1m]) * 8)` | Total incoming throughput per device |
+| `topk(5, rate(…_out_octets[5m]) * 8)` | The 5 busiest interfaces |
+| `increase(…_in_errors[1h])` | Number of errors received in the last hour |
+| `changes(…_oper_status[10m])` | Number of state changes in 10 minutes: a flapping link |
+
+The metric names produced by gNMIc are long: in the lab, queries use a regular expression on the name
+(`{__name__=~"gnmic_counters_.*_in_errors"}`), which works whatever the version.
+
+## Alerts that catch silent failures
+
+Prometheus continuously evaluates **alerting rules**: a PromQL query and a duration. If the query returns a result
+for the whole duration, the alert fires and goes to **Alertmanager**, which groups, deduplicates and dispatches it
+(email, Teams or Slack, on-call tool).
+
+The classic mistake is to alert only on **clean** failures ("interface down", "device unreachable"). They are
+useful, but they are rarely the ones that waste hours. The lab alerts also target **gray failures**:
+
+<CodeFile lab="netops" file="observability/alerts.yml" />
+
+| Alert | What it detects | Matching silent failure |
+|---|---|---|
+| `InterfaceDown` | An interface in down state | Clean failure |
+| `InterfaceFlapping` | More than 2 state changes in 10 minutes | Flapping link, invisible at 5 minutes |
+| `InterfaceErrors` | Errors received for 2 minutes | Cable, optic, connector degrading |
+| `InterfaceDiscards` | Output discards for 5 minutes | Saturation, microbursts |
+| `UplinkImbalance` | One link carries 5 times more than its twin | A failing ECMP or port-channel member, or an unbalanced hash |
+
+<Callout type="warning">
+An alert must call for an **action**. If an alert rings every day and nobody does anything, the team learns to
+ignore it, and will ignore the one that mattered too. Start with few alerts, with realistic thresholds and
+durations (`for:`), and keep on-call notifications for real impact. The rest goes into a dashboard checked every
+morning.
+</Callout>
+
+## Grafana
+
+**Grafana** connects to Prometheus (and many other sources) and builds **dashboards**: panels of graphs, gauges,
+states, tables, each fed by a PromQL query.
+
+- **Variables** make a dashboard reusable: a `switch` drop-down, fed by the values of the `source` label, filters
+  every panel at once (`source=~"$switch"`).
+- **Provisioning** describes data sources and dashboards in files, versioned in Git and loaded at startup: the lab
+  dashboard is created that way, without a click.
+- **Units**: Grafana turns `bps` and `pps` into readable Mb/s or Gb/s.
+
+### The weather map
+
+A **weather map** draws the network (devices and links), and colours each link according to its utilisation:
+green, yellow, orange, red. At a glance, you see where traffic flows and which link saturates. Grafana has none
+natively: you use a plugin, such as **Network Weathermap** (`knightss27-weathermap-panel`), installed in the lab.
+You place the nodes, draw the links, and bind each direction of a link to a throughput PromQL query and the link's
+capacity.
+
+<Callout type="field">
+Shown on the network team's screen, a fabric weather map fed every ten seconds changes reflexes. The day a spine
+link turns red during a backup, the team sees it before users do, and can move the backup or add a link before it
+becomes an incident. It also serves as evidence: when an application is slow and the whole map is green, with zero
+errors and zero discards, the conversation with the application team changes tone, figures in hand.
+</Callout>
+
+## In the lab
+
+The `netops` lab contains `prometheus` (`172.20.30.62`) and `grafana` (`172.20.30.63`). The management network is
+reachable from your machine: open both interfaces in your browser.
+
+<Lab name="netops" lang="en" />
+
+**1. Prometheus.** Open `http://172.20.30.62:9090`. Under *Status > Targets*, the `gnmic` target must be `UP`. In
+the query tab, try:
+
+```text
+{__name__=~"gnmic_counters_.*_in_octets", interface_name="Ethernet1"}
+rate({__name__=~"gnmic_counters_.*_in_octets", interface_name=~"Ethernet.*"}[1m]) * 8
+{__name__=~"gnmic_oper_.*oper_status"}
+```
+
+The first shows the raw counters, the second the throughput in bit/s of each Ethernet interface, the third the
+state of every interface (1 or 0).
+
+**2. Generate traffic.** From `leaf1`, send a stream of pings to `spine1`, and follow the throughput in Prometheus:
+
+```bash
+docker exec clab-netops-leaf1 bash -c 'ping -s 1400 -i 0.01 -c 3000 10.0.1.0 >/dev/null'
+```
+
+**3. Grafana.** Open `http://172.20.30.63:3000` (credentials `admin` / `admin`, Grafana then asks you to change
+them). The **Réseau netops** dashboard, in the *Réseau* folder, was created at startup: interface states,
+throughput, and an **Erreurs et rejets** (errors and discards) panel that should stay empty. Change the `switch`
+variable to filter.
+
+**4. Trigger alerts.** Shut `Ethernet1` on `leaf1` (`shutdown`), and look at *Alerts* in Prometheus:
+`InterfaceDown` goes *pending*, then *firing* after 30 seconds. Re-enable it, then shut and re-enable the
+interface three times in a row: this time `InterfaceFlapping` fires. On the dashboard, the state timeline shows
+each flap.
+
+**5. The weather map.** In Grafana, create a dashboard, add a *Network Weathermap* panel, place `spine1`, `leaf1`
+and `leaf2`, then link them. For each link, use the throughput query of the matching interface (for example
+`spine1`'s `Ethernet1` towards `leaf1`) and a capacity of 1 Gb/s. Run the ping stream from step 2 again: the link
+changes colour.
+
+## Key takeaways
+
+- **Prometheus** stores **time series** identified by a name and **labels**, which it fetches (*scrapes*) at
+  regular intervals.
+- PromQL: **`rate()`** on counters (× 8 for bit/s), `sum by`, `topk`, `increase`, `changes`.
+- **Alerts** that also catch gray failures: errors, discards, flaps, imbalance between links. Each alert must call
+  for an action.
+- **Grafana**: dashboards, **variables**, provisioning in Git, and a **weather map** to see the network at a
+  glance.
+- Monitoring that proves, figures in hand, that the network is fine is as valuable as monitoring that shows it is
+  not.

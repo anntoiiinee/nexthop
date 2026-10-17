@@ -88,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible, supervision : rsyslog, SNMP, gNMIc, Prometheus, Grafana), ddi (Kea, BIND), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -232,7 +232,9 @@ Mise en route (une seule fois) :
 - [x] Saut 5 · La sécurité complet en FR et EN : 4 chapitres (bases d'un firewall, politiques de sécurité, VPN IPsec, segmentation), multi-constructeur (FortiGate, Palo Alto, Stormshield), lab `security` (firewalls Linux nftables + strongSwan en VPN par route VTI, routeur cEOS)
 - [x] Formation Data center : un passage sur le management de la fabric (chapitre `spine-leaf`), renvoyant vers le chapitre `oob`
 - [ ] Lab `dc-fabric` : valider sur un vrai ContainerLab avec cEOS, puis remplacer les descriptions des sorties par de vraies sorties
-- [ ] Contenus à venir : Jinja2 en détail, Vault, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
+- [x] Saut 7 · Services et observabilité complet en FR et EN : DDI (lab `ddi` Kea + BIND + DDNS, section Infoblox / EfficientIP), SNMP / syslog / NetFlow (pannes réseau silencieuses, démonstration `tc netem`), télémétrie gNMI / gNMIc, Prometheus / Grafana (alertes sur pannes grises, weather map) ; supervision ajoutée au lab `netops`
+- [ ] Labs `ddi` (relais cEOS) et supervision de `netops` (gNMI, SNMP, syslog depuis cEOS) : valider sur un vrai ContainerLab
+- [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
 
 ---
 
@@ -242,7 +244,7 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
-**8 Le réseau dans le cloud** (`cloud`). Les sauts 7 et 8 apparaissent déjà sur l'accueil, avec leurs chapitres pas encore écrits marqués « bientôt ».
+**8 Le réseau dans le cloud** (`cloud`). Le saut 8 apparaît déjà sur l'accueil, avec ses chapitres pas encore écrits marqués « bientôt ».
 
 ### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
 
@@ -262,37 +264,6 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
 - Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
   le fichier produit commence bien par `$ANSIBLE_VAULT`.
-
-### Saut 7 · Services et observabilité : l'infrastructure DDI (chapitre `ddi`)
-
-- DDI = **DNS, DHCP, IPAM** gérés ensemble : pourquoi les réunir (une adresse attribuée par DHCP est enregistrée dans
-  l'IPAM et le DNS automatiquement), et ce que coûte leur séparation (doublons, enregistrements périmés).
-- DNS : résolution, zones, enregistrements A/AAAA/PTR/CNAME, résolveurs internes, DNS split-horizon.
-- DHCP : DORA, étendues, réservations, options (passerelle, DNS), relais (`ip helper-address`), DHCP Snooping
-  (renvoi vers le chapitre ARP).
-- Les solutions : Infoblox (dans le carrousel), EfficientIP, BlueCat, Microsoft DNS/DHCP + IPAM, alternatives libres
-  (Kea, PowerDNS, NetBox pour l'IPAM).
-- Automatisation : API Infoblox (WAPI), collection Ansible, synchronisation avec NetBox.
-- Schémas : échange DHCP DORA, résolution DNS récursive, flux DDI intégré.
-
-### Saut 7 · Services et observabilité : SNMP, syslog et NetFlow (chapitre `monitoring`)
-
-- La supervision « classique », encore partout : SNMP (MIB, OID, v2c vs v3 et son chiffrement), traps, syslog
-  (sévérités, serveur central, horodatage NTP indispensable), NetFlow / IPFIX / sFlow (qui parle à qui, en quel volume).
-- Ce qu'elle ne sait pas bien faire (fréquence d'interrogation, charge CPU), qui justifie la télémétrie du chapitre suivant.
-- Outils : LibreNMS, Zabbix, collecteurs NetFlow.
-
-### Saut 7 · Services et observabilité : télémétrie avec gNMIc, Prometheus et Grafana (chapitres `telemetry` et `prometheus-grafana`)
-
-- Pourquoi la télémétrie en streaming plutôt que SNMP en interrogation : fréquence, volume, modèles OpenConfig, push.
-- gNMI et OpenConfig : abonnements (`sample`, `on-change`), chemins (`/interfaces/interface/state/counters`).
-- **gNMIc** : collecte depuis les équipements (activer `management api gnmi` sur EOS), fichier de configuration,
-  sortie vers Prometheus.
-- **Prometheus** : modèle de données (séries temporelles, labels), requêtes PromQL de base (`rate()` sur les compteurs
-  d'interfaces), alertes.
-- **Grafana** : tableaux de bord, variables, et une **weather map** du réseau (débit des liens en couleur).
-- Lab : ajouter gNMIc, Prometheus et Grafana au lab `netops` (conteneurs dans la même topologie ContainerLab).
-- Retour terrain : weather map temps réel d'une fabric, détection d'un lien saturé avant les utilisateurs.
 
 ### Saut 8 · Le réseau dans le cloud
 

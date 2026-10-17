@@ -135,6 +135,14 @@ export const glossary = {
       en: "Intermediate network zone, between the Internet and the internal network, hosting published servers (website, mail relay, reverse proxy).",
     },
   },
+  dns: {
+    term: 'DNS',
+    expansion: 'Domain Name System',
+    definition: {
+      fr: "Annuaire distribué qui traduit les noms (www.example.com) en adresses IP, et inversement, par une hiérarchie de serveurs.",
+      en: "Distributed directory translating names (www.example.com) into IP addresses, and back, through a hierarchy of servers.",
+    },
+  },
   ebgp: {
     term: 'eBGP',
     expansion: 'External BGP',
@@ -188,6 +196,14 @@ export const glossary = {
     definition: {
       fr: "Pratique qui fait de Git la référence de l'état d'une infrastructure : chaque changement passe par un commit, relu et tracé, et un pipeline l'applique ou le constate.",
       en: "Practice that makes Git the reference for an infrastructure's state: every change goes through a reviewed, traceable commit, and a pipeline applies or records it.",
+    },
+  },
+  gnmi: {
+    term: 'gNMI',
+    expansion: 'gRPC Network Management Interface',
+    definition: {
+      fr: "Protocole de gestion basé sur gRPC : lire et modifier la configuration, et surtout s'abonner à des données de télémétrie envoyées en continu par l'équipement.",
+      en: "gRPC-based management protocol: read and change configuration, and above all subscribe to telemetry streamed continuously by the device.",
     },
   },
   gslb: {
@@ -380,12 +396,27 @@ export const glossary = {
       en: 'IP address translation performed by a router or firewall. It notably lets hosts with private addresses reach the Internet behind a public address.',
     },
   },
+  netflow: {
+    term: 'NetFlow',
+    definition: {
+      fr: "Export par les routeurs et switches de résumés de flux (qui parle à qui, sur quel port, combien d'octets). Ses variantes : IPFIX (le standard) et sFlow (par échantillonnage).",
+      en: "Export by routers and switches of flow summaries (who talks to whom, on which port, how many bytes). Variants: IPFIX (the standard) and sFlow (sampling-based).",
+    },
+  },
   ngfw: {
     term: 'NGFW',
     expansion: 'Next-Generation Firewall',
     definition: {
       fr: "Firewall qui, en plus du filtrage avec état, identifie les applications et les utilisateurs et intègre IPS, antivirus, filtrage d'URL et inspection TLS.",
       en: "Firewall that, beyond stateful filtering, identifies applications and users and embeds IPS, antivirus, URL filtering and TLS inspection.",
+    },
+  },
+  ntp: {
+    term: 'NTP',
+    expansion: 'Network Time Protocol',
+    definition: {
+      fr: "Protocole de synchronisation de l'heure. Sans lui, impossible de corréler les journaux de plusieurs équipements, et les certificats et Kerberos échouent.",
+      en: "Time synchronisation protocol. Without it, logs from several devices cannot be correlated, and certificates and Kerberos fail.",
     },
   },
   ospf: {
@@ -475,6 +506,14 @@ export const glossary = {
       en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
     },
   },
+  rpz: {
+    term: 'RPZ',
+    expansion: 'Response Policy Zone',
+    definition: {
+      fr: "Zone DNS spéciale qui modifie les réponses du résolveur : un domaine malveillant listé dans la RPZ ne se résout plus, ou pointe vers une page d'avertissement.",
+      en: "Special DNS zone that rewrites the resolver's answers: a malicious domain listed in the RPZ no longer resolves, or points to a warning page.",
+    },
+  },
   rt: {
     term: 'RT',
     expansion: 'Route Target',
@@ -497,6 +536,14 @@ export const glossary = {
     definition: {
       fr: "Extension TLS : le client indique en clair, dès le premier message, le nom du site qu'il veut joindre. C'est ce qui permet plusieurs sites HTTPS sur une même adresse IP.",
       en: "TLS extension: the client states in clear text, in its very first message, the name of the site it wants. It allows several HTTPS sites on the same IP address.",
+    },
+  },
+  snmp: {
+    term: 'SNMP',
+    expansion: 'Simple Network Management Protocol',
+    definition: {
+      fr: "Protocole de supervision : un gestionnaire interroge les équipements (compteurs, états) identifiés par des OID, et les équipements envoient des alertes (traps).",
+      en: "Monitoring protocol: a manager polls devices (counters, states) identified by OIDs, and devices send alerts (traps).",
     },
   },
   sot: {

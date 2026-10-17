@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: netops
+    folder: Réseau
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,322 @@
+---
+title: "DDI: DNS, DHCP and IPAM"
+description: "The three services the whole network depends on, and why they are managed together: DNS resolution and zones, DHCP exchange and relay, IPAM, automatic DNS updates, the market solutions (Infoblox, EfficientIP, BlueCat, Microsoft) and a Kea and BIND lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [ddi, dns, dhcp, ipam, infoblox, kea, bind]
+vendor: [infoblox, multi]
+order: 1
+---
+
+Before a workstation can even log on, it needs an **IP address** (DHCP), a way to translate names into
+addresses (DNS), and someone must know which address was given to whom (IPAM). These three services are
+invisible as long as they work; when one of them fails, nothing works anymore, and the symptoms look like a
+network outage. They are grouped under the name **DDI**: *DNS, DHCP, IPAM*.
+
+## Why bring them together
+
+Taken separately, each service works. The problem is their **consistency**:
+
+| Without integration | With a DDI |
+|---|---|
+| DHCP hands out an address, but DNS does not know: the workstation has no name, or keeps the old one | Each DHCP lease creates or updates the DNS record, both ways (name → address and address → name) |
+| The IPAM is a spreadsheet, updated "when someone remembers": addresses given twice, forgotten reservations | The IPAM **is** the source of DHCP scopes and DNS zones: what is in it is true |
+| Stale DNS records point to addresses reassigned to other machines | Records follow the lease lifecycle, and are removed when it expires |
+| Three teams, three tools, three logs for the same incident | One console, one history: who had this address on Tuesday at 2 pm? |
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 150, label: 'Workstation', sub: 'client1' },
+    { id: 'dhcp', type: 'server', x: 300, y: 70, label: 'DHCP', sub: 'lease 10.20.10.100', tone: 'sky' },
+    { id: 'dns', type: 'server', x: 560, y: 70, label: 'DNS', sub: 'client1 → .100', tone: 'violet' },
+    { id: 'ipam', type: 'server', x: 430, y: 225, label: 'IPAM', sub: 'who has what, since when', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'pc', to: 'dhcp' }, { from: 'dhcp', to: 'dns', tone: 'violet' }, { from: 'dhcp', to: 'ipam', tone: 'emerald' }, { from: 'dns', to: 'ipam', tone: 'emerald' },
+  ]}
+  flows={[
+    { from: 'pc', to: 'dhcp', label: '1. request', tone: 'sky', offset: -16 },
+    { from: 'dhcp', to: 'dns', label: '2. register the name', tone: 'violet', offset: -16 },
+  ]}
+  caption="The integrated DDI flow: the workstation gets its address, DHCP registers its name in DNS, and the IPAM keeps track of everything."
+/>
+
+## DNS
+
+### Resolution
+
+When a workstation looks for `intranet.corp.example.com`, it does not know the answer and asks its
+**resolver** (the DNS server received through DHCP). The resolver, if the answer is not cached, starts from the
+root and walks down the tree: this is **recursive** resolution.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'pc', label: 'Workstation' },
+    { id: 'r', label: 'Resolver', sub: '10.20.99.53', tone: 'violet' },
+    { id: 'root', label: 'Root', sub: '.' },
+    { id: 'auth', label: 'Authoritative', sub: 'example.com' },
+  ]}
+  messages={[
+    { from: 'pc', to: 'r', label: 'www.example.com?', tone: 'sky' },
+    { from: 'r', to: 'root', label: 'www.example.com?', tone: 'violet' },
+    { from: 'root', to: 'r', label: 'ask the .com servers', style: 'dashed' },
+    { note: 'same question to the .com servers, which point to those of example.com', tone: 'slate' },
+    { from: 'r', to: 'auth', label: 'www.example.com?', tone: 'violet' },
+    { from: 'auth', to: 'r', label: 'A 203.0.113.80, TTL 300', style: 'dashed', tone: 'emerald' },
+    { from: 'r', to: 'pc', label: 'A 203.0.113.80', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="Recursive resolution. The resolver caches the answer for the time to live (TTL) it carries: the next question is answered immediately."
+/>
+
+Two roles not to confuse:
+
+- the **authoritative server** holds a **zone** (for example `corp.example.com`) and answers for it;
+- the **resolver** (or recursive server) looks up answers for workstations and caches them.
+
+In companies, the same server often does both for internal zones, but a server exposed on the Internet must
+**never** be an open resolver: it would serve as an amplifier for <Term id="ddos" /> attacks.
+
+### Records
+
+| Type | Role | Example |
+|---|---|---|
+| **A** / **AAAA** | Name → IPv4 / IPv6 address | `client1  A  10.20.10.100` |
+| **PTR** | Address → name (reverse zone `in-addr.arpa`) | `100.10.20.10.in-addr.arpa  PTR  client1.corp.example.com.` |
+| **CNAME** | Alias to another name | `intranet  CNAME  srv-web01` |
+| **MX** | Mail servers of the domain | `@  MX  10 mail` |
+| **NS** / **SOA** | Zone servers and zone parameters | `@  NS  dns` |
+| **SRV** | Service and port (Active Directory, VoIP) | `_ldap._tcp  SRV  0 0 389 dc01` |
+
+**PTR** records are often forgotten. Yet they are used every day: logs and monitoring tools that show names,
+readable `traceroute` output, mail server checks.
+
+### Internal DNS and split-horizon
+
+A company has two views of its domain: the **public** view (website, mail) and the **internal** view (all the
+servers). **Split-horizon DNS** answers differently depending on who asks: `portal.example.com` resolves to the
+public address from the Internet, to the private address from the internal network.
+
+## DHCP
+
+### The DORA exchange
+
+A workstation that boots has no address. It broadcasts its request, and the exchange takes four messages:
+**D**iscover, **O**ffer, **R**equest, **A**ck.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'pc', label: 'Workstation', sub: '0.0.0.0' },
+    { id: 'r1', label: 'Router', sub: 'relay · 10.20.10.1', tone: 'emerald' },
+    { id: 'srv', label: 'DHCP server', sub: '10.20.99.10', tone: 'sky' },
+  ]}
+  messages={[
+    { from: 'pc', to: 'r1', label: 'DISCOVER (broadcast)', sub: 'my MAC, my name: client1', tone: 'sky' },
+    { from: 'r1', to: 'srv', label: 'relayed DISCOVER (unicast)', sub: 'giaddr = 10.20.10.1', tone: 'emerald' },
+    { from: 'srv', to: 'r1', label: 'OFFER 10.20.10.100', sub: 'gateway, DNS, lease time', style: 'dashed', tone: 'sky' },
+    { from: 'r1', to: 'pc', label: 'OFFER', style: 'dashed', tone: 'emerald' },
+    { from: 'pc', to: 'r1', label: 'REQUEST 10.20.10.100', tone: 'sky' },
+    { from: 'r1', to: 'srv', label: 'relayed REQUEST', tone: 'emerald' },
+    { from: 'srv', to: 'r1', label: 'ACK', sub: 'lease recorded', style: 'dashed', tone: 'sky' },
+    { from: 'r1', to: 'pc', label: 'ACK', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="DORA through a relay. The router turns the broadcast into unicast towards the server, and states in the giaddr field which network the request comes from."
+/>
+
+### Scopes, options and reservations
+
+The DHCP server manages one **scope** (*subnet*) per network: a range of addresses to hand out (the **pool**)
+and **options** sent with each lease: gateway (option 3), DNS servers (option 6), domain (option 15), and many
+others (phone TFTP server, the proxy PAC file with option 252).
+
+A **reservation** binds a fixed address to a MAC address: the printer or server always gets the same address,
+while still being managed by DHCP. That beats an address typed by hand on the device, which nobody will ever
+find in the IPAM.
+
+### The relay
+
+A DISCOVER is a **broadcast**: it does not cross routers. Rather than installing a DHCP server in every VLAN,
+you configure a **relay** (*DHCP relay*, *IP helper*) on each VLAN's gateway, which forwards requests in unicast
+to the central servers. The `giaddr` field of the relayed message tells the server which network the request
+comes from, hence which scope to pick the address from.
+
+```text title="Arista EOS and Cisco IOS: DHCP relay"
+interface Vlan10
+   ip address 10.20.10.1/24
+   ip helper-address 10.20.99.10
+   ip helper-address 10.20.99.11
+```
+
+Always point to **two** DHCP servers, sharing or splitting the scopes (*failover*).
+
+### DHCP Snooping
+
+A rogue DHCP server (a misconfigured laptop, or an attacker) can hand out fake gateways and fake DNS servers.
+**DHCP Snooping** on access switches only accepts DHCP replies on ports declared **trusted** (towards the
+legitimate servers), and builds a lease table later used for ARP spoofing protection (see
+[ARP](/en/courses/fundamentals/arp)).
+
+## IPAM
+
+The <Term id="ipam" /> is the inventory of addresses: which networks exist, what they are for, which addresses
+are free, reserved or assigned, and to whom. In a DDI, the IPAM has a particularity: it is **fed in real time**
+by DHCP and DNS, and it **drives** their configuration. Open-source tools such as NetBox play this source of
+truth role in automation.
+
+## Market solutions
+
+### Infoblox and EfficientIP: integrated DDI
+
+In large companies, DDI is most often handled by an integrated commercial solution. The two most widespread in
+France are **Infoblox** (American, global market leader) and **EfficientIP** (French, with its SOLIDserver
+range). They are paid products: no lab here, but the mechanisms are exactly those of the Kea and BIND lab at the
+end of this chapter.
+
+| | Infoblox | EfficientIP |
+|---|---|---|
+| **Product** | NIOS (on physical or virtual appliance), and a SaaS offering | SOLIDserver (physical or virtual appliance), and a SaaS offering |
+| **Architecture** | A **Grid**: a *Grid Master* holding the configuration, a *Grid Master Candidate* ready to take over, and DNS / DHCP members on each site | A central management SOLIDserver (IPAM and configuration), and managed DNS / DHCP servers |
+| **DNS security** | DNS Firewall (RPZ), Threat Defense: blocking malicious domains, detecting exfiltration through DNS | DNS Guardian: DNS traffic analysis, tunnel and attack detection, adaptive response |
+| **Automation** | **WAPI** REST API, `infoblox.nios_modules` Ansible collection, Terraform provider | REST API, Terraform provider, Ansible integrations |
+
+What these solutions bring compared to separate building blocks:
+
+- **a single interface** for all three services, with the history of every address and every name;
+- **guaranteed consistency**: an address cannot be assigned twice, a DNS record is tied to its lease, a
+  reservation to its device;
+- **network discovery**: querying switches and routers (SNMP, ARP tables, LLDP) to find addresses used outside
+  DHCP, and the ports they are plugged into;
+- **turnkey high availability**: DHCP failover, secondary DNS servers, central manager failover;
+- **delegation and audit**: a site's team manages its own scopes, every change is traced;
+- **DNS security**: DNS sees every connection from every workstation; it is an ideal control point to block
+  malicious domains (<Term id="rpz">RPZ</Term>) and detect malware exfiltrating data hidden in DNS queries.
+
+**BlueCat** is the third major player, and **Microsoft** (Windows Server DNS and DHCP, with its IPAM feature)
+remains very present, often because DNS is already Active Directory's.
+
+<Callout type="field">
+Moving from "legacy" DNS and DHCP (often Windows) to an integrated DDI is a classic project. The technical part
+is the easiest; the real work is **cleaning up**: thousands of DNS records whose owner nobody knows,
+reservations for devices long gone, scopes where half the addresses are set by hand. Plan time for the
+inventory with application teams, and migrate in steps: first the IPAM read-only, then DHCP site by site,
+finally DNS.
+</Callout>
+
+### Open-source building blocks
+
+- **DHCP**: **Kea** (ISC), the successor of ISC DHCP, with JSON configuration, an API and databases for leases.
+- **DNS**: **BIND** (ISC), the historical reference; **PowerDNS**, which stores its zones in a database and is
+  driven by API; **Unbound**, a resolver only.
+- **IPAM**: **NetBox**, or phpIPAM.
+
+Put together, they form a fully working DDI: that is what the lab does.
+
+## Automating DDI
+
+A DDI is driven by API, like the rest of the network:
+
+- request the next free address of a network and create the DNS record in a single call, when deploying a
+  virtual machine;
+- synchronise the DDI's IPAM with **NetBox** (networks described in NetBox create the scopes, or the other way
+  round);
+- automatically delete records when a machine is decommissioned.
+
+```python title="Infoblox WAPI: reserve the next free address and create the DNS record"
+import requests
+
+WAPI = "https://gm.corp.example.com/wapi/v2.12"
+r = requests.post(
+    f"{WAPI}/record:host?_return_fields=ipv4addrs",
+    auth=("svc-ddi", "…"),
+    json={
+        "name": "srv-app42.corp.example.com",
+        "ipv4addrs": [{"ipv4addr": "func:nextavailableip:10.20.30.0/24"}],
+    },
+)
+print(r.json())
+```
+
+WAPI's `nextavailableip` function reserves the address **and** creates the record in a single transaction: the
+same address can never be given twice, even if two deployments run at the same time.
+
+## In the lab
+
+The `ddi` lab builds a complete DDI with open-source building blocks: **Kea** for DHCP, **BIND** for DNS, and
+Kea's automatic DNS update (**DDNS**) between the two. Router `r1` relays the workstations' DHCP requests to the
+server.
+
+<Lab name="ddi" lang="en" />
+
+At deployment, the servers install Kea and BIND, then the workstations request their address: allow a minute.
+
+**1. Leases.**
+
+```bash
+docker exec clab-ddi-client1 ip -4 addr show eth1
+docker exec clab-ddi-printer ip -4 addr show eth1
+docker exec clab-ddi-dhcp cat /var/lib/kea/kea-leases4.csv
+```
+
+`client1` and `client2` have an address from the pool (`10.20.10.100` onwards); the printer has its
+**reservation**, `10.20.10.20`. Kea's lease file is the lab's IPAM: address, MAC, lifetime, name.
+
+<CodeFile lab="ddi" file="dhcp/kea-dhcp4.conf" />
+
+**2. DNS filled itself.** From `client2`, query the DNS server:
+
+```bash
+docker exec clab-ddi-client2 nslookup client1.corp.example.com 10.20.99.53
+docker exec clab-ddi-client2 nslookup 10.20.10.100 10.20.99.53
+docker exec clab-ddi-client2 nslookup printer.corp.example.com 10.20.99.53
+```
+
+All three answers exist, although none of these names is in the original zone files: Kea added them with each
+lease, forward (`A`) and reverse (`PTR`), with a TSIG key that only BIND accepts. The log confirms it:
+
+```bash
+docker exec clab-ddi-dhcp grep ADD_SUCCEEDED /var/log/kea-ddns.log
+```
+
+The server (`10.20.99.53`) is given in the command because Docker locks the containers' `/etc/resolv.conf`
+file: the lab workstations cannot adopt the DNS received through DHCP, unlike a real workstation.
+
+**3. Watch DORA through the relay.** Capture on the DHCP server, from a container sharing its network stack:
+
+```bash
+docker run --rm -it --net container:clab-ddi-dhcp nicolaka/netshoot tcpdump -nni eth1 -v port 67
+```
+
+In a second terminal, make `client2` request an address again:
+
+```bash
+docker exec clab-ddi-client2 sh -c 'killall udhcpc; udhcpc -q -i eth1 -x hostname:client2'
+```
+
+The messages received by the server come from `10.20.10.1` (the relay), in unicast, with the field
+`Gateway-IP 10.20.10.1`: that is how Kea knows it needs an address from the `10.20.10.0/24` scope.
+
+**4. The relay.** On `r1`, the single line that makes all this possible:
+
+```bash
+docker exec -it clab-ddi-r1 Cli
+```
+
+```text
+show running-config interfaces Vlan10
+show ip dhcp relay
+```
+
+## Key takeaways
+
+- **DNS, DHCP and IPAM** depend on each other: a **DDI** keeps them consistent (each lease updates DNS, the IPAM
+  drives both).
+- DNS: **resolver** and **authoritative server**, A, AAAA, **PTR**, CNAME records, split-horizon.
+- DHCP: **DORA**, scopes, options, **reservations**, **relay** (`ip helper-address`) to two servers, and DHCP
+  Snooping on access ports.
+- **Infoblox** and **EfficientIP** are the most widespread integrated DDIs: single interface, discovery, high
+  availability, DNS security, API. **Kea**, **BIND**, **PowerDNS** and **NetBox** are their open-source
+  equivalents.
+- A DDI is driven by **API**: reserve an address and create the name in a single operation.

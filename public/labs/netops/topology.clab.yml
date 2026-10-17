@@ -1,8 +1,9 @@
 name: netops
 
-# Lab de la formation « L'automatisation ».
+# Lab des formations « L'automatisation » et « Services et observabilité ».
 # Trois switches cEOS joignables depuis votre machine sur le réseau de management
 # 172.20.30.0/24 : c'est là que les scripts Python et Ansible se connectent.
+# Sur le même réseau, la supervision : nms (syslog, SNMP), gnmic, prometheus et grafana.
 
 mgmt:
   network: netops-mgmt
@@ -28,6 +29,43 @@ topology:
       mgmt-ipv4: 172.20.30.13
       startup-config: configs/leaf2.cfg
       labels: { graph-level: 2 }
+
+    # Supervision (formation « Services et observabilité »)
+    nms:
+      kind: linux
+      image: alpine:3.20
+      mgmt-ipv4: 172.20.30.60
+      labels: { graph-level: 3 }
+      binds:
+        - observability:/observability:ro
+      exec:
+        - sh /observability/nms-setup.sh
+    gnmic:
+      kind: linux
+      image: ghcr.io/openconfig/gnmic:0.38.2
+      mgmt-ipv4: 172.20.30.61
+      labels: { graph-level: 3 }
+      binds:
+        - observability:/observability:ro
+      cmd: --config /observability/gnmic.yml subscribe
+    prometheus:
+      kind: linux
+      image: prom/prometheus:v2.53.2
+      mgmt-ipv4: 172.20.30.62
+      labels: { graph-level: 3 }
+      binds:
+        - observability:/etc/prometheus:ro
+    grafana:
+      kind: linux
+      image: grafana/grafana:11.2.0
+      mgmt-ipv4: 172.20.30.63
+      labels: { graph-level: 3 }
+      binds:
+        - observability/grafana/provisioning:/etc/grafana/provisioning:ro
+        - observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      env:
+        GF_AUTH_ANONYMOUS_ENABLED: "true"
+        GF_INSTALL_PLUGINS: knightss27-weathermap-panel
 
   links:
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
