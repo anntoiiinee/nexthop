@@ -1,38 +1,248 @@
 ---
-title: "Les route types EVPN expliqués"
-description: "Type 2, 3 et 5 : à quoi servent-ils dans une fabric VxLAN ?"
+title: "Les types de routes BGP EVPN"
+description: "Les cinq types de routes EVPN un par un, champ par champ : ce qu'ils annoncent, quand on les voit, comment les lire dans la CLI Arista, et comment s'en servir pour dépanner une fabric VXLAN."
 pubDate: 2026-10-15
-level: intermediate
-tags: [bgp, evpn, vxlan]
+level: advanced
+tags: [bgp, evpn, vxlan, datacenter]
 vendor: [arista]
 ---
 
-import Lab from '@/components/Lab.astro';
+Le chapitre [EVPN, le plan de contrôle](/formations/datacenter/evpn) présente les types de routes dans un
+tableau. Ce tutoriel ouvre chacun d'eux : quels champs il contient, qui l'annonce, à quel moment, et ce qu'on
+en déduit quand une machine n'est pas joignable. Une fois qu'on sait lire ces routes, une fabric EVPN cesse
+d'être une boîte noire : chaque machine, chaque VNI et chaque préfixe y est écrit noir sur blanc.
 
-## Vérifier les sessions EVPN
+## Le lab
 
-Avant de regarder les routes, on vérifie que la session EVPN entre le leaf et le spine est bien établie.
+Les exemples suivent le lab `dc-fabric` de la formation data center : deux spines, trois leafs, deux VRF.
 
-```text title="leaf1# show bgp evpn summary" {4}
-BGP summary information for VRF default
-Router identifier 10.255.0.11, local AS number 65001
-  Neighbor   V  AS     MsgRcvd MsgSent  InQ OutQ  Up/Down State   PfxRcd PfxAcc
-  10.255.0.1 4  65000       42      40    0    0 00:12:04 Estab   3      3
+| Équipement | AS | Loopback0 (BGP) | Loopback1 (VTEP) | Machines |
+|---|---|---|---|---|
+| leaf1 | 65101 | `10.255.0.11` | `10.255.1.11` | host1 `10.10.10.11`, VLAN 10, VRF PROD |
+| leaf2 | 65102 | `10.255.0.12` | `10.255.1.12` | host2 `10.10.10.12`, VLAN 10, VRF PROD |
+| leaf3 | 65103 | `10.255.0.13` | `10.255.1.13` | host3 `10.10.20.13`, VLAN 20, VRF PROD ; host4 `10.10.10.11`, VLAN 30, VRF DEV |
+
+| VLAN | VNI (couche 2) | VRF | VNI de la VRF (couche 3) |
+|---|---|---|---|
+| 10 PROD-WEB | 10010 | PROD | 50001 |
+| 20 PROD-APP | 10020 | PROD | 50001 |
+| 30 DEV-WEB | 10030 | DEV | 50002 |
+
+<Lab name="dc-fabric" lang="fr" />
+
+## Ce que toutes les routes EVPN ont en commun
+
+Une route EVPN est une route BGP de la famille `l2vpn evpn`. Elle se compose de deux parties :
+
+- la **NLRI**, c'est-à-dire la route elle-même : un **type** (1 à 5), un **RD** pour la rendre unique, puis des
+  champs propres à chaque type ;
+- des **attributs**, comme toute route BGP : le **prochain saut** (le VTEP qui a annoncé la route, sa Loopback1),
+  et des **communautés étendues**, dont les **route targets** qui décident quels leafs l'importent.
+
+| Valeur | Rôle | Dans le lab (VLAN 10 sur leaf1) |
+|---|---|---|
+| **RD** (*Route Distinguisher*) | Rend la route unique : deux leafs peuvent annoncer la même MAC sans que BGP les confonde | `10.255.0.11:10010` : identifiant du leaf, puis VNI |
+| **RT** (*Route Target*) | Décide qui importe la route : un leaf importe les routes dont le RT correspond à ses VLAN et VRF | `10010:10010` |
+| **Prochain saut** | Le VTEP vers lequel envoyer le trafic VXLAN | `10.255.1.11`, la Loopback1 de leaf1 |
+
+<Callout type="tip">
+Le RD dit **d'où** vient la route, le RT dit **où** elle doit aller. Une route présente dans la table BGP d'un
+spine mais absente d'un leaf est presque toujours une affaire de RT : le leaf ne l'importe pas, faute d'un VLAN
+ou d'une VRF configuré avec le même RT.
+</Callout>
+
+## Type 2 : MAC/IP Advertisement
+
+C'est la route la plus nombreuse dans une fabric : **une par machine** (au moins). Un leaf l'annonce dès qu'il
+apprend une adresse MAC sur un port local (`redistribute learned` dans la configuration du VLAN).
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: 'RD', sub: '8 octets', span: 2, tone: 'slate' },
+      { label: 'ESI', sub: '10', span: 2, tone: 'slate' },
+      { label: 'Ethernet Tag', sub: '4', span: 1, tone: 'slate' },
+      { label: 'MAC', sub: '6', span: 2, tone: 'amber' },
+      { label: 'IP', sub: '0, 4 ou 16', span: 2, tone: 'emerald' },
+      { label: 'Label 1', sub: 'VNI L2', span: 1, tone: 'violet' },
+      { label: 'Label 2', sub: 'VNI L3', span: 2, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Les champs d'une route de type 2 (RFC 7432). En VXLAN, les champs « label » transportent les VNI : le VNI du VLAN, et celui de la VRF quand le routage est symétrique."
+/>
+
+| Champ | Ce qu'il contient | Dans le lab, pour host1 |
+|---|---|---|
+| ESI | Le segment Ethernet, si la machine est raccordée à deux leafs ; sinon zéro | `0` (pas de multihoming dans le lab) |
+| MAC | L'adresse MAC de la machine | la MAC de host1 |
+| IP | L'adresse IP associée, si le leaf l'a apprise (par ARP) ; une route sans IP existe aussi | `10.10.10.11` |
+| Label 1 | Le VNI du VLAN | `10010` |
+| Label 2 | Le VNI de la VRF, pour le routage symétrique | `50001` |
+
+Une même machine produit donc souvent **deux** routes de type 2 : une avec la MAC seule, une avec la MAC et l'IP.
+La première sert à la commutation (couche 2), la seconde au routage vers l'hôte et à la **suppression d'ARP** : le
+leaf répond lui-même aux requêtes ARP de ses serveurs, avec les couples MAC/IP appris par EVPN.
+
+Les communautés étendues complètent la route :
+
+- le **RT** du VLAN (`10010:10010`), et celui de la VRF (`50001:50001`) pour les routes avec IP ;
+- l'**encapsulation** (VXLAN) ;
+- la **Router MAC** du leaf, utilisée comme adresse MAC de destination dans l'en-tête intérieur en routage symétrique ;
+- le cas échéant, la communauté **MAC Mobility**, avec un numéro de séquence qui augmente à chaque déplacement de
+  la machine : le leaf qui annonce le numéro le plus élevé l'emporte.
+
+```text title="Les routes de type 2"
+show bgp evpn route-type mac-ip
+show bgp evpn route-type mac-ip 10.10.10.11
+show bgp evpn route-type mac-ip <mac> detail
 ```
 
-L'état `Estab` confirme que la session est établie, et `PfxRcd` indique le nombre de routes EVPN reçues du spine.
+**À observer** : sur leaf2, la route de host1 a pour prochain saut `10.255.1.11` (le VTEP de leaf1) et pour RD
+`10.255.0.11:10010`. Le mot-clé `detail` affiche les communautés : RT, encapsulation, Router MAC.
 
-## Reproduire chez soi
+## Type 3 : Inclusive Multicast Ethernet Tag
 
-<Lab name="evpn-basic" lang="fr" />
+Le trafic BUM (*broadcast, unknown unicast, multicast*) doit atteindre tous les leafs qui portent le même VNI.
+Mais lesquels ? La route de type 3 répond : chaque leaf annonce **une route par VNI** qu'il porte, qui dit
+simplement « je suis un VTEP de ce VNI ».
 
-Une fois le lab démarré, testez la connectivité entre les deux hôtes, situés dans le même VLAN mais derrière deux leafs différents :
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: 'RD', sub: '8 octets', span: 3, tone: 'slate' },
+      { label: 'Ethernet Tag', sub: '4', span: 2, tone: 'slate' },
+      { label: 'Longueur IP', sub: '1', span: 2, tone: 'slate' },
+      { label: 'IP du VTEP', sub: '4 ou 16', span: 5, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="Une route de type 3 et son attribut PMSI Tunnel, qui précise le mode de réplication (ingress replication en VXLAN) et le VNI."
+/>
 
-```bash
-docker exec -it clab-evpn-basic-host1 ping -c 3 10.10.10.12
+Avec ces routes, chaque leaf construit automatiquement sa **liste de réplication** : pour le VNI 10010, leaf1
+recopie le BUM vers tous les leafs qui ont annoncé ce VNI, et seulement vers eux. Ajouter un leaf ne demande de
+toucher à aucun autre.
+
+```text title="Les routes de type 3 et la liste qui en découle"
+show bgp evpn route-type imet
+show vxlan flood vtep
 ```
 
-Si le ping passe, le trafic traverse bien la fabric dans un tunnel VxLAN. Vous pouvez alors observer les routes de type 2 (MAC/IP) apprises par chaque leaf :
+**À observer** : les trois leafs portent les trois VLAN, même leaf3 qui n'a aucune machine dans le VLAN 10. Chaque
+leaf annonce donc trois routes de type 3, une par VNI, et voit deux VTEP distants dans chaque liste de
+réplication. Une route de type 3 manquante est une cause classique de « le ping ne passe pas » : l'ARP, diffusé
+en broadcast, n'atteint pas le leaf distant, et la machine d'en face n'est jamais découverte.
 
-```text title="leaf1# show bgp evpn route-type mac-ip"
+## Type 5 : IP Prefix
+
+Les routes de type 2 décrivent des machines. Pour annoncer un **réseau entier**, il faut le type 5 : un préfixe
+IP dans une VRF. C'est lui qui transporte les sous-réseaux des VLAN, les routes apprises d'un routeur externe
+(la sortie de la fabric vers Internet ou le WAN), et les routes par défaut.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: 'RD', sub: '8 octets', span: 2, tone: 'slate' },
+      { label: 'ESI', sub: '10', span: 2, tone: 'slate' },
+      { label: 'Ethernet Tag', sub: '4', span: 1, tone: 'slate' },
+      { label: 'Longueur', sub: '1', span: 1, tone: 'slate' },
+      { label: 'Préfixe IP', sub: '4 ou 16', span: 2, tone: 'emerald' },
+      { label: 'IP passerelle', sub: '4 ou 16', span: 2, tone: 'slate' },
+      { label: 'Label', sub: 'VNI L3', span: 2, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Les champs d'une route de type 5 (RFC 9136). Le label porte le VNI de la VRF ; la communauté Router MAC indique la MAC à utiliser dans l'en-tête intérieur."
+/>
+
+Dans le lab, chaque VRF fait `redistribute connected` : chaque leaf annonce en type 5 les sous-réseaux de ses
+VLAN. Avec le RD de la VRF (`10.255.0.11:50001` pour PROD sur leaf1) et le RT `50001:50001`.
+
+```text title="Les routes de type 5"
+show bgp evpn route-type ip-prefix ipv4
+show ip route vrf PROD
 ```
+
+**À observer** : `10.10.10.0/24` existe dans les deux VRF, PROD et DEV. Les deux préfixes cohabitent sans
+conflit, car leurs RD et leurs RT diffèrent (`50001` contre `50002`). C'est exactement ce que démontre host4,
+qui a la même adresse que host1 mais vit dans la VRF DEV.
+
+<Callout type="note">
+Type 2 avec IP ou type 5 ? Les deux font du routage. La route de type 2 désigne **une machine** précise (un /32)
+et suit ses déplacements ; la route de type 5 désigne **un réseau**. Une fabric utilise les deux : type 2 pour
+joindre directement chaque hôte connu, type 5 pour les sous-réseaux et tout ce qui vient de l'extérieur.
+</Callout>
+
+## Types 1 et 4 : le multihoming
+
+Ces deux types n'existent que lorsqu'un serveur est raccordé à **deux leafs** à la fois, par un port-channel
+réparti sur les deux : c'est le multihoming EVPN, l'alternative standard au [MLAG](/formations/fundamentals/link-aggregation).
+Les deux liens forment un **segment Ethernet**, identifié par un **ESI** de 10 octets configuré à l'identique sur
+les deux leafs.
+
+| Type | Nom | Rôle |
+|---|---|---|
+| **1** | Ethernet Auto-Discovery | Annonce « je suis raccordé à ce segment ». Si un leaf perd son lien, il retire **une seule** route de type 1, et tous les autres leafs basculent d'un coup les MAC de ce segment vers le leaf restant (*mass withdrawal*), sans attendre le retrait de chaque route de type 2. Il permet aussi le partage de charge vers les deux leafs (*aliasing*). |
+| **4** | Ethernet Segment | Sert à l'élection du **transmetteur désigné** (*Designated Forwarder*) : un seul des deux leafs transmet le trafic BUM vers le serveur, sinon il le recevrait en double. |
+
+```text title="Les routes de multihoming"
+show bgp evpn route-type auto-discovery
+show bgp evpn route-type ethernet-segment
+```
+
+Le lab `dc-fabric` ne contient pas de serveur raccordé à deux leafs : ces commandes n'y affichent rien. C'est
+attendu.
+
+## Types 6 à 8 : le multicast
+
+Trois types plus récents (RFC 9251) optimisent le multicast IP dans une fabric : au lieu d'inonder tous les VTEP
+d'un VNI, les leafs annoncent quels groupes multicast leurs machines ont demandés (type 6, *Selective Multicast
+Ethernet Tag*), et se synchronisent en multihoming (types 7 et 8). On ne les croise que dans les fabrics qui
+transportent beaucoup de multicast (diffusion vidéo, marchés financiers).
+
+## Dépanner avec les routes EVPN
+
+Quand une machine n'est pas joignable, les routes disent presque toujours où chercher. Exemple : host2 (leaf2)
+ne joint pas host1 (leaf1), dans le même VLAN 10.
+
+| Étape | Commande, sur leaf2 | Si ça ne va pas |
+|---|---|---|
+| 1. Underlay | `show ip route 10.255.1.11` | Le VTEP de leaf1 n'est pas joignable : problème d'underlay (sessions IPv4, annonce des loopbacks), pas d'EVPN |
+| 2. Sessions EVPN | `show bgp evpn summary` | Session non établie : `update-source`, `ebgp-multihop`, `send-community extended` |
+| 3. Type 3 | `show bgp evpn route-type imet` | Pas de route de leaf1 pour le VNI 10010 : VLAN ou `vxlan vlan 10 vni` absent sur leaf1 |
+| 4. Type 2 | `show bgp evpn route-type mac-ip 10.10.10.11` | Route absente : host1 n'a jamais parlé (MAC inconnue de leaf1), ou RT différent entre les deux leafs |
+| 5. Plan de données | `show vxlan address-table` | La MAC est apprise par EVPN mais le trafic ne passe pas : MTU de l'underlay trop petite (voir le [calculateur MTU](/outils/mtu-calculator)), ou filtrage du port UDP 4789 |
+
+<Callout type="field">
+Le réflexe à prendre : **comparer ce qui est annoncé et ce qui est reçu**. Si leaf1 annonce la route (elle est
+dans sa propre table, avec son RD) mais que leaf2 ne l'a pas, le problème est sur le chemin BGP (session, spine,
+RT). Si leaf1 ne l'annonce pas, le problème est local à leaf1 : la machine, le VLAN ou la configuration EVPN du
+VLAN. En deux commandes, on a coupé le problème en deux.
+</Callout>
+
+## Dans le lab
+
+1. Déployez `dc-fabric`, puis faites un ping de host1 vers host2 pour que les leafs apprennent les adresses.
+2. Sur leaf2, affichez les routes de type 2 : retrouvez celle de host1, son RD, son prochain saut et ses deux VNI.
+3. Sur leaf1, affichez les routes de type 3 et la liste de réplication (`show vxlan flood vtep`). Sur leaf3, retirez
+   le VLAN 10 de la configuration BGP (`router bgp 65103`, puis `no vlan 10`) : sa route de type 3 pour le VNI
+   10010 disparaît, et leaf3 sort de la liste sur leaf1. Remettez la configuration (`vlan 10`, `rd 10.255.0.13:10010`,
+   `route-target both 10010:10010`, `redistribute learned`).
+4. Affichez les routes de type 5 et retrouvez `10.10.10.0/24` deux fois. Qu'est-ce qui les distingue ?
+5. Sur leaf2, supprimez le RT du VLAN 10 (`no route-target both 10010:10010` dans `router bgp` puis `vlan 10`),
+   et regardez la route de host1 disparaître de leaf2 alors qu'elle est toujours sur les spines. Remettez-le.
+
+La [fiche mémo EVPN-VXLAN](/fiches/evpn-vxlan) regroupe toutes ces commandes sur une page à imprimer.
+
+## À retenir
+
+- Une route EVPN = un **type**, un **RD** (d'où elle vient), des **RT** (qui l'importe) et un **prochain saut** (le VTEP).
+- **Type 2** : une machine, MAC seule ou MAC + IP, avec le VNI du VLAN et celui de la VRF.
+- **Type 3** : « je porte ce VNI » ; construit la liste de réplication du trafic BUM.
+- **Type 5** : un préfixe IP dans une VRF ; sous-réseaux, routes externes, routage entre VRF.
+- **Types 1 et 4** : le multihoming (basculement rapide et transmetteur désigné) ; **6 à 8** : le multicast.
+- Pour dépanner : underlay, sessions, type 3, type 2, puis plan de données, et toujours comparer l'annoncé et le reçu.
