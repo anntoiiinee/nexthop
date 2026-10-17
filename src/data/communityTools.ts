@@ -102,4 +102,21 @@ export const communityTools: CommunityTool[] = [
     tags: ['networking', 'network-automation', 'infrastructure-as-code', 'ansible', 'python', 'netdevops', 'arista', 'eos', 'datacenter', 'evpn-vxlan'],
     tutorial: { fr: '/formations/automation/avd', en: '/en/courses/automation/avd' },
   },
+  {
+    name: 'Nornir',
+    url: 'https://github.com/nornir-automation/nornir',
+    docs: 'https://nornir.readthedocs.io/',
+    authors: [
+      { name: 'David Barroso (@dbarrosop)', url: 'https://github.com/dbarrosop', role: { fr: 'créateur', en: 'creator' } },
+      { name: 'Patrick Ogenstad (@ogenstad)', url: 'https://github.com/ogenstad' },
+      { name: 'Kirk Byers (@ktbyers)', url: 'https://github.com/ktbyers' },
+    ],
+    license: 'Apache 2.0',
+    description: {
+      fr: "Nornir est un framework d'automatisation réseau écrit en Python, et pour Python : pas de langage dédié comme le YAML d'Ansible, mais du code Python ordinaire, qu'on peut tester et déboguer comme n'importe quel programme. Il gère l'inventaire (fichiers YAML, NetBox…), exécute les tâches en parallèle sur des centaines d'équipements, et s'appuie sur des plugins pour se connecter (Netmiko, NAPALM, Scrapli).",
+      en: "Nornir is a network automation framework written in Python, for Python: no dedicated language like Ansible's YAML, but plain Python code you can test and debug like any program. It handles the inventory (YAML files, NetBox…), runs tasks in parallel on hundreds of devices, and relies on plugins to connect (Netmiko, NAPALM, Scrapli).",
+    },
+    tags: ['python', 'network-automation', 'netmiko', 'napalm', 'scrapli'],
+    tutorial: { fr: '/formations/automation/python', en: '/en/courses/automation/python' },
+  },
 ];
