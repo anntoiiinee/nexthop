@@ -4,6 +4,8 @@ import { mdxComponents } from '@/lib/mdx';
 import ArticleLayout from '@/layouts/ArticleLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { courseUrl, chapterUrl, chapterSlugOf, type Course, type CourseEntry } from '@/lib/courses';
+import { cheatsheetsForChapter } from '@/data/cheatsheets';
+import CheatsheetCallout from './CheatsheetCallout.astro';
 
 interface Props {
   lang: Lang;
@@ -18,6 +20,7 @@ const { Content, headings } = await render(chapter);
 
 const prev = course.chapters[index - 1];
 const next = course.chapters[index + 1];
+const sheets = cheatsheetsForChapter(course.slug, chapterSlugOf(chapter));
 const card = 'group rounded-xl border border-slate-200 p-4 transition hover:border-sky-400 dark:border-slate-800 dark:hover:border-sky-500/60';
 ---
 <ArticleLayout
@@ -40,6 +43,7 @@ const card = 'group rounded-xl border border-slate-200 p-4 transition hover:bord
   </nav>
 
   <Content components={mdxComponents} />
+  <CheatsheetCallout sheets={sheets} lang={lang} />
 
   <nav slot="after" class="mt-16 grid gap-4 border-t border-slate-200 pt-8 sm:grid-cols-2 dark:border-slate-800">
     {prev ? (

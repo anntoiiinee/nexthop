@@ -1,0 +1,129 @@
+---
+// Une fiche mémo : consultable à l'écran, pensée pour tenir sur une page A4 à l'impression.
+// Le bouton ouvre l'impression du navigateur ; « Enregistrer au format PDF » produit le PDF.
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { cheatsheets, cheatsheetUrl, type CheatRow } from '@/data/cheatsheets';
+import { getCourses, chapterUrl } from '@/lib/courses';
+import { tutorialUrl } from '@/lib/content';
+import { getCollection } from 'astro:content';
+
+interface Props { lang: Lang; slug: string }
+const { lang, slug } = Astro.props;
+const sheet = cheatsheets.find((s) => s.slug === slug)!;
+
+// Liens « Pour comprendre » : titres des chapitres et tutoriels liés, s'ils sont publiés dans cette langue
+const courses = await getCourses(lang);
+const chapterLinks = (sheet.chapters ?? []).flatMap(({ course, chapter }) => {
+  const entry = courses.find((c) => c.slug === course)?.chapters.find((ch) => ch.id.endsWith(`/${chapter}`));
+  return entry ? [{ href: chapterUrl(lang, course, chapter), label: entry.data.title }] : [];
+});
+const tutorials = await getCollection('tutorials', ({ id, data }) => id.startsWith(`${lang}/`) && !data.draft);
+const tutorialLinks = (sheet.tutorials ?? []).flatMap((s) => {
+  const entry = tutorials.find((tu) => tu.id === `${lang}/${s}`);
+  return entry ? [{ href: tutorialUrl(lang, s), label: entry.data.title }] : [];
+});
+const related = [...chapterLinks, ...tutorialLinks];
+
+const text = (cell: CheatRow['cells'][number]) => (typeof cell === 'string' ? cell : cell[lang]);
+const alternates = { fr: cheatsheetUrl('fr', slug), en: cheatsheetUrl('en', slug) };
+const site = 'nexthop.alcpt.network';
+---
+<BaseLayout
+  title={`${sheet.title[lang]} · ${t(lang, 'cheats.title')} | Next Hop`}
+  description={sheet.intro[lang]}
+  lang={lang}
+  alternates={alternates}
+>
+  <article class="cheatsheet mx-auto max-w-5xl px-4 py-12 print:max-w-none print:p-0">
+    <a href={routes.cheatsheets[lang]} class="text-sm text-slate-500 hover:text-sky-600 print:hidden dark:hover:text-sky-400">← {t(lang, 'cheats.back')}</a>
+
+    <header class="mt-4 flex flex-wrap items-end justify-between gap-4 border-b-2 border-slate-900 pb-3 print:mt-0 dark:border-white">
+      <div>
+        <p class="font-mono text-xs uppercase tracking-widest text-sky-600 print:text-[8pt] dark:text-sky-400">{t(lang, 'cheats.title')} · Next Hop</p>
+        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900 print:text-[16pt] dark:text-white">{sheet.title[lang]}</h1>
+        <p class="mt-1 text-slate-600 print:text-[8.5pt] dark:text-slate-400">{sheet.intro[lang]}</p>
+      </div>
+      <div class="flex flex-col items-end gap-1 print:hidden">
+        <button type="button" data-print class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
+          {t(lang, 'cheats.print')}
+        </button>
+        <p class="max-w-xs text-right text-xs text-slate-500">{t(lang, 'cheats.printHint')}</p>
+      </div>
+    </header>
+
+    <div class="mt-6 space-y-6 print:mt-3 print:space-y-3">
+      {sheet.sections.map((section) => {
+        const head = section.head ?? sheet.head;
+        const hasDesc = section.rows.some((row) => row.desc);
+        return (
+          <section class="break-inside-avoid">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-900 print:text-[9pt] dark:text-white">{section.title[lang]}</h2>
+            <div class="mt-2 overflow-x-auto print:mt-1 print:overflow-visible">
+              <table class="w-full min-w-[36rem] table-fixed border-collapse text-left text-sm print:min-w-0 print:text-[8pt]">
+                <colgroup>
+                  {head.map(() => <col style={`width: ${(hasDesc ? 60 : 100) / head.length}%`} />)}
+                  {hasDesc && <col style="width: 40%" />}
+                </colgroup>
+                <thead>
+                  <tr class="border-b border-slate-300 text-xs text-slate-500 print:text-[7pt] dark:border-slate-700">
+                    {head.map((h) => <th class="py-1 pr-4 font-medium">{h[lang]}</th>)}
+                    {hasDesc && <th class="py-1 font-medium">{t(lang, 'cheats.description')}</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {section.rows.map((row) => (
+                    <tr class="border-b border-slate-200 align-top dark:border-slate-800">
+                      {row.cells.map((cell) => (
+                        <td class:list={['whitespace-pre-wrap break-words py-1.5 pr-4 font-mono text-[0.8rem] print:py-0.5 print:text-[7.5pt]', text(cell) ? 'text-slate-900 dark:text-slate-100' : 'text-slate-400']}>
+                          {text(cell) || '—'}
+                        </td>
+                      ))}
+                      {hasDesc && <td class="py-1.5 text-slate-600 print:py-0.5 dark:text-slate-400">{row.desc?.[lang]}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      })}
+    </div>
+
+    {related.length > 0 && (
+      <nav class="mt-8 rounded-xl border border-slate-200 p-4 text-sm print:hidden dark:border-slate-800">
+        <p class="font-mono text-xs text-slate-500">{t(lang, 'cheats.related')}</p>
+        <ul class="mt-2 flex flex-wrap gap-x-6 gap-y-1">
+          {related.map((link) => (
+            <li><a href={link.href} class="font-medium text-sky-600 hover:underline dark:text-sky-400">{link.label} →</a></li>
+          ))}
+        </ul>
+      </nav>
+    )}
+
+    <p class="mt-6 hidden font-mono text-[7pt] text-slate-500 print:block">{site}{alternates[lang]}</p>
+  </article>
+</BaseLayout>
+
+<style is:global>
+  @media print {
+    @page { size: A4; margin: 10mm; }
+    .cheatsheet tr { break-inside: avoid; }
+  }
+</style>
+
+<script>
+  // Le mode sombre s'imprimerait en texte blanc sur papier blanc : on repasse en clair le temps de l'impression
+  const root = document.documentElement;
+  let wasDark = false;
+  window.addEventListener('beforeprint', () => {
+    wasDark = root.classList.contains('dark');
+    root.classList.remove('dark');
+  });
+  window.addEventListener('afterprint', () => {
+    if (wasDark) root.classList.add('dark');
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-print]').forEach((button) =>
+    button.addEventListener('click', () => window.print()),
+  );
+</script>

@@ -1,0 +1,17 @@
+---
+// Encart en fin de chapitre ou de tutoriel : lien vers la ou les fiches mémo du sujet
+import { t, type Lang } from '@/i18n/ui';
+import { cheatsheetUrl, type Cheatsheet } from '@/data/cheatsheets';
+
+interface Props { sheets: Cheatsheet[]; lang: Lang }
+const { sheets, lang } = Astro.props;
+---
+{sheets.length > 0 && (
+  <aside class="not-prose mt-12 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 p-4 text-sm print:hidden dark:border-sky-500/40 dark:bg-sky-500/5">
+    <span class="font-mono text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">{t(lang, 'cheats.title')}</span>
+    <span class="text-slate-600 dark:text-slate-400">{t(lang, 'cheats.callout')}</span>
+    {sheets.map((sheet) => (
+      <a href={cheatsheetUrl(lang, sheet.slug)} class="font-medium text-sky-600 hover:underline dark:text-sky-400">{sheet.title[lang]} →</a>
+    ))}
+  </aside>
+)}
