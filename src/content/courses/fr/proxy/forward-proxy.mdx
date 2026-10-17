@@ -1,0 +1,394 @@
+---
+title: "Le proxy sortant"
+description: "À quoi sert un proxy web d'entreprise, la différence entre proxy explicite et transparent, la configuration des postes avec PAC et WPAD, l'authentification, le filtrage d'URL et la journalisation, sur site avec Squid ou dans le cloud (SWG, SSE)."
+pubDate: 2026-10-17
+level: intermediate
+tags: [proxy, squid, pac, wpad, swg]
+vendor: [multi]
+order: 1
+---
+
+Dans la plupart des entreprises, un poste de travail n'a **pas le droit** d'ouvrir une connexion vers
+Internet. Le firewall l'en empêche. Pour naviguer, il passe par un intermédiaire, le <Term id="proxy">proxy</Term>
+sortant (on dit aussi *proxy web* ou *forward proxy*), qui ouvre la connexion à sa place. Ce chapitre
+explique ce que cet intermédiaire apporte, comment les postes le trouvent, et ce qu'il voit vraiment.
+
+## Deux connexions au lieu d'une
+
+Sans proxy, le poste ouvre une connexion <Term id="tcp" /> directement vers le serveur. Avec un proxy, il
+y a **deux connexions** distinctes : du poste au proxy, puis du proxy au serveur. Le serveur ne voit jamais
+le poste, seulement l'adresse du proxy.
+
+<Topology
+  width={700}
+  height={250}
+  groups={[
+    { x: 20, y: 20, w: 330, h: 210, label: 'Entreprise', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 90, y: 130, label: 'Poste', sub: '192.0.2.10' },
+    { id: 'proxy', type: 'server', x: 270, y: 130, label: 'Proxy', sub: '192.0.2.20', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 430, y: 130, label: 'Firewall' },
+    { id: 'web', type: 'cloud', x: 610, y: 130, label: 'www.example.com', sub: '203.0.113.80' },
+  ]}
+  links={[
+    { from: 'pc', to: 'proxy' },
+    { from: 'proxy', to: 'fw' },
+    { from: 'fw', to: 'web' },
+  ]}
+  flows={[
+    { from: 'pc', to: 'proxy', label: 'connexion 1', tone: 'emerald', offset: -32 },
+    { from: 'proxy', to: 'web', label: 'connexion 2', tone: 'violet', offset: -32 },
+  ]}
+  caption="Le proxy termine la connexion du poste et en ouvre une nouvelle vers le serveur. Le firewall n'autorise vers Internet que le proxy."
+/>
+
+Comme il est au milieu, le proxy peut faire bien plus que relayer :
+
+| Fonction | Ce que ça apporte |
+|---|---|
+| **Point de sortie unique** | Le firewall n'a qu'une règle sortante à ouvrir (le proxy vers Internet sur 80 et 443) au lieu de laisser sortir tout le parc |
+| **Authentification** | On sait **qui** navigue, pas seulement quelle adresse IP, et on applique des droits par groupe |
+| **Filtrage** | Interdire des catégories de sites (jeux, sites malveillants), des types de fichiers, des destinations à mauvaise réputation |
+| **Analyse** | Passer les fichiers téléchargés à un antivirus, détecter une fuite de données |
+| **Journalisation** | Une trace de chaque requête : utile en cas d'incident de sécurité, et souvent exigée |
+| **Cache** | Garder une copie des contenus déjà téléchargés. C'était la raison d'être des proxys à l'époque des liens lents ; c'est devenu marginal, car presque tout est chiffré et personnalisé |
+
+## Explicite ou transparent
+
+### Le proxy explicite
+
+Le poste **sait** qu'il utilise un proxy : son navigateur est configuré avec l'adresse du proxy (par
+exemple `192.0.2.20`, port `3128` ou `8080`). Il envoie alors ses requêtes au proxy, sous une forme
+légèrement différente :
+
+- pour une URL en **HTTP**, il envoie la requête complète au proxy, avec l'URL entière :
+  `GET http://www.example.com/page HTTP/1.1`. Le proxy lit tout, filtre, et va chercher la page ;
+- pour une URL en **HTTPS**, il demande au proxy d'ouvrir un tunnel avec la méthode `CONNECT` :
+  `CONNECT www.example.com:443`. Le proxy ouvre la connexion TCP vers le serveur, répond
+  `200 Connection established`, puis se contente de recopier les octets dans les deux sens. La négociation
+  <Term id="tls" /> se fait **de bout en bout** entre le navigateur et le serveur.
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'pc', label: 'Poste', sub: '192.0.2.10' },
+    { id: 'proxy', label: 'Proxy', sub: '192.0.2.20:3128', tone: 'violet' },
+    { id: 'web', label: 'Serveur', sub: 'www.example.com:443' },
+  ]}
+  messages={[
+    { from: 'pc', to: 'proxy', label: 'CONNECT www.example.com:443', tone: 'emerald' },
+    { from: 'proxy', to: 'web', label: 'connexion TCP', sub: 'SYN, SYN-ACK, ACK', tone: 'violet' },
+    { from: 'proxy', to: 'pc', label: '200 Connection established', style: 'dashed', tone: 'emerald' },
+    { note: 'Le proxy recopie les octets sans les comprendre', tone: 'slate' },
+    { from: 'pc', to: 'web', label: 'Négociation TLS', sub: 'ClientHello, SNI = www.example.com' },
+    { from: 'pc', to: 'web', label: 'GET /compte (chiffré)' },
+    { from: 'web', to: 'pc', label: '200 OK (chiffré)', style: 'dashed' },
+  ]}
+  caption="En HTTPS, le proxy explicite ne voit que le nom et le port demandés dans le CONNECT. Le chemin, les paramètres et le contenu restent chiffrés de bout en bout."
+/>
+
+C'est une limite importante : **sans inspection TLS, le proxy ne voit que le nom du site** (dans le
+`CONNECT` et dans le <Term id="sni" /> de la négociation TLS), jamais l'URL complète ni le contenu. Il peut
+bloquer `games.example.net`, mais pas une page précise de `www.example.com`. Le chapitre suivant explique
+comment l'inspection TLS lève cette limite, et à quel prix.
+
+### Le proxy transparent
+
+Le poste **ne sait pas** qu'il y a un proxy. Il ouvre une connexion normale vers le serveur, et c'est le
+réseau qui l'intercepte : le routeur ou le firewall détourne le trafic vers les ports 80 et 443 vers le
+proxy (routage par politique, protocole WCCP chez Cisco), ou le proxy est lui-même en coupure sur le chemin.
+
+| | Explicite | Transparent |
+|---|---|---|
+| **Configuration du poste** | Nécessaire (manuelle, PAC, WPAD, GPO) | Aucune |
+| **Applications sans réglage proxy** | Ne passent pas (ou contournent si le firewall le permet) | Interceptées comme les autres |
+| **Authentification de l'utilisateur** | Native : le proxy répond `407` et le navigateur s'authentifie | Difficile : le navigateur ne sait pas qu'il parle à un proxy. On identifie par l'adresse IP ou par un agent sur le poste |
+| **HTTPS** | `CONNECT` explicite avec le nom du site | Le proxy doit lire le SNI de la négociation TLS pour savoir où aller |
+| **Dépannage** | Simple : le poste parle au proxy | Plus délicat : le détournement est invisible |
+
+En entreprise, le **proxy explicite** reste le plus courant pour les postes, parce qu'il permet
+l'authentification. Le transparent sert plutôt aux réseaux qu'on ne maîtrise pas (invités, objets
+connectés) et comme filet de sécurité.
+
+## Dire aux postes où est le proxy
+
+### À la main, ou par stratégie de groupe
+
+On peut saisir l'adresse du proxy dans les paramètres réseau du système, ou la pousser par une
+stratégie de groupe (GPO) Active Directory, ou par l'outil de gestion des postes. Simple, mais rigide : la
+même configuration pour toutes les destinations, et une liste d'exceptions à maintenir à la main.
+
+### Le fichier PAC
+
+Un fichier <Term id="pac" /> est un petit programme JavaScript publié sur un serveur web interne. Le
+navigateur le télécharge, puis appelle sa fonction `FindProxyForURL(url, host)` **pour chaque requête**.
+La réponse dit quoi faire : `DIRECT` (sans proxy), `PROXY adresse:port`, ou une liste à essayer dans
+l'ordre.
+
+<CodeFile lab="proxy-lb" file="pac/proxy.pac" />
+
+Quelques règles qui évitent les mauvaises surprises :
+
+- **Les destinations internes en direct** : intranet, applications de la DMZ, noms courts. Sinon le proxy
+  reçoit des requêtes qu'il ne sait pas acheminer.
+- **Attention à `isInNet()` et `dnsResolve()`** : appliquées à un nom, elles déclenchent une résolution
+  DNS, pour chaque requête. Un DNS lent rend toute la navigation lente. Testez d'abord les noms
+  (`dnsDomainIs`, `shExpMatch`), les adresses ensuite.
+- **`; DIRECT` en secours ou pas ?** `PROXY 192.0.2.20:3128; DIRECT` laisse le navigateur sortir en direct
+  si le proxy ne répond pas. C'est confortable si le firewall bloque de toute façon le direct (le secours
+  échoue, mais rapidement) ; c'est un **contournement du filtrage** s'il ne le bloque pas. Pour la
+  redondance, mieux vaut deux proxys : `PROXY proxy1:3128; PROXY proxy2:3128`.
+- **Le type MIME** : le serveur web doit servir le fichier en `application/x-ns-proxy-autoconfig`, sinon
+  certains navigateurs l'ignorent.
+
+### WPAD : trouver le fichier PAC tout seul
+
+Encore faut-il donner au poste l'adresse du fichier PAC. <Term id="wpad" /> automatise cette étape :
+quand l'option « Détecter automatiquement les paramètres » est cochée, le poste cherche le fichier :
+
+1. par <Term id="dhcp" />, dans l'**option 252**, qui contient directement l'URL du fichier PAC ;
+2. à défaut, par le **DNS** : il demande `wpad.<son domaine>` (par exemple `wpad.corp.example.com`) et
+   télécharge `http://wpad.corp.example.com/wpad.dat`.
+
+<Callout type="warning">
+WPAD est pratique mais dangereux s'il est mal maîtrisé. Si personne n'a déclaré le nom `wpad` dans le DNS
+interne, un attaquant sur le réseau local peut répondre à sa place (par les protocoles de résolution
+locaux LLMNR et NetBIOS de Windows, par exemple) et servir **son** fichier PAC : toute la navigation des
+victimes passe alors par son proxy. Soit on déclare `wpad` correctement dans le DNS, soit on désactive la
+détection automatique et on pousse l'URL du PAC par GPO.
+</Callout>
+
+### Les serveurs et les outils en ligne de commande
+
+Le fichier PAC ne concerne que les navigateurs et les applications qui suivent les réglages du
+système. Sur un serveur Linux, `curl`, `apt`, `pip`, `git` ou un agent de supervision lisent plutôt des
+**variables d'environnement** :
+
+```bash title="Variables d'environnement lues par la plupart des outils"
+export http_proxy=http://192.0.2.20:3128
+export https_proxy=http://192.0.2.20:3128
+export no_proxy=localhost,127.0.0.1,.example.com,198.51.100.0/24
+```
+
+Notez que `https_proxy` pointe vers une URL en `http://` : la connexion **jusqu'au proxy** est en clair, et
+le `CONNECT` ouvre ensuite le tunnel TLS vers le site. Le format de `no_proxy` varie selon les outils
+(certains ignorent les blocs CIDR, d'autres le point initial) : testez avec l'outil concerné. Les
+applications Java, enfin, ont leurs propres réglages (`-Dhttps.proxyHost=…`).
+
+## Authentifier les utilisateurs
+
+Un proxy explicite peut exiger une authentification. Il répond alors `407 Proxy Authentication Required`
+avec un en-tête `Proxy-Authenticate` qui indique les méthodes acceptées, et le navigateur rejoue la
+requête avec un en-tête `Proxy-Authorization`.
+
+| Méthode | Fonctionnement | Usage |
+|---|---|---|
+| **Basic** | Identifiant et mot de passe encodés en base64, c'est-à-dire **en clair** | À éviter, sauf si la connexion au proxy est elle-même chiffrée |
+| **Negotiate (Kerberos)** | Le poste présente un ticket Kerberos obtenu à l'ouverture de session Windows | Le standard en environnement Active Directory : authentification transparente, sans saisie |
+| **NTLM** | Ancien mécanisme Windows à défi-réponse | Encore présent pour les postes hors domaine ; à remplacer par Kerberos |
+
+Deux points d'exploitation :
+
+- **Les comptes de service** : les serveurs, les mises à jour automatiques et les agents ne peuvent pas
+  saisir de mot de passe. On leur ouvre des exceptions par adresse source et par destination (par
+  exemple, le serveur WSUS vers les domaines Microsoft), plutôt qu'un compte générique dont le mot de passe
+  traîne dans des fichiers.
+- **Les groupes** : une fois l'utilisateur connu, le proxy interroge l'annuaire (LDAP) pour connaître ses
+  groupes, et applique des règles par groupe : les développeurs ont accès aux dépôts de code, les
+  stagiaires n'ont pas accès aux webmails personnels, etc.
+
+## Filtrer
+
+Le filtrage d'un proxy combine plusieurs critères, du plus simple au plus fin :
+
+- **Listes de domaines** : une liste noire (interdits) et une liste blanche (toujours autorisés, ou
+  exemptés d'inspection). Simple et prévisible, mais impossible à tenir à jour seul face aux millions de
+  domaines créés chaque mois.
+- **Catégories** : les éditeurs maintiennent des bases qui classent des centaines de millions de sites
+  (presse, jeux, réseaux sociaux, hameçonnage, logiciels malveillants…). La politique devient « interdire
+  les catégories *jeux d'argent* et *malveillant* », et l'éditeur se charge du classement.
+- **Réputation** : un score par domaine ou par adresse, qui permet de bloquer les sites très récents ou
+  déjà vus dans des attaques.
+- **Contenu** : types de fichiers (exécutables, archives chiffrées), analyse antivirus via le protocole
+  ICAP, prévention des fuites de données. Ces contrôles exigent de **voir le contenu**, donc l'inspection
+  TLS pour les sites en HTTPS.
+
+Dans Squid, chaque critère devient une `acl`, et les règles `http_access` s'évaluent **dans l'ordre** :
+la première qui correspond s'applique, exactement comme une ACL de routeur ou une politique de firewall.
+
+```text title="squid.conf : les règles du lab"
+acl lan src 192.0.2.0/26
+acl blocked dstdomain "/etc/squid/lab/blocked-domains.txt"
+
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access deny blocked
+http_access allow lan
+http_access deny all
+```
+
+## Journaliser
+
+Le journal du proxy est l'une des sources les plus utiles en cas d'incident : quel poste a contacté ce
+domaine malveillant, quand, combien de données sont sorties. Une ligne contient au minimum la date,
+l'adresse du poste, l'utilisateur, la méthode, l'URL (ou le nom et le port pour un `CONNECT`), le code de
+réponse, le volume, et la décision (autorisé, refusé, quelle règle).
+
+Ces journaux contiennent des **données personnelles** : la navigation de chaque salarié. Leur collecte doit
+être connue des utilisateurs (charte informatique), leur accès limité, et leur durée de conservation
+définie et respectée (en France, la CNIL recommande une durée de l'ordre de 6 mois à 1 an pour les
+journaux de ce type). On les envoie vers un serveur central, et idéalement vers le SIEM de l'équipe
+sécurité.
+
+<Callout type="field">
+Un grand classique des migrations de proxy : tout fonctionne pour les navigateurs, et le lundi matin, des
+applications métier tombent en panne. Ce sont celles qui ne lisent ni le PAC ni les réglages système (un
+client lourd Java, un agent de sauvegarde, un outil en ligne de commande), et qui sortaient jusque-là par
+une règle de firewall oubliée, ou par l'ancien proxy configuré en dur. Avant une migration, sortez des
+journaux du firewall et de l'ancien proxy la liste des sources qui ne sont **pas** des postes de travail :
+c'est la liste des applications à configurer à la main.
+</Callout>
+
+## Sur site ou dans le cloud
+
+Les solutions sur site sont des serveurs ou des boîtiers installés dans le data center ou en sortie de
+site : **Squid** (libre, celui du lab), Broadcom Edge <Term id="swg" /> (ex-Blue Coat ProxySG), Forcepoint,
+Skyhigh, Fortinet FortiProxy, ou la fonction proxy et filtrage d'URL des firewalls de nouvelle génération.
+
+Avec le télétravail et les applications SaaS, ce modèle a une limite : pour être filtré, le trafic d'un
+salarié chez lui doit d'abord remonter par le VPN jusqu'au data center, sortir par le proxy, puis aller sur
+Internet. C'est lent, et le VPN devient le goulot d'étranglement. Les **SWG dans le cloud**, regroupés sous
+le nom <Term id="sse" />, déplacent le proxy chez un fournisseur (Zscaler, Netskope, Palo Alto Prisma
+Access, Cloudflare…) : le poste envoie son trafic web au point de présence le plus proche, où qu'il soit,
+avec la même politique.
+
+<Topology
+  width={700}
+  height={290}
+  groups={[{ x: 20, y: 20, w: 230, h: 250, label: 'Utilisateurs', tone: 'emerald' }]}
+  nodes={[
+    { id: 'office', type: 'host', x: 135, y: 80, label: 'Au bureau' },
+    { id: 'home', type: 'host', x: 135, y: 200, label: 'En télétravail' },
+    { id: 'sse', type: 'cloud', x: 380, y: 140, label: 'SWG cloud', sub: 'point de présence', tone: 'violet' },
+    { id: 'saas', type: 'cloud', x: 600, y: 70, label: 'SaaS' },
+    { id: 'web', type: 'cloud', x: 600, y: 210, label: 'Internet' },
+  ]}
+  links={[
+    { from: 'office', to: 'sse', tone: 'violet' },
+    { from: 'home', to: 'sse', tone: 'violet', style: 'dashed', label: 'agent' },
+    { from: 'sse', to: 'saas' },
+    { from: 'sse', to: 'web' },
+  ]}
+  caption="Avec un SWG dans le cloud, la politique suit l'utilisateur : au bureau comme chez lui, son trafic web passe par le point de présence le plus proche, sans remonter au data center."
+/>
+
+Le poste y envoie son trafic par un **agent** installé sur le poste (le plus courant), par un fichier
+PAC, ou par un tunnel IPsec ou GRE monté depuis le routeur du site. Les principes de ce chapitre ne
+changent pas : explicite ou transparent, authentification (souvent par l'annuaire cloud, en SAML),
+catégories, inspection TLS et journaux.
+
+## Dans le lab
+
+Le lab `proxy-lb` sert à tous les chapitres de ce saut. Le poste `client` n'a **pas de route vers
+Internet** : seul le proxy `proxy` (Squid, `192.0.2.20:3128`) peut joindre le site `site`.
+
+<Lab name="proxy-lb" lang="fr" />
+
+**0. Préparer le lab.** Avant le premier déploiement, générez les certificats (le chapitre suivant
+explique ce que fait ce script), puis déployez :
+
+```bash
+sh pki/make-pki.sh
+sudo containerlab deploy -t topology.clab.yml
+```
+
+Le proxy installe Squid au démarrage : comptez une minute avant qu'il réponde.
+
+**1. Essayer sans proxy.**
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+curl -m 3 http://www.example.com
+```
+
+`Couldn't connect to server` : le poste n'a pas de route vers `203.0.113.0/24`, comme un poste
+d'entreprise dont le firewall bloque la sortie directe.
+
+**2. Passer par le proxy, en HTTP puis en HTTPS.**
+
+```bash
+curl -x http://192.0.2.20:3128 http://www.example.com
+curl -x http://192.0.2.20:3128 --cacert /pki/ca.crt https://www.example.com
+```
+
+La page répond, et le site indique qu'il voit la connexion venir de `192.0.2.20` : le proxy, pas le
+poste. Dans un second terminal, regardez le journal :
+
+```bash
+docker exec clab-proxy-lb-proxy tail -f /var/log/squid/access.log
+```
+
+```text
+17/Oct/2026:11:41:01 +0000 192.0.2.10 - GET http://www.example.com/ 200 266 TCP_MISS/HIER_DIRECT
+17/Oct/2026:11:41:01 +0000 192.0.2.10 - CONNECT www.example.com:443 200 3761 TCP_TUNNEL/HIER_DIRECT
+```
+
+En HTTP, le proxy voit l'URL complète. En HTTPS, seulement `CONNECT www.example.com:443` : c'est un
+tunnel (`TCP_TUNNEL`).
+
+**3. Filtrer.** Le fichier `squid/blocked-domains.txt` interdit `.example.net` :
+
+```bash
+curl -x http://192.0.2.20:3128 http://games.example.net
+curl -x http://192.0.2.20:3128 https://games.example.net
+```
+
+La première commande renvoie la page d'erreur de Squid (code `403`), la seconde `CONNECT tunnel failed,
+response 403` : le filtrage par domaine fonctionne aussi en HTTPS, sans rien déchiffrer. Ajoutez
+`www.example.com` à la liste, rechargez Squid, et vérifiez qu'il est bloqué à son tour :
+
+```bash
+docker exec clab-proxy-lb-proxy squid -f /etc/squid/lab/squid.conf -k reconfigure
+```
+
+Retirez-le ensuite de la liste.
+
+**4. Authentifier.** Dans `squid/squid.conf`, décommentez les quatre lignes de la section
+*Authentification*, remplacez `http_access allow lan` par `http_access allow lan users`, et rechargez.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -x http://192.0.2.20:3128 http://www.example.com
+curl -x http://192.0.2.20:3128 -U alice:lab-password http://www.example.com
+```
+
+Sans compte, `407`. Avec le compte `alice`, la page s'affiche, et le journal contient maintenant le nom
+de l'utilisateur à la place du tiret. Remettez la configuration d'origine avant le chapitre suivant.
+
+**5. Les variables d'environnement.**
+
+```bash
+export http_proxy=http://192.0.2.20:3128 https_proxy=http://192.0.2.20:3128
+curl --cacert /pki/ca.crt https://www.example.com
+curl -m 5 http://app.example.com
+export no_proxy=app.example.com
+curl http://app.example.com
+```
+
+Avec les deux premières variables, `curl` passe par le proxy pour tout, y compris l'application
+interne, et le proxy, qui ne connaît pas ce nom interne, répond `503`. Avec `no_proxy`, `curl` va en
+direct vers l'application interne et passe toujours par le proxy pour Internet : c'est ce que fait le
+fichier PAC pour un navigateur.
+
+## À retenir
+
+- Un proxy, ce sont **deux connexions** : le serveur ne voit que le proxy, et le firewall n'a plus qu'un
+  seul équipement à laisser sortir.
+- **Explicite** : le poste est configuré (PAC, WPAD, GPO, variables d'environnement) et peut être
+  authentifié. **Transparent** : le réseau détourne le trafic, sans configuration, mais l'authentification
+  est plus difficile.
+- En HTTPS, sans inspection, le proxy ne voit que le **nom du site** (`CONNECT` et SNI), pas l'URL.
+- Un fichier PAC envoie l'interne en direct et le reste au proxy ; WPAD doit être maîtrisé ou désactivé.
+- Les journaux du proxy sont précieux et sensibles : utilisateurs informés, accès restreint, durée de
+  conservation définie.
+- Le télétravail pousse le proxy vers le **cloud** (SWG, SSE), avec les mêmes principes.

@@ -1,0 +1,390 @@
+---
+title: "Forward proxy"
+description: "What a corporate web proxy is for, explicit versus transparent proxy, configuring workstations with PAC and WPAD, authentication, URL filtering and logging, on premises with Squid or in the cloud (SWG, SSE)."
+pubDate: 2026-10-17
+level: intermediate
+tags: [proxy, squid, pac, wpad, swg]
+vendor: [multi]
+order: 1
+---
+
+In most companies, a workstation is **not allowed** to open a connection to the Internet. The firewall
+prevents it. To browse, it goes through an intermediary, the forward <Term id="proxy">proxy</Term> (also called a
+*web proxy*), which opens the connection on its behalf. This chapter explains what that intermediary
+brings, how workstations find it, and what it really sees.
+
+## Two connections instead of one
+
+Without a proxy, the workstation opens a <Term id="tcp" /> connection straight to the server. With a
+proxy, there are **two separate connections**: from the workstation to the proxy, then from the proxy to
+the server. The server never sees the workstation, only the proxy's address.
+
+<Topology
+  width={700}
+  height={250}
+  groups={[
+    { x: 20, y: 20, w: 330, h: 210, label: 'Company', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 90, y: 130, label: 'Workstation', sub: '192.0.2.10' },
+    { id: 'proxy', type: 'server', x: 270, y: 130, label: 'Proxy', sub: '192.0.2.20', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 430, y: 130, label: 'Firewall' },
+    { id: 'web', type: 'cloud', x: 610, y: 130, label: 'www.example.com', sub: '203.0.113.80' },
+  ]}
+  links={[
+    { from: 'pc', to: 'proxy' },
+    { from: 'proxy', to: 'fw' },
+    { from: 'fw', to: 'web' },
+  ]}
+  flows={[
+    { from: 'pc', to: 'proxy', label: 'connection 1', tone: 'emerald', offset: -32 },
+    { from: 'proxy', to: 'web', label: 'connection 2', tone: 'violet', offset: -32 },
+  ]}
+  caption="The proxy terminates the workstation's connection and opens a new one to the server. The firewall only lets the proxy out to the Internet."
+/>
+
+Because it sits in the middle, the proxy can do much more than relay:
+
+| Function | What it brings |
+|---|---|
+| **Single exit point** | The firewall needs one outbound rule (the proxy to the Internet on 80 and 443) instead of letting the whole fleet out |
+| **Authentication** | You know **who** is browsing, not just which IP address, and apply rights per group |
+| **Filtering** | Block categories of sites (gaming, malicious sites), file types, destinations with a bad reputation |
+| **Analysis** | Hand downloaded files to an antivirus, detect data leaks |
+| **Logging** | A record of every request: useful during a security incident, and often required |
+| **Caching** | Keep a copy of content already downloaded. It was the reason proxies existed in the days of slow links; it has become marginal, since almost everything is encrypted and personalised |
+
+## Explicit or transparent
+
+### The explicit proxy
+
+The workstation **knows** it uses a proxy: its browser is configured with the proxy's address (for
+example `192.0.2.20`, port `3128` or `8080`). It then sends its requests to the proxy, in a slightly
+different form:
+
+- for an **HTTP** URL, it sends the full request to the proxy, with the entire URL:
+  `GET http://www.example.com/page HTTP/1.1`. The proxy reads everything, filters, and fetches the page;
+- for an **HTTPS** URL, it asks the proxy to open a tunnel with the `CONNECT` method:
+  `CONNECT www.example.com:443`. The proxy opens the TCP connection to the server, answers
+  `200 Connection established`, then just copies bytes in both directions. The <Term id="tls" />
+  negotiation happens **end to end** between the browser and the server.
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'pc', label: 'Workstation', sub: '192.0.2.10' },
+    { id: 'proxy', label: 'Proxy', sub: '192.0.2.20:3128', tone: 'violet' },
+    { id: 'web', label: 'Server', sub: 'www.example.com:443' },
+  ]}
+  messages={[
+    { from: 'pc', to: 'proxy', label: 'CONNECT www.example.com:443', tone: 'emerald' },
+    { from: 'proxy', to: 'web', label: 'TCP connection', sub: 'SYN, SYN-ACK, ACK', tone: 'violet' },
+    { from: 'proxy', to: 'pc', label: '200 Connection established', style: 'dashed', tone: 'emerald' },
+    { note: 'The proxy copies bytes without understanding them', tone: 'slate' },
+    { from: 'pc', to: 'web', label: 'TLS handshake', sub: 'ClientHello, SNI = www.example.com' },
+    { from: 'pc', to: 'web', label: 'GET /account (encrypted)' },
+    { from: 'web', to: 'pc', label: '200 OK (encrypted)', style: 'dashed' },
+  ]}
+  caption="With HTTPS, the explicit proxy only sees the name and port requested in the CONNECT. The path, the parameters and the content stay encrypted end to end."
+/>
+
+This is an important limit: **without TLS inspection, the proxy only sees the site name** (in the
+`CONNECT` and in the <Term id="sni" /> of the TLS handshake), never the full URL or the content. It can
+block `games.example.net`, but not one specific page of `www.example.com`. The next chapter explains how
+TLS inspection removes this limit, and at what cost.
+
+### The transparent proxy
+
+The workstation **does not know** there is a proxy. It opens a normal connection to the server, and the
+network intercepts it: the router or firewall diverts traffic to ports 80 and 443 to the proxy
+(policy-based routing, the WCCP protocol on Cisco), or the proxy itself sits inline on the path.
+
+| | Explicit | Transparent |
+|---|---|---|
+| **Workstation configuration** | Required (manual, PAC, WPAD, GPO) | None |
+| **Applications without proxy settings** | Do not get through (or bypass it if the firewall allows) | Intercepted like the rest |
+| **User authentication** | Native: the proxy answers `407` and the browser authenticates | Difficult: the browser does not know it talks to a proxy. Users are identified by IP address or by an agent on the workstation |
+| **HTTPS** | Explicit `CONNECT` with the site name | The proxy must read the SNI from the TLS handshake to know where to go |
+| **Troubleshooting** | Simple: the workstation talks to the proxy | Harder: the diversion is invisible |
+
+In companies, the **explicit proxy** remains the most common for workstations, because it allows
+authentication. Transparent proxies are rather used for networks you do not control (guests, IoT) and as
+a safety net.
+
+## Telling workstations where the proxy is
+
+### By hand, or through group policy
+
+You can type the proxy address in the system's network settings, or push it through an Active Directory
+group policy (GPO), or with the device management tool. Simple but rigid: the same configuration for
+every destination, and an exception list to maintain by hand.
+
+### The PAC file
+
+A <Term id="pac" /> file is a small JavaScript program published on an internal web server. The browser
+downloads it, then calls its `FindProxyForURL(url, host)` function **for every request**. The answer
+says what to do: `DIRECT` (no proxy), `PROXY address:port`, or a list to try in order.
+
+<CodeFile lab="proxy-lb" file="pac/proxy.pac" />
+
+A few rules that avoid bad surprises:
+
+- **Internal destinations go direct**: intranet, DMZ applications, short names. Otherwise the proxy
+  receives requests it cannot forward.
+- **Beware of `isInNet()` and `dnsResolve()`**: applied to a name, they trigger a DNS lookup, for every
+  request. A slow DNS makes all browsing slow. Test names first (`dnsDomainIs`, `shExpMatch`), addresses
+  afterwards.
+- **`; DIRECT` as a fallback or not?** `PROXY 192.0.2.20:3128; DIRECT` lets the browser go out directly
+  if the proxy does not answer. That is comfortable if the firewall blocks direct access anyway (the
+  fallback fails, but quickly); it is a **filtering bypass** if it does not. For redundancy, use two
+  proxies instead: `PROXY proxy1:3128; PROXY proxy2:3128`.
+- **The MIME type**: the web server must serve the file as `application/x-ns-proxy-autoconfig`, or some
+  browsers ignore it.
+
+### WPAD: finding the PAC file automatically
+
+The workstation still needs the PAC file's address. <Term id="wpad" /> automates this step: when
+"Automatically detect settings" is ticked, the workstation looks for the file:
+
+1. through <Term id="dhcp" />, in **option 252**, which holds the PAC file URL directly;
+2. failing that, through **DNS**: it asks for `wpad.<its domain>` (for example `wpad.corp.example.com`)
+   and downloads `http://wpad.corp.example.com/wpad.dat`.
+
+<Callout type="warning">
+WPAD is handy but dangerous if not under control. If nobody declared the `wpad` name in the internal DNS,
+an attacker on the local network can answer instead (through Windows local name resolution protocols
+such as LLMNR and NetBIOS, for instance) and serve **their own** PAC file: all of the victims' browsing
+then goes through their proxy. Either declare `wpad` properly in DNS, or disable automatic detection and
+push the PAC URL through GPO.
+</Callout>
+
+### Servers and command-line tools
+
+The PAC file only applies to browsers and applications that follow the system settings. On a Linux
+server, `curl`, `apt`, `pip`, `git` or a monitoring agent rather read **environment variables**:
+
+```bash title="Environment variables read by most tools"
+export http_proxy=http://192.0.2.20:3128
+export https_proxy=http://192.0.2.20:3128
+export no_proxy=localhost,127.0.0.1,.example.com,198.51.100.0/24
+```
+
+Note that `https_proxy` points to an `http://` URL: the connection **to the proxy** is in clear text,
+and the `CONNECT` then opens the TLS tunnel to the site. The `no_proxy` format varies between tools
+(some ignore CIDR blocks, others the leading dot): test with the tool concerned. Java applications, for
+their part, have their own settings (`-Dhttps.proxyHost=…`).
+
+## Authenticating users
+
+An explicit proxy can require authentication. It then answers `407 Proxy Authentication Required` with a
+`Proxy-Authenticate` header listing the accepted methods, and the browser replays the request with a
+`Proxy-Authorization` header.
+
+| Method | How it works | Use |
+|---|---|---|
+| **Basic** | Username and password encoded in base64, that is **in clear text** | Avoid, unless the connection to the proxy is itself encrypted |
+| **Negotiate (Kerberos)** | The workstation presents a Kerberos ticket obtained at Windows logon | The standard in Active Directory environments: transparent authentication, nothing to type |
+| **NTLM** | Older Windows challenge-response mechanism | Still around for workstations outside the domain; to be replaced by Kerberos |
+
+Two operational points:
+
+- **Service accounts**: servers, automatic updates and agents cannot type a password. Give them
+  exceptions by source address and destination (for example, the WSUS server to Microsoft domains),
+  rather than a generic account whose password ends up lying around in files.
+- **Groups**: once the user is known, the proxy queries the directory (LDAP) for their groups and applies
+  rules per group: developers can reach code repositories, interns cannot reach personal webmail, etc.
+
+## Filtering
+
+Proxy filtering combines several criteria, from the simplest to the finest:
+
+- **Domain lists**: a blocklist (forbidden) and an allowlist (always allowed, or exempt from inspection).
+  Simple and predictable, but impossible to keep up to date alone against the millions of domains
+  created each month.
+- **Categories**: vendors maintain databases classifying hundreds of millions of sites (news, gaming,
+  social networks, phishing, malware…). The policy becomes "block the *gambling* and *malicious*
+  categories", and the vendor handles the classification.
+- **Reputation**: a score per domain or address, which allows blocking brand-new sites or sites already
+  seen in attacks.
+- **Content**: file types (executables, encrypted archives), antivirus scanning through the ICAP
+  protocol, data loss prevention. These controls need to **see the content**, so TLS inspection for HTTPS
+  sites.
+
+In Squid, each criterion becomes an `acl`, and the `http_access` rules are evaluated **in order**: the
+first match wins, exactly like a router ACL or a firewall policy.
+
+```text title="squid.conf: the lab rules"
+acl lan src 192.0.2.0/26
+acl blocked dstdomain "/etc/squid/lab/blocked-domains.txt"
+
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access deny blocked
+http_access allow lan
+http_access deny all
+```
+
+## Logging
+
+The proxy log is one of the most useful sources during an incident: which workstation contacted that
+malicious domain, when, how much data went out. A line holds at least the date, the workstation address,
+the user, the method, the URL (or the name and port for a `CONNECT`), the response code, the volume, and
+the decision (allowed, denied, which rule).
+
+These logs contain **personal data**: every employee's browsing. Users must know they are collected
+(IT acceptable use policy), access to them must be restricted, and their retention period defined and
+enforced (in France, the CNIL data protection authority recommends around 6 months to 1 year for this
+kind of log). They are shipped to a central server, and ideally to the security team's SIEM.
+
+<Callout type="field">
+A classic during proxy migrations: everything works for browsers, and on Monday morning some business
+applications break. They are the ones that read neither the PAC file nor the system settings (a Java
+thick client, a backup agent, a command-line tool), and that used to go out through a forgotten firewall
+rule, or through the old proxy configured by hand. Before a migration, extract from the firewall and old
+proxy logs the list of sources that are **not** workstations: that is the list of applications to
+configure manually.
+</Callout>
+
+## On premises or in the cloud
+
+On-premises solutions are servers or appliances in the data center or at the site's Internet exit:
+**Squid** (open source, the one in the lab), Broadcom Edge <Term id="swg" /> (formerly Blue Coat
+ProxySG), Forcepoint, Skyhigh, Fortinet FortiProxy, or the proxy and URL filtering features of
+next-generation firewalls.
+
+With remote work and SaaS applications, this model hits a limit: to be filtered, the traffic of an
+employee at home must first travel through the VPN to the data center, go out through the proxy, then
+reach the Internet. It is slow, and the VPN becomes the bottleneck. **Cloud SWGs**, grouped under the
+<Term id="sse" /> label, move the proxy to a provider (Zscaler, Netskope, Palo Alto Prisma Access,
+Cloudflare…): the workstation sends its web traffic to the nearest point of presence, wherever it is,
+with the same policy.
+
+<Topology
+  width={700}
+  height={290}
+  groups={[{ x: 20, y: 20, w: 230, h: 250, label: 'Users', tone: 'emerald' }]}
+  nodes={[
+    { id: 'office', type: 'host', x: 135, y: 80, label: 'At the office' },
+    { id: 'home', type: 'host', x: 135, y: 200, label: 'Working from home' },
+    { id: 'sse', type: 'cloud', x: 380, y: 140, label: 'Cloud SWG', sub: 'point of presence', tone: 'violet' },
+    { id: 'saas', type: 'cloud', x: 600, y: 70, label: 'SaaS' },
+    { id: 'web', type: 'cloud', x: 600, y: 210, label: 'Internet' },
+  ]}
+  links={[
+    { from: 'office', to: 'sse', tone: 'violet' },
+    { from: 'home', to: 'sse', tone: 'violet', style: 'dashed', label: 'agent' },
+    { from: 'sse', to: 'saas' },
+    { from: 'sse', to: 'web' },
+  ]}
+  caption="With a cloud SWG, the policy follows the user: at the office or at home, their web traffic goes through the nearest point of presence, without a detour through the data center."
+/>
+
+The workstation sends its traffic there through an **agent** installed on it (the most common), a PAC
+file, or an IPsec or GRE tunnel built from the site router. The principles of this chapter do not change:
+explicit or transparent, authentication (often against the cloud directory, over SAML), categories, TLS
+inspection and logs.
+
+## In the lab
+
+The `proxy-lb` lab serves every chapter of this hop. The `client` workstation has **no route to the
+Internet**: only the `proxy` (Squid, `192.0.2.20:3128`) can reach the `site` server.
+
+<Lab name="proxy-lb" lang="en" />
+
+**0. Prepare the lab.** Before the first deployment, generate the certificates (the next chapter
+explains what this script does), then deploy:
+
+```bash
+sh pki/make-pki.sh
+sudo containerlab deploy -t topology.clab.yml
+```
+
+The proxy installs Squid at startup: allow a minute before it answers.
+
+**1. Try without a proxy.**
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+curl -m 3 http://www.example.com
+```
+
+`Couldn't connect to server`: the workstation has no route to `203.0.113.0/24`, like a corporate
+workstation whose firewall blocks direct access.
+
+**2. Go through the proxy, over HTTP then HTTPS.**
+
+```bash
+curl -x http://192.0.2.20:3128 http://www.example.com
+curl -x http://192.0.2.20:3128 --cacert /pki/ca.crt https://www.example.com
+```
+
+The page answers, and the site says it sees the connection coming from `192.0.2.20`: the proxy, not the
+workstation. In a second terminal, watch the log:
+
+```bash
+docker exec clab-proxy-lb-proxy tail -f /var/log/squid/access.log
+```
+
+```text
+17/Oct/2026:11:41:01 +0000 192.0.2.10 - GET http://www.example.com/ 200 266 TCP_MISS/HIER_DIRECT
+17/Oct/2026:11:41:01 +0000 192.0.2.10 - CONNECT www.example.com:443 200 3761 TCP_TUNNEL/HIER_DIRECT
+```
+
+Over HTTP, the proxy sees the full URL. Over HTTPS, only `CONNECT www.example.com:443`: it is a tunnel
+(`TCP_TUNNEL`).
+
+**3. Filter.** The `squid/blocked-domains.txt` file blocks `.example.net`:
+
+```bash
+curl -x http://192.0.2.20:3128 http://games.example.net
+curl -x http://192.0.2.20:3128 https://games.example.net
+```
+
+The first command returns Squid's error page (code `403`), the second `CONNECT tunnel failed, response
+403`: domain filtering also works over HTTPS, without decrypting anything. Add `www.example.com` to the
+list, reload Squid, and check that it is blocked in turn:
+
+```bash
+docker exec clab-proxy-lb-proxy squid -f /etc/squid/lab/squid.conf -k reconfigure
+```
+
+Then remove it from the list.
+
+**4. Authenticate.** In `squid/squid.conf`, uncomment the four lines of the *Authentification* section,
+replace `http_access allow lan` with `http_access allow lan users`, and reload.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -x http://192.0.2.20:3128 http://www.example.com
+curl -x http://192.0.2.20:3128 -U alice:lab-password http://www.example.com
+```
+
+Without an account, `407`. With the `alice` account, the page shows up, and the log now holds the user
+name instead of the dash. Restore the original configuration before the next chapter.
+
+**5. Environment variables.**
+
+```bash
+export http_proxy=http://192.0.2.20:3128 https_proxy=http://192.0.2.20:3128
+curl --cacert /pki/ca.crt https://www.example.com
+curl -m 5 http://app.example.com
+export no_proxy=app.example.com
+curl http://app.example.com
+```
+
+With the first two variables, `curl` goes through the proxy for everything, including the internal
+application, and the proxy, which does not know this internal name, answers `503`. With `no_proxy`,
+`curl` goes direct to the internal application and still uses the proxy for the Internet: that is what
+the PAC file does for a browser.
+
+## Key takeaways
+
+- A proxy means **two connections**: the server only sees the proxy, and the firewall has a single device
+  to let out.
+- **Explicit**: the workstation is configured (PAC, WPAD, GPO, environment variables) and can be
+  authenticated. **Transparent**: the network diverts traffic, with no configuration, but authentication
+  is harder.
+- Over HTTPS, without inspection, the proxy only sees the **site name** (`CONNECT` and SNI), not the URL.
+- A PAC file sends internal traffic direct and the rest to the proxy; WPAD must be under control or
+  disabled.
+- Proxy logs are valuable and sensitive: users informed, restricted access, defined retention period.
+- Remote work pushes the proxy to the **cloud** (SWG, SSE), with the same principles.

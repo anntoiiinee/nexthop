@@ -71,6 +71,14 @@ export const glossary = {
       en: "Message exchanged between switches by Spanning Tree to elect the root bridge and detect loops.",
     },
   },
+  ca: {
+    term: 'CA',
+    expansion: 'Certificate Authority',
+    definition: {
+      fr: "Autorité de certification : entité de confiance qui signe les certificats. Un navigateur accepte un certificat s'il remonte, de signature en signature, jusqu'à une autorité racine qu'il connaît.",
+      en: "Certificate authority: trusted entity that signs certificates. A browser accepts a certificate if it chains, signature by signature, up to a root authority it knows.",
+    },
+  },
   cdp: {
     term: 'CDP',
     expansion: 'Cisco Discovery Protocol',
@@ -93,6 +101,14 @@ export const glossary = {
     definition: {
       fr: "Notation qui indique la taille d'un réseau par le nombre de bits du préfixe, par exemple /24, au lieu des anciennes classes A, B et C.",
       en: 'Notation that gives the size of a network as the number of prefix bits, for example /24, instead of the old A, B and C classes.',
+    },
+  },
+  ddos: {
+    term: 'DDoS',
+    expansion: 'Distributed Denial of Service',
+    definition: {
+      fr: "Attaque par déni de service distribuée : des milliers de machines envoient du trafic en même temps pour saturer un lien, un serveur ou une application.",
+      en: "Distributed denial-of-service attack: thousands of machines send traffic at once to saturate a link, a server or an application.",
     },
   },
   dhcp: {
@@ -140,6 +156,30 @@ export const glossary = {
     definition: {
       fr: "Pratique qui fait de Git la référence de l'état d'une infrastructure : chaque changement passe par un commit, relu et tracé, et un pipeline l'applique ou le constate.",
       en: "Practice that makes Git the reference for an infrastructure's state: every change goes through a reviewed, traceable commit, and a pipeline applies or records it.",
+    },
+  },
+  gslb: {
+    term: 'GSLB',
+    expansion: 'Global Server Load Balancing',
+    definition: {
+      fr: "Répartition de charge entre plusieurs sites, le plus souvent par le DNS : la réponse renvoie l'adresse du data center disponible ou le plus proche.",
+      en: "Load balancing across several sites, usually through DNS: the answer returns the address of the available or nearest data center.",
+    },
+  },
+  hsts: {
+    term: 'HSTS',
+    expansion: 'HTTP Strict Transport Security',
+    definition: {
+      fr: "En-tête HTTP qui demande au navigateur de n'utiliser que HTTPS pour ce site pendant une durée donnée, même si l'utilisateur tape http://.",
+      en: "HTTP header telling the browser to use only HTTPS for this site for a given time, even if the user types http://.",
+    },
+  },
+  http: {
+    term: 'HTTP',
+    expansion: 'Hypertext Transfer Protocol',
+    definition: {
+      fr: "Protocole du web : un client envoie une requête (méthode, chemin, en-têtes) et le serveur renvoie une réponse avec un code (200, 404…). HTTPS est HTTP chiffré par TLS.",
+      en: "The web protocol: a client sends a request (method, path, headers) and the server returns a response with a status code (200, 404…). HTTPS is HTTP encrypted with TLS.",
     },
   },
   ibgp: {
@@ -276,12 +316,43 @@ export const glossary = {
       en: "The first 3 bytes of a MAC address, assigned by the IEEE to each vendor (for example 00:1c:73 for Arista).",
     },
   },
+  owasp: {
+    term: 'OWASP',
+    expansion: 'Open Worldwide Application Security Project',
+    definition: {
+      fr: "Fondation qui publie des références libres sur la sécurité des applications web, dont le Top 10 des risques et les règles ModSecurity CRS.",
+      en: "Foundation publishing free web application security references, including the Top 10 risks and the ModSecurity CRS rules.",
+    },
+  },
+  pac: {
+    term: 'PAC',
+    expansion: 'Proxy Auto-Configuration',
+    definition: {
+      fr: "Fichier JavaScript que le navigateur télécharge pour savoir, pour chaque URL, s'il doit passer par un proxy (et lequel) ou aller en direct.",
+      en: "JavaScript file the browser downloads to decide, for each URL, whether to go through a proxy (and which one) or connect directly.",
+    },
+  },
   pdu: {
     term: 'PDU',
     expansion: 'Protocol Data Unit',
     definition: {
       fr: "Le nom de l'unité de données à chaque couche : bit (couche 1), trame (2), paquet (3), segment ou datagramme (4).",
       en: "The name of the data unit at each layer: bit (layer 1), frame (2), packet (3), segment or datagram (4).",
+    },
+  },
+  pki: {
+    term: 'PKI',
+    expansion: 'Public Key Infrastructure',
+    definition: {
+      fr: "Infrastructure à clés publiques : les autorités de certification, les règles et les outils qui émettent, renouvellent et révoquent les certificats d'une organisation.",
+      en: "Public key infrastructure: the certificate authorities, rules and tools that issue, renew and revoke an organization's certificates.",
+    },
+  },
+  proxy: {
+    term: 'Proxy',
+    definition: {
+      fr: "Intermédiaire qui reçoit une connexion à la place du destinataire et en ouvre une seconde vers lui. Il voit, filtre et journalise ce qui passe.",
+      en: "Intermediary that receives a connection in place of the destination and opens a second one to it. It sees, filters and logs what goes through.",
     },
   },
   rib: {
@@ -300,12 +371,36 @@ export const glossary = {
       en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
     },
   },
+  snat: {
+    term: 'SNAT',
+    expansion: 'Source NAT',
+    definition: {
+      fr: "Traduction de l'adresse source : l'équipement remplace l'adresse du client par la sienne, pour que la réponse du serveur revienne forcément par lui.",
+      en: "Source address translation: the device replaces the client address with its own, so the server's reply is sure to come back through it.",
+    },
+  },
+  sni: {
+    term: 'SNI',
+    expansion: 'Server Name Indication',
+    definition: {
+      fr: "Extension TLS : le client indique en clair, dès le premier message, le nom du site qu'il veut joindre. C'est ce qui permet plusieurs sites HTTPS sur une même adresse IP.",
+      en: "TLS extension: the client states in clear text, in its very first message, the name of the site it wants. It allows several HTTPS sites on the same IP address.",
+    },
+  },
   sot: {
     term: 'SoT',
     expansion: 'Source of Truth',
     definition: {
       fr: "La source de vérité : la base de données qui décrit l'état voulu du réseau (équipements, adresses, VLAN…), d'où l'on génère les configurations. NetBox est la plus connue.",
       en: "The source of truth: the database describing the intended state of the network (devices, addresses, VLANs…), from which configurations are generated. NetBox is the best known.",
+    },
+  },
+  sse: {
+    term: 'SSE',
+    expansion: 'Security Service Edge',
+    definition: {
+      fr: "Services de sécurité livrés depuis le cloud : proxy web (SWG), accès aux applications privées (ZTNA) et contrôle des applications SaaS (CASB).",
+      en: "Security services delivered from the cloud: web proxy (SWG), private application access (ZTNA) and SaaS application control (CASB).",
     },
   },
   stp: {
@@ -324,6 +419,14 @@ export const glossary = {
       en: "Virtual switch interface bound to a VLAN (interface Vlan10). It holds an IP address and acts as the gateway for the VLAN's hosts.",
     },
   },
+  swg: {
+    term: 'SWG',
+    expansion: 'Secure Web Gateway',
+    definition: {
+      fr: "Proxy web de sécurité : filtrage d'URL par catégorie, analyse antivirus, inspection TLS et journalisation de la navigation, sur site ou dans le cloud.",
+      en: "Security web proxy: URL filtering by category, antivirus scanning, TLS inspection and browsing logs, on premises or in the cloud.",
+    },
+  },
   tacacs: {
     term: 'TACACS+',
     expansion: 'Terminal Access Controller Access-Control System Plus',
@@ -340,6 +443,14 @@ export const glossary = {
       en: "Reliable layer 4 transport protocol: connection set up beforehand, acknowledgements and retransmission of lost data.",
     },
   },
+  tls: {
+    term: 'TLS',
+    expansion: 'Transport Layer Security',
+    definition: {
+      fr: "Protocole qui chiffre une connexion TCP et authentifie le serveur par un certificat. Il protège HTTPS, mais aussi LDAPS, SMTP ou les API.",
+      en: "Protocol that encrypts a TCP connection and authenticates the server with a certificate. It protects HTTPS, but also LDAPS, SMTP or APIs.",
+    },
+  },
   ttl: {
     term: 'TTL',
     expansion: 'Time To Live',
@@ -354,6 +465,14 @@ export const glossary = {
     definition: {
       fr: "Protocole de transport léger de la couche 4 : pas de connexion ni de retransmission. Utilisé par le DNS, la voix sur IP ou VXLAN.",
       en: "Lightweight layer 4 transport protocol: no connection and no retransmission. Used by DNS, voice over IP or VXLAN.",
+    },
+  },
+  vip: {
+    term: 'VIP',
+    expansion: 'Virtual IP',
+    definition: {
+      fr: "Adresse IP virtuelle portée par un load balancer (ou une paire en haute disponibilité) : les clients s'y connectent, sans connaître les serveurs derrière.",
+      en: "Virtual IP address held by a load balancer (or a high-availability pair): clients connect to it without knowing the servers behind.",
     },
   },
   vlan: {
@@ -386,6 +505,22 @@ export const glossary = {
     definition: {
       fr: "Encapsulation de trames Ethernet dans de l'UDP, pour transporter des réseaux de niveau 2 au-dessus d'un réseau IP. Jusqu'à 16 millions de segments (VNI).",
       en: 'Encapsulation of Ethernet frames in UDP, to carry layer 2 networks over an IP network. Up to 16 million segments (VNIs).',
+    },
+  },
+  waf: {
+    term: 'WAF',
+    expansion: 'Web Application Firewall',
+    definition: {
+      fr: "Pare-feu applicatif web : il analyse le contenu des requêtes HTTP (URL, paramètres, en-têtes, corps) pour bloquer les attaques contre les applications.",
+      en: "Web application firewall: it inspects HTTP request content (URL, parameters, headers, body) to block attacks against applications.",
+    },
+  },
+  wpad: {
+    term: 'WPAD',
+    expansion: 'Web Proxy Auto-Discovery',
+    definition: {
+      fr: "Mécanisme par lequel un poste trouve tout seul l'adresse du fichier PAC, par DHCP (option 252) ou par le DNS (nom wpad).",
+      en: "Mechanism letting a machine find the PAC file address on its own, through DHCP (option 252) or DNS (the wpad name).",
     },
   },
   yaml: {

@@ -8,5 +8,6 @@ import PacketFormat from '@/components/diagrams/PacketFormat.astro';
 import Bits from '@/components/diagrams/Bits.astro';
 import AddressSpace from '@/components/diagrams/AddressSpace.astro';
 import OsiModel from '@/components/diagrams/OsiModel.astro';
+import Sequence from '@/components/diagrams/Sequence.astro';
 
-export const mdxComponents = { Term, Callout, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel };
+export const mdxComponents = { Term, Callout, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel, Sequence };

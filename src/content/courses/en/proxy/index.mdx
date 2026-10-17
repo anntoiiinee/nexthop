@@ -1,0 +1,74 @@
+---
+title: "Proxy and load balancing"
+description: "Controlling outbound traffic and publishing applications: forward proxy, TLS and certificates, inspection, reverse proxy, load balancing with HAProxy and F5 BIG-IP, WAF. With a Squid, HAProxy and nginx lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [proxy, tls, load-balancing, waf, f5, haproxy, squid]
+vendor: [multi]
+order: 0
+---
+
+The firewall decides **who may talk to whom**, based on addresses and ports. It does not see much more:
+a connection to port 443 may be webmail, a software update or malware exfiltrating data. This hop is
+about the devices that work **at the application level**: they terminate the connection, read the
+<Term id="http" /> request and decide what to do with it.
+
+They exist in both directions:
+
+- **outbound**, the forward <Term id="proxy">proxy</Term> controls users' browsing: who goes where, with which
+  account, and what they downloaded;
+- **inbound**, the reverse proxy and the load balancer publish the company's applications: a single entry
+  point, several servers behind it, and a <Term id="waf" /> to filter attacks.
+
+In the middle sit <Term id="tls" /> and certificates: almost all traffic is encrypted, and none of this
+works without understanding them.
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **Forward proxy** | Choose between explicit and transparent proxy, distribute the configuration (PAC, WPAD), authenticate, filter and log |
+| **TLS, certificates and inspection** | Read a certificate chain, build an internal authority, understand and frame TLS decryption |
+| **Reverse proxy** | Publish an internal application, terminate TLS, route by host name or path, pass on the client address |
+| **Load balancing and F5 BIG-IP** | Pick an algorithm, write health checks, handle persistence and SNAT, speak the F5 vocabulary |
+| **WAF and application protection** | Understand the OWASP Top 10, tune a WAF without breaking the application, rate-limit |
+
+The chapters build on each other: the reverse proxy reuses the certificates from the TLS chapter, and
+load balancing starts from the reverse proxy.
+
+## The lab
+
+One lab serves every chapter. A workstation and a Squid proxy in the LAN, an HAProxy in front of two web
+servers in the DMZ, and an "Internet" with three public sites, all connected by an Arista cEOS switch.
+
+<Topology
+  width={720}
+  height={390}
+  groups={[
+    { x: 20, y: 20, w: 200, h: 350, label: 'LAN 192.0.2.0/26', tone: 'emerald' },
+    { x: 400, y: 20, w: 300, h: 245, label: 'DMZ 198.51.100.0/24', tone: 'sky' },
+    { x: 400, y: 280, w: 300, h: 90, label: 'Internet 203.0.113.0/24', tone: 'slate' },
+  ]}
+  nodes={[
+    { id: 'client', type: 'host', x: 120, y: 100, label: 'client', sub: '.10' },
+    { id: 'proxy', type: 'server', x: 120, y: 270, label: 'proxy', sub: 'Squid · .20', tone: 'violet' },
+    { id: 'r1', type: 'l3switch', x: 310, y: 200, label: 'r1', sub: 'cEOS' },
+    { id: 'lb', type: 'server', x: 480, y: 75, label: 'lb', sub: 'HAProxy · .10', tone: 'violet' },
+    { id: 'web1', type: 'server', x: 630, y: 110, label: 'web1', sub: '.11' },
+    { id: 'web2', type: 'server', x: 630, y: 200, label: 'web2', sub: '.12' },
+    { id: 'site', type: 'cloud', x: 580, y: 315, label: 'site', sub: '.80' },
+  ]}
+  links={[
+    { from: 'client', to: 'r1' }, { from: 'proxy', to: 'r1' },
+    { from: 'r1', to: 'lb' }, { from: 'r1', to: 'web1' }, { from: 'r1', to: 'web2' },
+    { from: 'r1', to: 'site' },
+  ]}
+  caption="The proxy-lb lab. The workstation has no route to the Internet: it can only go out through the proxy. The DMZ applications are published by HAProxy."
+/>
+
+## Prerequisites
+
+- The [Fundamentals](/en/courses/fundamentals) course: IPv4 addressing, routing, <Term id="tcp" /> and
+  <Term id="nat" />.
+- For the lab: a machine with ContainerLab, Docker, `openssl` and the Arista cEOS image, see
+  [Build your network lab](/en/tutorials/containerlab-setup).

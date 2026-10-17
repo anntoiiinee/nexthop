@@ -1,0 +1,260 @@
+---
+title: "WAF and application protection"
+description: "What a WAF protects and what it does not: the OWASP Top 10 risks, negative and positive security models, false positives and learning mode, virtual patching, rate limiting and protection against application-layer DDoS."
+pubDate: 2026-10-17
+level: intermediate
+tags: [waf, owasp, ddos, haproxy, security]
+vendor: [multi]
+order: 5
+---
+
+The reverse proxy publishes the application, the load balancer keeps it available. What remains is to
+**protect** it. A network firewall lets any allowed connection to port 443 through: it cannot tell whether
+the request contains a product name or an SQL injection. The <Term id="waf" /> (*Web Application
+Firewall*) reads the <Term id="http" /> request itself, and blocks those that look like an attack.
+
+## Where the WAF fits
+
+| | Network firewall | IPS | WAF |
+|---|---|---|---|
+| **What it reads** | Addresses, ports, session state | Packets and flows, attack signatures across many protocols | The decrypted HTTP request: URL, parameters, headers, cookies, body |
+| **It protects** | The network | Systems and services | Web applications and APIs |
+| **It needs** | Flow rules | To see the traffic (in clear or decrypted) | To terminate TLS, so to sit on the reverse proxy or right behind it |
+
+Since it must read HTTP in clear text, the WAF lives where TLS is terminated: **on the reverse proxy or
+load balancer** (F5 Advanced WAF, NetScaler, ModSecurity or Coraza added to nginx or HAProxy), on a
+dedicated device right behind it (Imperva, Fortinet FortiWeb), or **in the cloud**, in front of the site
+(Cloudflare, Akamai, AWS WAF, Azure Front Door).
+
+## What gets attacked: the OWASP Top 10
+
+<Term id="owasp" /> regularly publishes the **Top 10** most important risks for web applications. A WAF
+covers far from all of this Top 10:
+
+| Risk family | Example | What a WAF can do |
+|---|---|---|
+| **Injection** (SQL, commands, XSS) | `?id=1 UNION SELECT password FROM users` | **A lot**: it is its core business, through signatures |
+| **Broken access control** | Changing `?account=1001` to `?account=1002` to see someone else's account | **Almost nothing**: the request is perfectly normal, only the application knows who may see what |
+| **Vulnerable components** | A library with a public flaw | **A virtual patch**, while you update (see below) |
+| **Authentication failures** | Trying thousands of passwords | **Partly**: rate limiting on the login page |
+| **Security misconfiguration** | An exposed admin page or `.git` folder | **Partly**: blocking known paths |
+| **Insecure design** | A checkout flow that can be bypassed | **Nothing**: it is the application's logic |
+
+A WAF is an **additional layer of defence**, not a substitute for secure development or for updates.
+
+## Negative model, positive model
+
+| | Negative model | Positive model |
+|---|---|---|
+| **Principle** | Block what looks like a known attack | Only allow what is expected, block the rest |
+| **How** | Signatures: SQL injection, XSS, directory traversal patterns | A description of the application: existing URLs, parameters, types, lengths, methods |
+| **Strength** | Works immediately, on any application | Also blocks unknown attacks |
+| **Weakness** | Bypassable with variants; false positives on legitimate content | Long to build, to redo at every application release |
+
+In practice, both are combined. The open-source reference for the negative model is **OWASP CRS** (*Core
+Rule Set*), used by ModSecurity, Coraza and many cloud WAFs. It works with an **anomaly score**: each
+matching rule adds points, and the request is only blocked if the total exceeds a threshold. A
+**paranoia level**, from 1 to 4, enables stricter and stricter rules, at the cost of more false
+positives. For APIs, the positive model is more accessible: the API's OpenAPI schema already describes
+the valid paths and parameters, and many WAFs can import it.
+
+## False positives and learning mode
+
+The real work with a WAF is **tuning**. An SQL injection rule sees an apostrophe followed by the word
+`or`; a French-language site receives hundreds a day: *le cours de l'or* ("the price of gold"), *l'ordre
+du jour* ("the agenda"). An anti-XSS rule fires on a rich text editor sending HTML. A password containing
+`<script` is rejected.
+
+<Topology
+  width={700}
+  height={210}
+  nodes={[
+    { id: 'u', type: 'host', x: 80, y: 90, label: 'User' },
+    { id: 'waf', type: 'firewall', x: 350, y: 90, label: 'WAF', sub: 'SQLi signature', tone: 'rose' },
+    { id: 'app', type: 'server', x: 610, y: 90, label: 'Application', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'u', to: 'waf' },
+    { from: 'waf', to: 'app', style: 'blocked' },
+  ]}
+  flows={[
+    { from: 'u', to: 'waf', label: "?q=le cours de l'or", tone: 'emerald', offset: -30 },
+  ]}
+  notes={[
+    { x: 350, y: 185, text: "' or  →  looks like \"' OR 1=1\"  →  403", tone: 'rose', mono: true },
+  ]}
+  caption="A false positive: a perfectly legitimate search blocked by an SQL injection signature."
+/>
+
+Hence a step-by-step approach, for each application:
+
+1. **Detection mode** (*transparent*, *learning*, *detection only*): the WAF analyses and logs, but blocks
+   nothing. Leave it on real traffic, ideally for a full usage cycle (a month-end, a campaign).
+2. **Log review**: each alert is either a real attack or a false positive. For false positives, create
+   an **exception as narrow as possible**: disable *this rule* for *this parameter* of *this URL*, never a
+   whole family of rules on the whole site.
+3. **Blocking mode**, application by application, starting with the least critical.
+4. **Follow-up**: every new release of the application can bring new false positives. WAF tuning is part
+   of the release process.
+
+<Callout type="field">
+The scenario to avoid: a WAF switched straight to blocking, on every application, the day it is
+installed. The next day, customer service can no longer save a comment containing an apostrophe, and a
+recruitment form rejects résumés whose file name contains parentheses. Under pressure, someone disables
+the WAF "temporarily"… and it stays disabled. A few weeks of detection mode, application by application,
+cost much less.
+</Callout>
+
+## Virtual patching
+
+When a critical flaw is published in a widespread component, the delay between publication and the
+first attacks is counted in hours, and updating every application in days or weeks. The WAF can block
+exploitation **in the meantime**: this is *virtual patching*. In December 2021, during the Log4Shell flaw
+in the Java Log4j library, WAF vendors published within hours rules blocking `${jndi:` patterns, and many
+companies held on this way while they inventoried and fixed their applications. Virtual patching does not
+replace the update: attackers quickly found encoded variants that slipped past the first rules.
+
+## Rate limiting
+
+Many attacks contain no malicious payload at all: they are normal requests, **in too large numbers**.
+Trying thousands of passwords on the login page, scraping a whole catalogue, saturating an expensive
+search. **Rate limiting** counts requests per client and per period, and refuses the excess with the
+`429 Too Many Requests` code.
+
+- **Count by what?** The IP address is the simplest, but all employees of a company behind the same NAT
+  share one address. Combine with the session, the user account, or a client fingerprint.
+- **Where?** Different thresholds per URL: a login page has no reason to receive 20 attempts a minute
+  from the same client, a catalogue page can receive far more.
+- **And bots?** *Bot management* solutions tell browsers from scripts (JavaScript challenge, behaviour),
+  to slow robots down without bothering humans.
+
+## Denial-of-service attacks
+
+A <Term id="ddos" /> aims to make the service unavailable. There are two families, which are not handled
+in the same place:
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 200, y: 20, w: 200, h: 260, label: 'Carrier or cloud', tone: 'violet' },
+    { x: 420, y: 20, w: 280, h: 260, label: 'Company', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'bots', type: 'cloud', x: 90, y: 150, label: 'Botnet', sub: 'thousands of sources', tone: 'rose' },
+    { id: 'scrub', type: 'server', x: 300, y: 150, label: 'Scrubbing', sub: 'cleaning center', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 490, y: 150, label: 'Firewall', sub: '10 Gb/s link' },
+    { id: 'waf', type: 'server', x: 630, y: 150, label: 'WAF / LB', tone: 'sky' },
+  ]}
+  links={[
+    { from: 'bots', to: 'scrub', tone: 'rose' },
+    { from: 'scrub', to: 'fw', tone: 'emerald' },
+    { from: 'fw', to: 'waf', tone: 'emerald' },
+  ]}
+  notes={[
+    { x: 300, y: 250, text: 'volumetric: L3 / L4', tone: 'violet' },
+    { x: 630, y: 250, text: 'application: L7', tone: 'sky' },
+  ]}
+  caption="A volumetric attack must be absorbed before it reaches the company's link. An application-layer attack looks like normal traffic and is handled at the WAF."
+/>
+
+- **Volumetric** (layers 3 and 4): flooding the link or the devices with packets (UDP and SYN floods,
+  amplification through badly configured DNS or NTP servers). These attacks reach hundreds of Gb/s: no
+  device installed behind a 10 Gb/s link can absorb them, since the link is saturated first. Protection
+  happens **upstream**, at the carrier or an anti-DDoS provider, which diverts traffic to **scrubbing
+  centers** and only sends back the legitimate traffic.
+- **Application-layer** (layer 7): valid HTTP requests, but many of them, chosen to be expensive for the
+  server (searches, uncached pages). The volume is low, the traffic looks like real users: it is the job
+  of the WAF, rate limiting, bot challenges and a CDN's cache.
+
+## In the lab
+
+HAProxy is not a WAF, but it can rate-limit and reject requests based on their content. Enough to
+experiment with signatures, and above all with their limits. We start from the previous chapter's
+configuration (HTTPS enabled).
+
+<Lab name="proxy-lb" lang="en" />
+
+**1. Add the protections.** In `haproxy/haproxy.cfg`, add this block in `frontend fe_app`, just before the
+`# Routage par nom d'hôte` line:
+
+```text title="haproxy/haproxy.cfg, in frontend fe_app"
+    # Rate limiting: more than 20 requests in 10 seconds per source address → 429
+    stick-table type ip size 100k expire 30s store http_req_rate(10s)
+    http-request track-sc0 src
+    http-request deny deny_status 429 if { sc_http_req_rate(0) gt 20 }
+
+    # Simple signatures (negative model): this is not a real WAF
+    acl attack_traversal path,url_dec -m sub ../
+    acl attack_sqli      query,url_dec -m reg -i "(union[[:space:]]+select|'[[:space:]]*or[[:space:]])"
+    acl attack_xss       query,url_dec -m sub -i <script
+    http-request deny deny_status 403 if attack_traversal || attack_sqli || attack_xss
+```
+
+- the `stick-table` keeps, for each source address, the number of requests over the last 10 seconds;
+- `url_dec` decodes the URL before comparing: without it, `%2e%2e/` would get through instead of `../`;
+- regular expressions are in double quotes, because HAProxy interprets the apostrophe.
+
+Reload with `docker kill -s HUP clab-proxy-lb-lb`.
+
+**2. Send attacks.**
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+for u in "/" \
+  "/static/../../etc/passwd" \
+  "/%2e%2e/%2e%2e/etc/passwd" \
+  "/produits?id=1%20UNION%20SELECT%20password%20FROM%20users" \
+  "/login?user=admin'%20OR%20'1'='1" \
+  "/recherche?q=%3Cscript%3Ealert(1)%3C/script%3E"; do
+  printf '%-60s ' "$u"; curl -s --path-as-is -o /dev/null -w '%{http_code}\n' --cacert /pki/ca.crt "https://app.example.com$u"
+done
+```
+
+```text
+/                                                            200
+/static/../../etc/passwd                                     403
+/%2e%2e/%2e%2e/etc/passwd                                    403
+/produits?id=1%20UNION%20SELECT%20password%20FROM%20users    403
+/login?user=admin'%20OR%20'1'='1                             403
+/recherche?q=%3Cscript%3Ealert(1)%3C/script%3E               403
+```
+
+The `--path-as-is` option stops `curl` from simplifying the `../` itself before sending.
+
+**3. The false positive.**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --cacert /pki/ca.crt "https://app.example.com/recherche?q=le%20cours%20de%20l'or%20aujourd'hui"
+curl -s -o /dev/null -w '%{http_code}\n' --cacert /pki/ca.crt "https://app.example.com/recherche?q=union%20des%20consommateurs"
+```
+
+The search for today's gold price is blocked (`403`): `'or ` matches the signature. *Union des
+consommateurs* gets through, because the signature requires `select` after `union`. To fix the false
+positive without opening everything, you would need a narrow exception (this rule, this parameter, this
+URL): that is the whole tuning job of a real WAF. OWASP CRS rules, much finer, avoid this specific case
+thanks to their anomaly score, but have false positives of their own.
+
+**4. Rate limiting.**
+
+```bash
+for i in $(seq 1 30); do curl -s -o /dev/null -w '%{http_code} ' --cacert /pki/ca.crt https://app.example.com/; done; echo
+```
+
+After at most twenty `200` (fewer if you just sent other requests: they count in the 10-second window
+too), HAProxy answers `429`. Wait about ten seconds: the counter goes down, and access comes back.
+HAProxy's log (`docker logs clab-proxy-lb-lb`) records every refusal.
+
+## Key takeaways
+
+- The WAF reads the decrypted **HTTP request**: it lives on the reverse proxy, right behind it, or in the
+  cloud.
+- It is effective against **injection** and for **virtual patching**, almost useless against **access
+  control** and **design** flaws.
+- The **negative model** (signatures, OWASP CRS and its anomaly score) and the **positive model** (what is
+  expected, OpenAPI schema for APIs) are combined.
+- Always start in **detection mode**, fix false positives with narrow exceptions, then block application
+  by application.
+- **Rate limiting** handles attacks without a malicious payload (passwords, scraping).
+- **Volumetric** DDoS: upstream, at the carrier or a scrubbing service. **Application-layer** DDoS: WAF,
+  rate limiting, CDN.
