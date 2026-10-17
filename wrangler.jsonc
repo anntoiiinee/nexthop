@@ -5,7 +5,8 @@
     "directory": "./dist",
     "not_found_handling": "404-page"
   },
-  // Requis pour les déploiements de prévisualisation (branches autres que main, ex. les PR).
-  // Peut rester vide : assets et compatibilité restent au niveau racine.
+  "observability": {
+    "enabled": true
+  },
   "previews": {}
 }
