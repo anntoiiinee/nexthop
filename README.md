@@ -29,7 +29,7 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 
 - **Tutoriels et formations** en MDX, bilingues, avec filtres par niveau et par technologie (`/tutoriels?tech=arista`).
 - **Outils interactifs**, 100 % côté navigateur : calculateur de sous-réseau, découpeur VLSM (plan partageable par URL, export CSV), quiz de subnetting, décodeur de certificat X.509 / CSR.
-- **Partage** : boutons LinkedIn, X, Bluesky, Facebook, Reddit, WhatsApp, Telegram, e-mail, copie du lien et partage natif (mobile), sans script tiers.
+- **Partage** : boutons LinkedIn, X, Bluesky, Reddit, e-mail, copie du lien et partage natif (mobile), sans script tiers.
 - **Glossaire** : `<Term id="nat" />` souligne le terme en pointillés et affiche sa définition au survol.
 - **Labs ContainerLab** : topologies dans `public/labs/`, schéma généré automatiquement, commande `curl` prête à copier.
 - **Recherche** Pagefind (Ctrl/⌘+K), limitée à la langue de la page.
