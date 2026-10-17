@@ -1,0 +1,291 @@
+---
+// Décodeur de certificats X.509 et de CSR. Tout se passe dans le navigateur : rien n'est envoyé.
+import type { Lang } from '@/i18n/ui';
+import sample from '@/data/cert-sample.pem?raw';
+
+interface Props { lang?: Lang; }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Décodeur de certificats',
+    placeholder: '-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----\n\nCollez un certificat, une chaîne ou une CSR (PEM), ou déposez un fichier .pem, .crt, .cer, .der, .csr',
+    sample: 'Exemple',
+    open: 'Ouvrir un fichier',
+    clear: 'Effacer',
+    privacy: 'Le décodage se fait entièrement dans votre navigateur : rien n’est envoyé sur le réseau.',
+    certificate: 'Certificat',
+    csr: 'Demande de certificat (CSR)',
+    of: 'sur',
+    issuedByNext: 'émis par le certificat suivant de la chaîne',
+    fields: {
+      subject: 'Sujet', issuer: 'Émetteur', san: 'Noms alternatifs (SAN)', validity: 'Validité',
+      publicKey: 'Clé publique', signature: 'Signature', serial: 'Numéro de série', keyUsage: 'Usages de la clé',
+      extKeyUsage: 'Usages étendus', basicConstraints: 'Contraintes de base', ski: 'Identifiant de clé du sujet',
+      aki: 'Identifiant de clé de l’autorité', ocsp: 'OCSP', caIssuers: 'Certificat de l’émetteur', crl: 'Liste de révocation (CRL)',
+      other: 'Autres extensions', sha256: 'Empreinte SHA-256', sha1: 'Empreinte SHA-1', version: 'Version',
+    },
+    from: 'du', to: 'au', days: 'jours',
+    ca: 'autorité de certification (CA)', notCa: 'certificat final (pas une CA)', pathLen: 'longueur de chaîne max.',
+    status: {
+      valid: 'Valide, encore {n} jours', expired: 'Expiré depuis {n} jours', notYet: 'Pas encore valide (dans {n} jours)',
+    },
+    selfSigned: 'Auto-signé : l’émetteur est le sujet lui-même.',
+    warnings: {
+      expiresSoon: 'Expire dans moins de 30 jours : pensez au renouvellement.',
+      weakKey: 'Clé RSA de moins de 2048 bits : trop faible aujourd’hui.',
+      weakSig: 'Signature SHA-1 ou MD5 : refusée par les navigateurs et la plupart des équipements.',
+      noSan: 'Aucun SAN : les navigateurs ignorent le CN depuis 2017, le nom doit figurer dans les SAN.',
+      longValidity: 'Durée de {n} jours : les certificats TLS publics sont limités à 200 jours depuis mars 2026 (398 auparavant). Une durée plus longue n’est possible qu’avec une autorité interne.',
+    },
+    errors: {
+      'no-pem': 'Aucun certificat reconnu. Collez un bloc PEM complet, avec ses lignes BEGIN et END.',
+      'private-key': 'Une clé privée a été détectée et ignorée. Ne collez jamais une clé privée dans un outil en ligne, même celui-ci.',
+      unsupported: 'Type de bloc non pris en charge :',
+      invalid: 'Bloc illisible :',
+    },
+  },
+  en: {
+    title: 'Certificate decoder',
+    placeholder: '-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----\n\nPaste a certificate, a chain or a CSR (PEM), or drop a .pem, .crt, .cer, .der, .csr file',
+    sample: 'Example',
+    open: 'Open a file',
+    clear: 'Clear',
+    privacy: 'Decoding happens entirely in your browser: nothing is sent over the network.',
+    certificate: 'Certificate',
+    csr: 'Certificate signing request (CSR)',
+    of: 'of',
+    issuedByNext: 'issued by the next certificate in the chain',
+    fields: {
+      subject: 'Subject', issuer: 'Issuer', san: 'Subject alternative names (SAN)', validity: 'Validity',
+      publicKey: 'Public key', signature: 'Signature', serial: 'Serial number', keyUsage: 'Key usage',
+      extKeyUsage: 'Extended key usage', basicConstraints: 'Basic constraints', ski: 'Subject key identifier',
+      aki: 'Authority key identifier', ocsp: 'OCSP', caIssuers: 'Issuer certificate', crl: 'Revocation list (CRL)',
+      other: 'Other extensions', sha256: 'SHA-256 fingerprint', sha1: 'SHA-1 fingerprint', version: 'Version',
+    },
+    from: 'from', to: 'to', days: 'days',
+    ca: 'certificate authority (CA)', notCa: 'end-entity certificate (not a CA)', pathLen: 'max. path length',
+    status: {
+      valid: 'Valid, {n} days left', expired: 'Expired {n} days ago', notYet: 'Not valid yet (in {n} days)',
+    },
+    selfSigned: 'Self-signed: the issuer is the subject itself.',
+    warnings: {
+      expiresSoon: 'Expires in less than 30 days: plan the renewal.',
+      weakKey: 'RSA key under 2048 bits: too weak today.',
+      weakSig: 'SHA-1 or MD5 signature: rejected by browsers and most devices.',
+      noSan: 'No SAN: browsers have ignored the CN since 2017, the name must be in the SANs.',
+      longValidity: '{n}-day lifetime: public TLS certificates are limited to 200 days since March 2026 (398 before). A longer lifetime is only possible with an internal CA.',
+    },
+    errors: {
+      'no-pem': 'No certificate recognized. Paste a complete PEM block, with its BEGIN and END lines.',
+      'private-key': 'A private key was detected and ignored. Never paste a private key into an online tool, not even this one.',
+      unsupported: 'Unsupported block type:',
+      invalid: 'Unreadable block:',
+    },
+  },
+}[lang];
+---
+<div
+  data-cert-decoder
+  data-lang={lang}
+  data-i18n={JSON.stringify(copy)}
+  data-sample={sample}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.title}</span>
+    <div class="flex flex-wrap gap-2">
+      <button type="button" data-sample-btn class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400">{copy.sample}</button>
+      <label class="cursor-pointer rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium transition hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:hover:text-sky-400">
+        {copy.open}
+        <input type="file" data-file accept=".pem,.crt,.cer,.der,.csr,.req,.txt" class="sr-only" />
+      </label>
+      <button type="button" data-clear class="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 transition hover:text-rose-600">{copy.clear}</button>
+    </div>
+  </div>
+
+  <textarea
+    data-input
+    rows="9"
+    spellcheck="false"
+    autocomplete="off"
+    placeholder={copy.placeholder}
+    aria-label={copy.title}
+    class="mt-4 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-xs text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+  ></textarea>
+  <p class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+    <svg viewBox="0 0 24 24" class="size-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+    {copy.privacy}
+  </p>
+
+  <div data-errors class="mt-4 space-y-2" aria-live="polite"></div>
+  <div data-results class="mt-4 space-y-6"></div>
+</div>
+
+<script>
+  import { decodePem, decodeFile, formatName, commonName, type DecodedCert, type DecodeResult } from '../lib/x509';
+
+  const DAY = 86_400_000;
+  const fmt = (s: string, n: number) => s.replace('{n}', String(n));
+
+  async function fingerprint(der: Uint8Array, algo: 'SHA-256' | 'SHA-1') {
+    const digest = new Uint8Array(await crypto.subtle.digest(algo, der));
+    return [...digest].map((b) => b.toString(16).padStart(2, '0')).join(':').toUpperCase();
+  }
+
+  // Petite fabrique d'éléments : tout le contenu du certificat passe par textContent, jamais par innerHTML
+  function el(tag: string, className = '', textContent?: string) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (textContent !== undefined) node.textContent = textContent;
+    return node;
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-cert-decoder]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const locale = root.dataset.lang === 'en' ? 'en-US' : 'fr-FR';
+    const input = root.querySelector<HTMLTextAreaElement>('[data-input]')!;
+    const results = root.querySelector<HTMLElement>('[data-results]')!;
+    const errorsBox = root.querySelector<HTMLElement>('[data-errors]')!;
+    const date = (d: Date) => d.toLocaleString(locale, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC';
+
+    function field(dl: HTMLElement, label: string, value: string | string[] | Node | undefined, mono = false) {
+      if (value === undefined || (Array.isArray(value) && value.length === 0) || value === '') return;
+      const wrap = el('div', 'min-w-0');
+      wrap.append(el('dt', 'text-xs text-slate-500', label));
+      const dd = el('dd', `mt-0.5 break-words text-sm text-slate-900 dark:text-white ${mono ? 'font-mono text-xs' : ''}`);
+      if (value instanceof Node) dd.append(value);
+      else if (Array.isArray(value)) {
+        const list = el('div', 'flex flex-wrap gap-1.5');
+        value.forEach((v) => list.append(el('span', 'rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs dark:bg-slate-800', v)));
+        dd.append(list);
+      } else dd.textContent = value;
+      wrap.append(dd);
+      dl.append(wrap);
+    }
+
+    function warnings(c: DecodedCert): string[] {
+      const out: string[] = [];
+      const now = Date.now();
+      if (c.notAfter && c.notAfter.getTime() > now && c.notAfter.getTime() - now < 30 * DAY) out.push(t.warnings.expiresSoon);
+      if (c.publicKey.algorithm === 'RSA' && (c.publicKey.size ?? 0) < 2048) out.push(t.warnings.weakKey);
+      if (/SHA-1|MD5/.test(c.signatureAlgorithm)) out.push(t.warnings.weakSig);
+      const isServer = c.extKeyUsage.includes('serverAuth') || c.kind === 'csr' || (!c.basicConstraints?.ca && !c.selfSigned);
+      if (isServer && !c.basicConstraints?.ca && !c.san.some((s) => s.startsWith('DNS:') || s.startsWith('IP:'))) out.push(t.warnings.noSan);
+      if (c.notBefore && c.notAfter && !c.basicConstraints?.ca && c.extKeyUsage.includes('serverAuth')) {
+        const days = Math.round((c.notAfter.getTime() - c.notBefore.getTime()) / DAY);
+        if (days > 200) out.push(fmt(t.warnings.longValidity, days));
+      }
+      return out;
+    }
+
+    function card(c: DecodedCert, index: number, total: number, next?: DecodedCert): HTMLElement {
+      const box = el('article', 'overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950');
+
+      // En-tête : type, nom, statut
+      const head = el('header', 'flex flex-wrap items-center gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800');
+      head.append(el('span', 'rounded-full bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
+        `${c.kind === 'csr' ? t.csr : t.certificate}${total > 1 ? ` · ${index + 1} ${t.of} ${total}` : ''}`));
+      head.append(el('h3', 'min-w-0 flex-1 break-words font-semibold text-slate-900 dark:text-white', commonName(c.subject) ?? formatName(c.subject)));
+      if (c.notBefore && c.notAfter) {
+        const now = Date.now();
+        let cls = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300';
+        let label = fmt(t.status.valid, Math.ceil((c.notAfter.getTime() - now) / DAY));
+        if (c.notAfter.getTime() < now) { cls = 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'; label = fmt(t.status.expired, Math.floor((now - c.notAfter.getTime()) / DAY)); }
+        else if (c.notBefore.getTime() > now) { cls = 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'; label = fmt(t.status.notYet, Math.ceil((c.notBefore.getTime() - now) / DAY)); }
+        head.append(el('span', `rounded-full px-2.5 py-1 text-xs font-semibold ${cls}`, label));
+      }
+      box.append(head);
+
+      // Alertes
+      const notes = warnings(c);
+      if (notes.length || c.selfSigned || next) {
+        const ul = el('ul', 'space-y-1 border-b border-slate-200 bg-amber-50/60 px-5 py-3 text-sm dark:border-slate-800 dark:bg-amber-500/5');
+        notes.forEach((w) => ul.append(el('li', 'text-amber-800 dark:text-amber-300', `⚠ ${w}`)));
+        if (c.selfSigned) ul.append(el('li', 'text-slate-600 dark:text-slate-400', `ℹ ${t.selfSigned}`));
+        if (next) ul.append(el('li', 'text-slate-600 dark:text-slate-400', `↳ ${t.issuedByNext}`));
+        box.append(ul);
+      }
+
+      // Champs
+      const dl = el('dl', 'grid gap-x-6 gap-y-4 px-5 py-5 sm:grid-cols-2');
+      field(dl, t.fields.subject, formatName(c.subject));
+      if (c.kind === 'certificate') field(dl, t.fields.issuer, formatName(c.issuer));
+      field(dl, t.fields.san, c.san);
+      if (c.notBefore && c.notAfter) {
+        const days = Math.round((c.notAfter.getTime() - c.notBefore.getTime()) / DAY);
+        field(dl, t.fields.validity, `${t.from} ${date(c.notBefore)} ${t.to} ${date(c.notAfter)} (${days} ${t.days})`);
+      }
+      field(dl, t.fields.publicKey, c.publicKey.summary);
+      field(dl, t.fields.signature, c.signatureAlgorithm);
+      field(dl, t.fields.serial, c.serial, true);
+      field(dl, t.fields.keyUsage, c.keyUsage);
+      field(dl, t.fields.extKeyUsage, c.extKeyUsage);
+      if (c.basicConstraints) {
+        field(dl, t.fields.basicConstraints, c.basicConstraints.ca
+          ? `${t.ca}${c.basicConstraints.pathLen !== undefined ? ` · ${t.pathLen} ${c.basicConstraints.pathLen}` : ''}`
+          : t.notCa);
+      }
+      field(dl, t.fields.ski, c.subjectKeyId, true);
+      field(dl, t.fields.aki, c.authorityKeyId, true);
+      field(dl, t.fields.ocsp, c.ocsp);
+      field(dl, t.fields.caIssuers, c.caIssuers);
+      field(dl, t.fields.crl, c.crl);
+      field(dl, t.fields.other, c.otherExtensions);
+      field(dl, t.fields.version, `v${c.version}`);
+      const sha256 = el('span', '', '…');
+      const sha1 = el('span', '', '…');
+      field(dl, t.fields.sha256, sha256, true);
+      field(dl, t.fields.sha1, sha1, true);
+      fingerprint(c.der, 'SHA-256').then((v) => (sha256.textContent = v));
+      fingerprint(c.der, 'SHA-1').then((v) => (sha1.textContent = v));
+      box.append(dl);
+      return box;
+    }
+
+    function render({ items, errors }: DecodeResult) {
+      errorsBox.replaceChildren(...errors.map((code) => {
+        const [key, detail] = code.split(/:(.*)/s);
+        const message = detail !== undefined ? `${t.errors[key]} ${detail}` : t.errors[key] ?? code;
+        return el('p', 'rounded-lg bg-rose-50 px-4 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-300', message);
+      }));
+      results.replaceChildren(...items.map((c, i) => {
+        const next = items[i + 1];
+        const chained = next && formatName(c.issuer) === formatName(next.subject) ? next : undefined;
+        return card(c, i, items.length, chained);
+      }));
+    }
+
+    let timer: number | undefined;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => render(input.value.trim() ? decodePem(input.value) : { items: [], errors: [] }), 150);
+    });
+
+    async function loadFile(file: File) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const text = new TextDecoder().decode(bytes);
+      input.value = text.includes('-----BEGIN') ? text : `(${file.name} · DER)`;
+      render(decodeFile(bytes));
+    }
+    root.querySelector<HTMLInputElement>('[data-file]')!.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) loadFile(file);
+    });
+    input.addEventListener('dragover', (e) => e.preventDefault());
+    input.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (file) loadFile(file);
+    });
+    root.querySelector('[data-sample-btn]')!.addEventListener('click', () => {
+      input.value = root.dataset.sample!;
+      render(decodePem(input.value));
+    });
+    root.querySelector('[data-clear]')!.addEventListener('click', () => {
+      input.value = '';
+      render({ items: [], errors: [] });
+      input.focus();
+    });
+  });
+</script>
