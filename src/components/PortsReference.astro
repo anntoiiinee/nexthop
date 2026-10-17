@@ -1,0 +1,180 @@
+---
+// Référence ports et protocoles : liste rendue au build (lisible sans JavaScript et indexée),
+// filtrée côté navigateur par recherche et par catégorie. L'état est conservé dans l'URL (?q=…&cat=…).
+import type { Lang } from '@/i18n/ui';
+import { ports, portCategories, formatNumber, type PortCategory, type Transport } from '@/data/ports';
+import Term from './Term.astro';
+
+interface Props { lang?: Lang; }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    label: 'Rechercher un port ou un protocole',
+    placeholder: '179, ssh, udp 53, 0x88cc, multicast…',
+    all: 'Tout',
+    count: (n: number) => `${n} protocole${n > 1 ? 's' : ''}`,
+    empty: 'Aucun résultat. Essayez un numéro seul (443) ou un nom (radius).',
+    cleartext: 'en clair',
+    unofficial: 'par défaut, non IANA',
+    transport: { tcp: 'TCP', udp: 'UDP', ip: 'Protocole IP', eth: 'EtherType', llc: 'LLC' } as Record<Transport, string>,
+    categories: {
+      basics: 'Fondamentaux', layer2: 'Couche 2', routing: 'Routage et contrôle', overlay: 'Redondance et encapsulation',
+      admin: 'Administration', aaa: 'Authentification', services: "Services d'infrastructure",
+      monitoring: 'Supervision et journaux', vpn: 'VPN et IPsec', apps: 'Applications courantes',
+    } as Record<PortCategory, string>,
+  },
+  en: {
+    label: 'Search a port or protocol',
+    placeholder: '179, ssh, udp 53, 0x88cc, multicast…',
+    all: 'All',
+    count: (n: number) => `${n} protocol${n > 1 ? 's' : ''}`,
+    empty: 'No results. Try a number alone (443) or a name (radius).',
+    cleartext: 'cleartext',
+    unofficial: 'default, not IANA',
+    transport: { tcp: 'TCP', udp: 'UDP', ip: 'IP protocol', eth: 'EtherType', llc: 'LLC' } as Record<Transport, string>,
+    categories: {
+      basics: 'Fundamentals', layer2: 'Layer 2', routing: 'Routing and control', overlay: 'Redundancy and encapsulation',
+      admin: 'Management', aaa: 'Authentication', services: 'Infrastructure services',
+      monitoring: 'Monitoring and logs', vpn: 'VPN and IPsec', apps: 'Common applications',
+    } as Record<PortCategory, string>,
+  },
+}[lang];
+
+const groups = portCategories.map((cat) => ({ cat, items: ports.filter((p) => p.category === cat) }));
+
+const chip = 'rounded-full border px-3 py-1 text-xs font-medium transition border-slate-300 text-slate-600 hover:border-sky-400 hover:text-sky-600 aria-pressed:border-sky-500 aria-pressed:bg-sky-500 aria-pressed:text-white dark:border-slate-700 dark:text-slate-400 dark:hover:text-sky-400 dark:aria-pressed:text-white';
+---
+<div
+  data-ports
+  data-count-labels={JSON.stringify([copy.count(1), copy.count(2)].map((s) => s.replace(/\d+/, '{n}')))}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <label class="block">
+    <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.label}</span>
+    <input
+      type="search"
+      spellcheck="false"
+      autocomplete="off"
+      placeholder={copy.placeholder}
+      data-input
+      class="mt-2 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+    />
+  </label>
+
+  <div class="mt-4 flex flex-wrap gap-2" role="group">
+    <button type="button" data-cat="" aria-pressed="true" class={chip}>{copy.all}</button>
+    {portCategories.map((cat) => (
+      <button type="button" data-cat={cat} aria-pressed="false" class={chip}>{copy.categories[cat]}</button>
+    ))}
+  </div>
+
+  <p data-count aria-live="polite" class="mt-4 text-xs text-slate-500">{copy.count(ports.length)}</p>
+  <p data-empty hidden class="mt-6 text-sm text-slate-600 dark:text-slate-400">{copy.empty}</p>
+
+  {groups.map(({ cat, items }) => (
+    <section data-group={cat} class="mt-6">
+      <h3 class="font-mono text-xs font-medium uppercase tracking-widest text-slate-500">{copy.categories[cat]}</h3>
+      <ul class="mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950">
+        {items.map((p) => {
+          const labels = p.on.map(([tr, n]) => `${copy.transport[tr]} ${formatNumber(tr, n)}`);
+          const search = [p.name, p.expansion, p.description[lang], p.note?.[lang], copy.categories[cat], ...labels, p.ref, p.cleartext && copy.cleartext, p.unofficial && copy.unofficial]
+            .filter(Boolean).join(' ').toLowerCase();
+          return (
+            <li
+              data-entry
+              data-cat={cat}
+              data-on={p.on.map(([tr, n]) => `${tr}:${n}`).join(' ')}
+              data-search={search}
+              class="grid gap-x-4 gap-y-2 p-4 sm:grid-cols-[9.5rem_1fr]"
+            >
+              <div class="flex flex-wrap content-start gap-1.5">
+                {labels.map((label) => (
+                  <span class="rounded bg-sky-50 px-2 py-0.5 font-mono text-xs font-semibold text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">{label}</span>
+                ))}
+              </div>
+              <div class="min-w-0">
+                <p class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span class="font-semibold text-slate-900 dark:text-white">
+                    {p.term ? <Term id={p.term} lang={lang}>{p.name}</Term> : p.name}
+                  </span>
+                  {p.expansion && <span class="text-xs text-slate-500">{p.expansion}</span>}
+                  {p.cleartext && <span class="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{copy.cleartext}</span>}
+                  {p.unofficial && <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">{copy.unofficial}</span>}
+                </p>
+                <p class="mt-1 text-sm text-slate-600 dark:text-slate-400">{p.description[lang]}</p>
+                {p.note && (
+                  <p class="mt-1 flex gap-2 text-sm text-amber-700 dark:text-amber-300"><span aria-hidden="true">▸</span><span>{p.note[lang]}</span></p>
+                )}
+                {p.ref && <p class="mt-1 font-mono text-xs text-slate-400">{p.ref}</p>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  ))}
+</div>
+
+<script>
+  // « tcp 179 », « 179/tcp », « udp:53 », « ip 89 », « 0x88cc » ou « 443 » : recherche par numéro ;
+  // sinon, chaque mot doit apparaître dans le nom, la description ou la note.
+  const parseNumber = (q: string) => {
+    const m = q.match(/^(?:(tcp|udp|ip)[\s/:]*)?(0x[0-9a-f]+|\d+)(?:[\s/:]*(tcp|udp))?$/);
+    if (!m) return null;
+    const hex = m[2].startsWith('0x');
+    return { transport: m[1] ?? m[3], hex, n: hex ? parseInt(m[2], 16) : Number(m[2]) };
+  };
+
+  document.querySelectorAll<HTMLElement>('[data-ports]').forEach((root) => {
+    const input = root.querySelector<HTMLInputElement>('[data-input]')!;
+    const chips = [...root.querySelectorAll<HTMLButtonElement>('button[data-cat]')];
+    const entries = [...root.querySelectorAll<HTMLElement>('[data-entry]')];
+    const groups = [...root.querySelectorAll<HTMLElement>('[data-group]')];
+    const count = root.querySelector<HTMLElement>('[data-count]')!;
+    const [one, many] = JSON.parse(root.dataset.countLabels!) as string[];
+    const empty = root.querySelector<HTMLElement>('[data-empty]')!;
+
+    const params = new URLSearchParams(location.search);
+    let cat = params.get('cat') ?? '';
+    if (!chips.some((c) => c.dataset.cat === cat)) cat = '';
+    input.value = params.get('q') ?? '';
+
+    const matches = (el: HTMLElement, q: string) => {
+      if (!q) return true;
+      const num = parseNumber(q);
+      if (num) {
+        return el.dataset.on!.split(' ').some((pair) => {
+          const [tr, n] = pair.split(':');
+          if (Number(n) !== num.n) return false;
+          if (num.transport) return tr === num.transport;
+          return num.hex || (tr !== 'eth' && tr !== 'llc'); // « 2048 » ne doit pas trouver l'EtherType 0x0800
+        });
+      }
+      return q.split(/\s+/).every((word) => el.dataset.search!.includes(word));
+    };
+
+    const update = () => {
+      const q = input.value.trim().toLowerCase();
+      let visible = 0;
+      for (const el of entries) {
+        const show = (!cat || el.dataset.cat === cat) && matches(el, q);
+        el.hidden = !show;
+        if (show) visible++;
+      }
+      for (const g of groups) g.hidden = !g.querySelector('[data-entry]:not([hidden])');
+      for (const c of chips) c.setAttribute('aria-pressed', String(c.dataset.cat === cat));
+      count.textContent = (visible === 1 ? one : many).replace('{n}', String(visible));
+      empty.hidden = visible > 0;
+
+      const url = new URL(location.href);
+      if (q) url.searchParams.set('q', input.value.trim()); else url.searchParams.delete('q');
+      if (cat) url.searchParams.set('cat', cat); else url.searchParams.delete('cat');
+      history.replaceState(null, '', url);
+    };
+
+    input.addEventListener('input', update);
+    chips.forEach((c) => c.addEventListener('click', () => { cat = c.dataset.cat!; update(); }));
+    update();
+  });
+</script>

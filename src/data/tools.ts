@@ -4,6 +4,7 @@ import SubnetCalculator from '@/components/SubnetCalculator.astro';
 import SubnetQuiz from '@/components/SubnetQuiz.astro';
 import VlsmPlanner from '@/components/VlsmPlanner.astro';
 import CertDecoder from '@/components/CertDecoder.astro';
+import PortsReference from '@/components/PortsReference.astro';
 
 export interface Tool {
   slug: string;                                  // segment d'URL, identique en FR et EN
@@ -137,6 +138,36 @@ export const tools: Tool[] = [
     },
     tags: ['tls', 'pki', 'x509', 'security'],
     component: CertDecoder,
+  },
+  {
+    slug: 'ports-protocols',
+    badge: ':179',
+    title: {
+      fr: 'Référence ports et protocoles',
+      en: 'Ports and protocols reference',
+    },
+    description: {
+      fr: 'Le port ou le numéro de protocole de BGP, OSPF, VXLAN, IPsec, RADIUS, syslog et des autres protocoles réseau, avec une recherche par numéro ou par nom.',
+      en: 'The port or protocol number of BGP, OSPF, VXLAN, IPsec, RADIUS, syslog and other network protocols, searchable by number or by name.',
+    },
+    howto: {
+      fr: [
+        'Cherchez par numéro (179, 4789), par transport et numéro (udp 53, 179/tcp) ou par nom (radius, ntp). Les EtherTypes se cherchent en hexadécimal (0x88cc).',
+        'Certains protocoles n’ont pas de port : OSPF, ESP ou VRRP sont des protocoles IP à part entière (numéro dans l’en-tête IP), LLDP et LACP sont reconnus par leur EtherType, IS-IS et STP voyagent en LLC. Une règle « TCP/UDP » ne les laisse donc pas passer.',
+        'Le badge « en clair » signale un protocole qui transporte identifiants ou données sans chiffrement. Le badge « par défaut, non IANA » signale un port choisi par un logiciel, qui peut changer d’une installation à l’autre.',
+        'La recherche et la catégorie sont conservées dans l’adresse de la page : copiez-la pour partager un filtre.',
+        'Le registre officiel est celui de l’IANA (Service Name and Transport Protocol Port Number Registry). En cas de doute sur un équipement, sa documentation fait foi.',
+      ],
+      en: [
+        'Search by number (179, 4789), by transport and number (udp 53, 179/tcp) or by name (radius, ntp). EtherTypes are searched in hexadecimal (0x88cc).',
+        'Some protocols have no port: OSPF, ESP or VRRP are IP protocols of their own (number in the IP header), LLDP and LACP are identified by their EtherType, IS-IS and STP travel in LLC frames. A "TCP/UDP" rule does not let them through.',
+        'The "cleartext" badge flags a protocol carrying credentials or data without encryption. The "default, not IANA" badge flags a port picked by a piece of software, which may change from one setup to another.',
+        'The search and category are kept in the page address: copy it to share a filter.',
+        'The official registry is IANA’s (Service Name and Transport Protocol Port Number Registry). When in doubt about a device, its documentation prevails.',
+      ],
+    },
+    tags: ['ports', 'protocols', 'firewall'],
+    component: PortsReference,
   },
 ];
 
