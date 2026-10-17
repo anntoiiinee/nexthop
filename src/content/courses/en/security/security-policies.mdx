@@ -1,0 +1,230 @@
+---
+title: "Security policies"
+description: "Writing a firewall policy that stays readable: evaluation order, objects, least privilege, overly broad, shadowed or redundant rules, rule lifecycle, interaction with NAT, and automation."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, policy, security, automation]
+vendor: [fortinet, paloalto, stormshield]
+order: 2
+---
+
+A brand-new firewall has a policy of ten rules, clear and justified. Five years later, it has a thousand,
+half of which nobody can explain anymore, and every new request gets added "on top, to be sure it works".
+Network security does not only depend on the firewall you chose, but on the **quality of its policy**. This
+chapter explains how to write it and, above all, how to maintain it.
+
+## A policy is read top to bottom
+
+The firewall compares each new connection to the rules **in order**, and applies the **first one that
+matches**. The following rules are not even read. Two consequences:
+
+- **Order changes the outcome.** A broad rule at the top applies before a precise rule below it.
+- **Precise rules go at the top, broad ones at the bottom**, just before the implicit deny.
+
+<Topology
+  width={700}
+  height={250}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 120, label: 'pc-hq', sub: '→ srv-hq:80' },
+    { id: 'r15', type: 'firewall', x: 290, y: 120, label: 'R15', sub: 'users → servers, all', tone: 'amber' },
+    { id: 'r20', type: 'firewall', x: 470, y: 120, label: 'R20', sub: 'users → srv-hq:80', tone: 'slate' },
+    { id: 'srv', type: 'server', x: 630, y: 120, label: 'srv-hq', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc', to: 'r15', tone: 'emerald' },
+    { from: 'r15', to: 'r20', style: 'dashed' },
+    { from: 'r20', to: 'srv', style: 'dashed' },
+  ]}
+  flows={[
+    { from: 'pc', to: 'r15', label: 'matches: accepted', tone: 'emerald', offset: -30 },
+  ]}
+  notes={[
+    { x: 470, y: 215, text: 'never read: shadowed rule', tone: 'rose' },
+  ]}
+  caption="The overly broad rule R15 is evaluated before R20: R20 is never used. Deleting R20 would change nothing; deleting R15, a lot."
+/>
+
+## Objects
+
+A rule should never contain a hard-coded IP address. You create **objects** (a server, a network, a
+service) and **groups** of objects, with meaningful names:
+
+| Avoid | Prefer |
+|---|---|
+| `10.10.20.10` | `SRV-HQ-INTRANET` |
+| `10.10.10.0/24, 10.20.10.0/24` | Group `GRP-USERS` (headquarters and branch) |
+| `tcp/8443` | Service `SVC-APP-ADMIN` |
+
+When the server changes address, you change the object once, and every rule follows. Object naming follows
+the same logic as device naming conventions.
+
+## Least privilege
+
+Each rule must allow **the minimum needed** for the stated requirement: the right source, the right
+destination, the right service. Signs of an overly broad rule:
+
+| Sign | Example | Risk |
+|---|---|---|
+| Service `any` | "users to servers, all ports" | Access to databases, file shares, administration |
+| Source or destination `any` | "anyone to the web server" internally | The first compromised workstation reaches the server |
+| Whole network instead of a server | "users to 10.10.0.0/16" | Every present and future server of the /16 |
+| "Temporary" rule with no end date | "opened for the migration, ticket 2019" | It will still be there in ten years |
+
+An NGFW lets you go further: allow an **application** (for example `ssl` and `web-browsing` at Palo Alto)
+rather than a port, and a **user group** rather than a network.
+
+## Useless rules: shadowed and redundant
+
+An old policy almost always contains:
+
+- **shadowed** rules: a rule higher up already covers everything they allow. They never match, but give a
+  false idea of what is really permitted;
+- **redundant** rules: two rules allowing the same thing, often added by two different people two years
+  apart;
+- **dead** rules: they allow a flow to a server that no longer exists.
+
+The simplest tool to find them: **hit counters**. A rule whose counter stays at zero for months is shadowed,
+dead, or tied to a rare usage (a year-end closing, a disaster recovery plan): investigate before deleting.
+Every firewall shows these counters, with the date of last use. Palo Alto also offers a *Policy
+Optimizer*, and policy analysis tools (Tufin, AlgoSec, FireMon) detect shadowing and redundancy
+automatically across a whole fleet.
+
+To know which rule applies to a given flow, without waiting for it to happen, firewalls can **simulate**
+the evaluation:
+
+```text title="Palo Alto: which rule for this flow?"
+test security-policy-match from users to servers source 10.10.10.10 destination 10.10.20.10 protocol 6 destination-port 5432
+```
+
+```text title="FortiGate: same question"
+diagnose firewall iprope lookup 10.10.10.10 51234 10.10.20.10 5432 6 port2
+```
+
+## The rule lifecycle
+
+Most policies decay because rules get added and never removed. Each rule should carry, in its name,
+comment or tags:
+
+- **an owner**: the team or person who needs it, and whom you will ask at review time;
+- **a justification**: the original ticket or request;
+- **a creation date, and an expiry date** for anything temporary.
+
+<PacketFormat
+  cols={10}
+  rows={[
+    { fields: [
+      { label: '1. Request', sub: 'need, owner', span: 2, tone: 'sky' },
+      { label: '2. Analysis', sub: 'least privilege', span: 2, tone: 'sky' },
+      { label: '3. Implementation', sub: 'objects, comment', span: 2, tone: 'emerald' },
+      { label: '4. Review', sub: 'yearly, counters', span: 2, tone: 'violet' },
+      { label: '5. Removal', sub: 'or renewal', span: 2, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="A rule is born from a request, and must be able to die: the periodic review with owners is the step people forget."
+/>
+
+A **review** at least once a year, rule by rule, with the owners, is often required by security frameworks
+(ISO 27001, PCI DSS). It relies on the counters: start with rules never used and expired rules.
+
+<Callout type="field">
+The "temporary" rule is the most durable of all. A broad opening for a migration, a contractor, a test,
+with no end date and no owner, outlives the migration, the contractor's departure and the person who
+created it. At audit time, nobody dares delete it for fear of breaking something. The fix is simple: no
+rule without an owner and a date, and a deadline that automatically triggers a reminder. FortiGate and
+Palo Alto can also attach a **schedule** to a rule, which disables it on its own at the planned date.
+</Callout>
+
+## Policy and NAT
+
+In the previous chapter, we saw that the order between NAT and policy depends on the vendor. When writing a
+rule, you therefore need to know **which addresses** the firewall compares:
+
+| Case | What you write in the security rule |
+|---|---|
+| Internet egress (SNAT) | Everywhere: the workstation's **private** address as source. Translation happens after the policy |
+| Publishing (DNAT), Palo Alto | The **public** address as destination, but the server's **real** zone (after NAT) |
+| Publishing (DNAT), FortiGate | The **VIP** object as destination, which carries the translation |
+| Publishing (DNAT), Stormshield | A destination NAT rule, then a filtering rule: see your version's documentation |
+
+## Automating
+
+A policy of several hundred rules is hard to manage by hand. All three vendors expose an **API** (REST for
+FortiGate and Stormshield, XML and REST for Palo Alto) and Ansible collections (`fortinet.fortios`,
+`paloaltonetworks.panos`, `stormshield.sns`). You can then:
+
+- describe the rules in YAML, in Git, and deploy them like network configurations;
+- have every opening request reviewed through a *merge request*, with the ticket in the description;
+- regularly export the policy and its counters for the yearly review.
+
+Centralised management consoles (FortiManager, Panorama, Stormshield Management Center) also let you share
+objects and common rules across many firewalls.
+
+## In the lab
+
+`fw-hq`'s policy contains an inherited rule, `R15`, which nobody has questioned since 2019.
+
+<Lab name="security" lang="en" />
+
+**1. The flow matrix.** Here is what headquarters really needs:
+
+| Source | Destination | Service | Need | Rule |
+|---|---|---|---|---|
+| Users | Internet | HTTP, HTTPS, DNS, ping | Browsing | R10 to R12 |
+| Users | `srv-hq` | HTTP | Intranet | R20 |
+| Internet | `dmz-web` (through DNAT) | HTTP | Public website | R30 |
+| Branch | `srv-hq` | HTTP, ping | Intranet from the branch | R40, R41 |
+| Users | Branch | all | Support for branch workstations | R42 |
+
+`srv-hq`'s database (port 5432) is only used by the intranet application, on the server itself: **no
+network flow** must reach it.
+
+**2. Spot the gap.** From the headquarters workstation:
+
+```bash
+docker exec clab-security-pc-hq curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10/
+docker exec clab-security-pc-hq nc -w 3 10.10.20.10 5432
+```
+
+The intranet answers (`200`), but so does the database: `base de donnees srv-hq`. Nothing in the matrix
+justifies that second flow.
+
+**3. Read the counters.**
+
+```bash
+docker exec clab-security-fw-hq nft list chain inet filter transit
+```
+
+```text
+iifname "eth2" oifname "eth3" counter packets 2 bytes 120 accept comment "R15 legacy : utilisateurs vers serveurs, tout (ticket 2019)"
+iifname "eth2" oifname "eth3" ip daddr 10.10.20.10 tcp dport 80 counter packets 0 bytes 0 accept comment "R20 intranet"
+```
+
+`R20`'s counter stays at **0** even though the intranet works: all the traffic is caught by `R15`, higher up
+and broader. `R20` is **shadowed**, and `R15` allows far more than the matrix.
+
+**4. Fix it.** Delete the `R15` line from `fw-hq/nftables.nft`, reload, and run the tests again:
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-pc-hq curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10/
+docker exec clab-security-pc-hq nc -w 3 10.10.20.10 5432
+```
+
+The intranet still answers, thanks to `R20`, whose counter now increases. The database no longer answers.
+The policy finally matches the matrix.
+
+**5. Going further.** Add an owner and a ticket to each rule's comment
+(`comment "R20 intranet | intranet team | CHG-1234"`). On an evaluation FortiGate or Palo Alto VM, redo step
+3 with the web interface counters and the simulation command shown above.
+
+## Key takeaways
+
+- The policy is read **top to bottom**, the **first matching rule** applies: precise rules at the top,
+  broad ones at the bottom.
+- Named **objects**, never hard-coded addresses; **least privilege** for every rule.
+- **Counters** reveal shadowed, redundant or dead rules; **simulation** tells which rule applies to a flow.
+- Every rule has an **owner**, a **justification** and, if temporary, an **end date**. A yearly review with
+  the owners.
+- Know which addresses (before or after NAT) your firewall evaluates the policy on.
+- A policy in Git, deployed through an API, can be reviewed and audited like code.

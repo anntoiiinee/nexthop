@@ -1,0 +1,42 @@
+#!/usr/sbin/nft -f
+# fw-branch : politique de sécurité de l'agence
+# Recharger après une modification :
+#   docker exec clab-security-fw-branch nft -f /lab/nftables.nft
+
+flush ruleset
+
+define OUTSIDE = "eth1"
+define USERS   = "eth2"
+define HQ      = "ipsec0"
+
+table inet filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iifname "lo" accept
+        iifname "eth0" accept comment "réseau de management ContainerLab"
+        iifname { $USERS, $HQ } icmp type echo-request accept
+        iifname $OUTSIDE ip saddr 203.0.113.2 udp dport { 500, 4500 } accept comment "IKE et NAT-T depuis le siège"
+        iifname $OUTSIDE ip saddr 203.0.113.2 meta l4proto esp accept comment "ESP depuis le siège"
+        counter comment "input : refusé par défaut"
+    }
+
+    chain transit {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid counter drop
+        iifname $USERS oifname $OUTSIDE tcp dport { 80, 443 } counter accept comment "B10 web sortant"
+        iifname $USERS oifname $OUTSIDE udp dport 53 counter accept comment "B11 DNS sortant"
+        iifname $USERS oifname $HQ counter accept comment "B20 agence vers siège (filtré par fw-hq)"
+        iifname $HQ oifname $USERS icmp type echo-request counter accept comment "B21 ping depuis le siège"
+        counter comment "transit : refusé par défaut"
+    }
+}
+
+table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat;
+        oifname $OUTSIDE counter masquerade comment "sortie Internet"
+    }
+}
