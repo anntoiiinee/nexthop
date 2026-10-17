@@ -1,0 +1,185 @@
+---
+title: "Dépanner un réseau : la méthode"
+description: "Garder son calme, définir précisément le problème, vérifier dans l'ordre (câble, VLAN, adresse IP, passerelle, DNS, ports), choisir une méthode, éviter les pièges classiques et tirer les leçons de l'incident."
+pubDate: 2026-10-17
+level: beginner
+tags: [troubleshooting, methodology, fundamentals]
+vendor: [multi]
+---
+
+« Internet ne marche plus. » « L'appli rame. » « Je n'arrive pas à me connecter. » Un jour ou l'autre, ce message
+arrive, souvent au pire moment, avec quelqu'un qui attend derrière. La tentation est de tout essayer tout de suite :
+redémarrer, modifier une règle, changer un câble. C'est le meilleur moyen de perdre une heure, ou d'ajouter une
+deuxième panne à la première. Ce tutoriel propose une **méthode** : moins rapide en apparence, beaucoup plus
+efficace en réalité.
+
+## D'abord, ne pas paniquer
+
+Les premières minutes comptent plus que les suivantes, et pas pour les raisons qu'on croit. Avant de taper une
+commande :
+
+1. **Respirez.** Une panne réseau n'a presque jamais besoin d'une réponse dans la seconde. Une mauvaise
+   manipulation sous pression, si.
+2. **Notez l'heure** à laquelle le problème a été signalé, et ouvrez un fichier de notes. Vous y écrirez chaque
+   vérification et chaque action, avec l'heure. Ces notes serviront au dépannage (« qu'est-ce que j'ai déjà
+   testé ? »), puis au compte rendu.
+3. **Prévenez** : un message court à votre responsable ou dans le canal de l'équipe (« incident en cours sur
+   tel périmètre, je regarde »). Cela évite que trois personnes cherchent la même chose chacune de leur côté, ou
+   qu'un collègue fasse un changement en même temps que vous.
+4. **Ne touchez à rien tant que vous n'avez pas compris.** Redémarrer un équipement efface souvent la preuve :
+   journaux en mémoire, table ARP, compteurs d'erreurs, état des sessions.
+
+<Callout type="warning">
+La règle d'or du dépannage : **un seul changement à la fois**, et on vérifie son effet avant le suivant. Si vous
+modifiez trois choses et que ça remarche, vous ne saurez jamais laquelle a réglé le problème, ni si les deux autres
+en ont créé un nouveau. Et si ça ne remarche pas, annulez le changement avant d'en essayer un autre.
+</Callout>
+
+## Définir le problème
+
+« Ça ne marche pas » n'est pas un problème, c'est un symptôme. Quelques questions, posées à la personne qui
+signale l'incident, réduisent énormément le champ des recherches :
+
+| Question | Ce que la réponse indique |
+|---|---|
+| **Qui** est touché ? Une personne, un bureau, un étage, un site, tout le monde ? | Plus le périmètre est petit, plus la cause est proche de l'utilisateur : son poste, son câble, son port de switch. Si tout le monde est touché, regardez le cœur du réseau, l'accès Internet ou un service central (DNS, DHCP). |
+| **Qu'est-ce** qui ne marche pas ? Tout, ou une seule application ? | Si tout est coupé, cherchez dans les couches basses (câble, VLAN, adresse, passerelle). Si une seule application est touchée, le réseau de base fonctionne : regardez le DNS, le firewall, l'application elle-même. |
+| **Depuis quand** ? Une heure précise ? | Une heure précise permet de croiser avec les journaux, la supervision et les changements. |
+| **Qu'est-ce qui a changé ?** | Souvent la question la plus utile. Un changement planifié, une mise à jour, un déménagement de bureau, un nouveau câble : la majorité des pannes suivent un changement. |
+| Est-ce **permanent ou intermittent** ? | Une panne intermittente oriente vers une saturation, des pertes de paquets, une boucle ou un problème de MTU. Une panne franche, vers une configuration ou un équipement en panne. |
+| Est-ce **reproductible** ? | Si vous pouvez déclencher le problème à volonté, vous pourrez vérifier qu'il est vraiment réglé. |
+
+<Callout type="tip">
+Reformulez le problème en une phrase précise avant de commencer : « Depuis 9 h 40, les postes du 2e étage
+n'atteignent plus l'intranet, alors qu'Internet fonctionne. » Cette phrase contient déjà la moitié du diagnostic :
+le problème est récent, localisé, et touche une destination interne mais pas l'accès Internet.
+</Callout>
+
+## Les premières vérifications, dans l'ordre
+
+Un réseau est un empilement de couches (voir le [modèle OSI](/formations/fundamentals/osi)) : chacune a besoin que
+celle du dessous fonctionne. Vérifier dans l'ordre, du bas vers le haut, évite de chercher un problème de DNS sur un
+câble débranché.
+
+| # | Vérification | Ce qu'on regarde |
+|---|---|---|
+| 1 | **Le lien physique** | Le câble est-il branché, le voyant allumé, le Wi-Fi connecté ? Côté switch, le port est-il `up` ? Les compteurs d'erreurs (CRC, *input errors*) augmentent-ils ? |
+| 2 | **Le VLAN** | Le port est-il dans le bon VLAN ? La machine apparaît-elle dans la table MAC du switch, sur le bon port ? |
+| 3 | **L'adresse IP** | La machine a-t-elle une adresse, avec le bon masque ? Une adresse en `169.254.x.x` signifie qu'aucun serveur DHCP n'a répondu. |
+| 4 | **La passerelle** | La passerelle par défaut est-elle la bonne, et répond-elle au ping ? Son adresse MAC est-elle dans la table ARP de la machine ? |
+| 5 | **Le routage** | Une adresse distante répond-elle au ping (une IP, pas un nom) ? Où le chemin s'arrête-t-il, d'après `traceroute` ? |
+| 6 | **Le DNS** | Le nom se résout-il, et vers la bonne adresse ? Le serveur DNS configuré est-il joignable ? |
+| 7 | **Le port** | Le service écoute-t-il, et le port est-il ouvert de bout en bout (firewall, security group, filtrage local) ? |
+| 8 | **L'application** | Si tout ce qui précède fonctionne, le réseau a fait son travail : certificat, authentification, application elle-même. |
+
+### Les commandes correspondantes
+
+| Vérification | Windows | Linux / macOS | Arista EOS / Cisco IOS |
+|---|---|---|---|
+| Lien et compteurs | `Get-NetAdapter` | `ip link`, `ethtool eth0` | `show interfaces status`, `show interfaces counters errors` |
+| VLAN et table MAC | | | `show vlan`, `show mac address-table` |
+| Adresse IP | `ipconfig /all` | `ip addr` | `show ip interface brief` |
+| Passerelle et ARP | `ping <passerelle>`, `arp -a` | `ip route`, `ip neigh` | `show ip arp` |
+| Routage | `tracert <ip>` | `traceroute <ip>`, `mtr <ip>` | `show ip route <ip>`, `traceroute <ip>` |
+| DNS | `nslookup <nom>` | `dig <nom>` | |
+| Port | `Test-NetConnection <ip> -Port 443` | `nc -vz <ip> 443` | |
+
+<Callout type="note">
+Un ping qui échoue ne prouve pas que la machine est éteinte : beaucoup de firewalls, et Windows par défaut, bloquent
+l'ICMP. À l'inverse, un ping qui répond prouve seulement que la couche réseau fonctionne, pas que l'application est
+joignable. Pour un service, testez le port lui-même (`Test-NetConnection`, `nc`, ou `curl`).
+</Callout>
+
+## Choisir une méthode
+
+Vérifier toutes les couches dans l'ordre est sûr, mais pas toujours le plus rapide. Trois approches, à choisir
+selon la situation :
+
+| Méthode | Principe | Quand l'utiliser |
+|---|---|---|
+| **De bas en haut** | Du câble jusqu'à l'application, dans l'ordre du tableau ci-dessus | Quand on ne sait rien, ou pour un problème qui touche un seul poste |
+| **De haut en bas** | De l'application vers le câble | Quand une seule application est touchée et que le reste fonctionne |
+| **Diviser pour régner** | Commencer au milieu, par un ping vers la passerelle puis vers la destination, et descendre ou monter selon le résultat | Le plus efficace dans la plupart des cas : un test élimine la moitié des hypothèses |
+
+La méthode la plus parlante pour un ingénieur réseau est de **suivre le chemin** du paquet, équipement par
+équipement, en vérifiant à chaque étape qu'il arrive et qu'il repart :
+
+<Topology
+  width={780}
+  height={250}
+  nodes={[
+    { id: 'pc', type: 'host', x: 70, y: 120, label: 'Poste', sub: '10.10.20.37' },
+    { id: 'sw', type: 'switch', x: 240, y: 120, label: 'Switch d\'accès', sub: 'VLAN 20' },
+    { id: 'gw', type: 'l3switch', x: 410, y: 120, label: 'Passerelle', sub: '10.10.20.1' },
+    { id: 'fw', type: 'firewall', x: 570, y: 120, label: 'Firewall', tone: 'rose' },
+    { id: 'srv', type: 'server', x: 720, y: 120, label: 'Serveur', sub: '10.50.0.20:443', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'sw' }, { from: 'sw', to: 'gw' }, { from: 'gw', to: 'fw' }, { from: 'fw', to: 'srv' }]}
+  notes={[
+    { x: 155, y: 60, text: '① lien, VLAN', tone: 'sky' },
+    { x: 325, y: 60, text: '② IP, ARP', tone: 'sky' },
+    { x: 490, y: 60, text: '③ routage', tone: 'sky' },
+    { x: 645, y: 60, text: '④ règle, port', tone: 'sky' },
+    { x: 390, y: 220, text: 'à chaque étape : le paquet arrive-t-il ? repart-il ? la réponse revient-elle ?', tone: 'slate' },
+  ]}
+  caption="Suivre le chemin : chaque équipement est un point de contrôle. La panne se trouve entre le dernier point où tout va bien et le premier où quelque chose cloche."
+/>
+
+À chaque point, une capture de trafic (`tcpdump` sur Linux, Wireshark, ou la capture intégrée d'un firewall) lève
+les doutes : si le paquet arrive mais que la réponse ne revient jamais, le problème est au-delà de ce point, ou sur
+le chemin du retour.
+
+## Les pièges classiques
+
+Certaines pannes reviennent si souvent qu'elles méritent d'être vérifiées tôt :
+
+- **Le DNS.** L'application ne répond plus, mais l'adresse IP du serveur répond au ping ? C'est très souvent la
+  résolution de noms : mauvais serveur DNS, enregistrement modifié, cache périmé. D'où le dicton des
+  administrateurs : « c'est toujours le DNS ».
+- **La MTU.** Les pings et les petites pages passent, mais les gros transferts se bloquent, surtout à travers un
+  VPN ou un tunnel. C'est la signature d'un problème de MTU, détaillée au chapitre
+  [TCP et UDP](/formations/fundamentals/tcp-udp). Le [calculateur MTU](/outils/mtu-calculator) donne les bonnes
+  valeurs pour chaque encapsulation.
+- **Le routage asymétrique.** L'aller passe par un firewall, le retour par un autre chemin : le firewall ne voit
+  qu'un sens de la connexion et la coupe. Le ping peut fonctionner alors que TCP échoue.
+- **Le conflit d'adresse IP.** Deux machines avec la même adresse : la connexion marche, puis coupe, puis revient,
+  selon la machine qui a répondu en dernier à l'ARP.
+- **Les erreurs physiques.** Un câble abîmé ou une optique fatiguée produisent des pertes faibles mais
+  constantes : tout est lent, rien n'est coupé. Les compteurs d'erreurs de l'interface le montrent.
+- **La boucle de niveau 2.** Tout un VLAN devient inutilisable d'un coup, les voyants clignotent frénétiquement,
+  les processeurs des switches saturent. Cherchez un câble branché entre deux prises du même switch, et vérifiez
+  le [Spanning Tree](/formations/fundamentals/stp).
+- **L'heure.** Une horloge décalée de quelques minutes fait échouer l'authentification Kerberos, la validation
+  des certificats ou les jetons à usage unique. Vérifiez NTP.
+- **Le certificat expiré.** Le réseau fonctionne parfaitement, mais le navigateur refuse la connexion : c'est
+  une date, pas une panne réseau.
+
+<Callout type="field">
+Le réseau est souvent accusé le premier, parce que c'est lui qu'on voit le moins. Votre travail n'est pas
+seulement de réparer : c'est aussi de **prouver** où se trouve le problème. « Le paquet arrive sur l'interface du
+serveur, et le serveur ne répond pas » est une phrase qui fait gagner beaucoup de temps à tout le monde, à
+condition d'avoir la capture pour la montrer.
+</Callout>
+
+## Pendant et après l'incident
+
+- **Communiquez régulièrement**, même pour dire qu'il n'y a rien de nouveau : un point toutes les 30 minutes
+  rassure, et évite d'être interrompu sans cesse.
+- **Si un changement est en cause, revenez en arrière d'abord**, cherchez le pourquoi ensuite. Rétablir le service
+  passe avant la compréhension.
+- **Sachez escalader.** Au bout d'un temps raisonnable sans piste, demander de l'aide à un collègue, à l'opérateur ou
+  au support du constructeur n'est pas un échec. Vos notes lui feront gagner un temps précieux.
+- **Cherchez la cause racine.** « Le port était désactivé » est un constat. « Le port a été désactivé par la
+  protection contre les tempêtes de broadcast, déclenchée par une boucle créée par un câble branché en double »
+  est une cause, et elle dit quoi corriger pour que ça ne se reproduise pas.
+- **Rédigez un court compte rendu** : chronologie, impact, cause, actions correctives. Sans chercher de coupable :
+  le but est d'améliorer le système (supervision, procédure, configuration), pas de désigner quelqu'un.
+
+## À retenir
+
+- **Ne pas paniquer** : noter l'heure, prévenir, ne rien redémarrer avant d'avoir compris.
+- **Définir le problème** : qui, quoi, depuis quand, et surtout **qu'est-ce qui a changé**.
+- **Vérifier dans l'ordre** : lien, VLAN, adresse IP, passerelle, routage, DNS, port, application.
+- **Une méthode** : de bas en haut, de haut en bas, ou diviser pour régner ; et suivre le chemin du paquet.
+- **Un seul changement à la fois**, tout noter, revenir en arrière si un changement est en cause.
+- Après l'incident : **cause racine** et compte rendu, pour que la même panne ne revienne pas.

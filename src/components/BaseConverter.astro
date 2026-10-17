@@ -1,0 +1,210 @@
+---
+import type { Lang } from '@/i18n/ui';
+
+interface Props { lang?: Lang }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    numberTitle: 'Nombre',
+    dec: 'Décimal',
+    hex: 'Hexadécimal',
+    bin: 'Binaire',
+    numberHint: 'Modifiez n’importe quel champ, les deux autres suivent. Jusqu’à 64 bits.',
+    invalid: 'Valeur invalide pour cette base.',
+    tooBig: 'Valeur trop grande : 64 bits au maximum.',
+    weights: 'Poids de chaque bit',
+    sum: 'Somme des bits à 1',
+    addressTitle: 'Adresse IPv4 ou MAC',
+    addressHint: 'Exemples : 192.168.10.37, 255.255.255.192, 00:1a:2b:3c:4d:5e ou 001a.2b3c.4d5e',
+    addressInvalid: 'Format non reconnu : saisissez une adresse IPv4 ou une adresse MAC.',
+    byte: 'Octet',
+    ipv4: 'Adresse IPv4 : 4 octets',
+    mac: 'Adresse MAC : 6 octets',
+    ig: ['Bit I/G à 0 : adresse unicast', 'Bit I/G à 1 : adresse de groupe (multicast ou broadcast)'],
+    ul: ['Bit U/L à 0 : adresse universelle, attribuée par le constructeur (OUI)', 'Bit U/L à 1 : adresse administrée localement (machine virtuelle, conteneur, adresse aléatoire)'],
+    oui: 'OUI (identifiant du constructeur)',
+  },
+  en: {
+    numberTitle: 'Number',
+    dec: 'Decimal',
+    hex: 'Hexadecimal',
+    bin: 'Binary',
+    numberHint: 'Edit any field, the other two follow. Up to 64 bits.',
+    invalid: 'Invalid value for this base.',
+    tooBig: 'Value too large: 64 bits at most.',
+    weights: 'Weight of each bit',
+    sum: 'Sum of the bits set to 1',
+    addressTitle: 'IPv4 or MAC address',
+    addressHint: 'Examples: 192.168.10.37, 255.255.255.192, 00:1a:2b:3c:4d:5e or 001a.2b3c.4d5e',
+    addressInvalid: 'Unrecognized format: enter an IPv4 address or a MAC address.',
+    byte: 'Byte',
+    ipv4: 'IPv4 address: 4 bytes',
+    mac: 'MAC address: 6 bytes',
+    ig: ['I/G bit at 0: unicast address', 'I/G bit at 1: group address (multicast or broadcast)'],
+    ul: ['U/L bit at 0: universal address, assigned by the manufacturer (OUI)', 'U/L bit at 1: locally administered address (virtual machine, container, random address)'],
+    oui: 'OUI (manufacturer identifier)',
+  },
+}[lang];
+
+const field = 'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+const bases = [
+  { key: 'dec', label: copy.dec, value: '192', prefix: '' },
+  { key: 'hex', label: copy.hex, value: 'C0', prefix: '0x' },
+  { key: 'bin', label: copy.bin, value: '11000000', prefix: '0b' },
+] as const;
+---
+<div data-base-conv data-i18n={JSON.stringify(copy)} class="not-prose my-8 space-y-6">
+  <section class="rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50">
+    <p class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.numberTitle}</p>
+    <div class="mt-3 grid gap-4 sm:grid-cols-3">
+      {bases.map((b) => (
+        <label class="block min-w-0">
+          <span class="text-xs text-slate-500">{b.label}</span>
+          <span class="relative block">
+            {b.prefix && <span class="pointer-events-none absolute left-3 top-1/2 mt-0.5 -translate-y-1/2 font-mono text-slate-400">{b.prefix}</span>}
+            <input type="text" value={b.value} spellcheck="false" autocomplete="off" data-base={b.key} class:list={[field, b.prefix && 'pl-9']} />
+          </span>
+        </label>
+      ))}
+    </div>
+    <p class="mt-2 text-xs text-slate-500">{copy.numberHint}</p>
+    <p data-number-error hidden class="mt-2 text-sm text-rose-600 dark:text-rose-400"></p>
+
+    <div class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+      <p class="text-xs text-slate-500">{copy.weights}</p>
+      <div data-bits class="mt-2 overflow-x-auto"></div>
+      <p data-sum class="mt-3 break-all font-mono text-xs text-slate-600 dark:text-slate-400"></p>
+    </div>
+  </section>
+
+  <section class="rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50">
+    <label class="block">
+      <span class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.addressTitle}</span>
+      <input type="text" value="192.168.10.37" spellcheck="false" autocomplete="off" data-address class:list={[field, 'mt-2 text-lg']} />
+    </label>
+    <p class="mt-2 text-xs text-slate-500">{copy.addressHint}</p>
+    <p data-address-error hidden class="mt-2 text-sm text-rose-600 dark:text-rose-400">{copy.addressInvalid}</p>
+    <p data-address-kind class="mt-4 text-xs text-slate-500"></p>
+    <div class="mt-2 overflow-x-auto">
+      <table data-address-table class="w-full min-w-[28rem] text-left font-mono text-sm"></table>
+    </div>
+    <ul data-mac-flags class="mt-4 space-y-1 text-sm text-slate-700 dark:text-slate-300"></ul>
+  </section>
+</div>
+
+<script>
+  const RADIX = { dec: 10, hex: 16, bin: 2 } as const;
+  const PATTERN = { dec: /^\d+$/, hex: /^[0-9a-f]+$/i, bin: /^[01]+$/ } as const;
+  const MAX = (1n << 64n) - 1n;
+
+  const parseBase = (value: string, base: keyof typeof RADIX): bigint | null => {
+    const s = value.trim().replace(/^0x/i, '').replace(/^0b/i, '').replace(/[\s_]/g, '');
+    if (!PATTERN[base].test(s)) return null;
+    return [...s.toLowerCase()].reduce((acc, ch) => acc * BigInt(RADIX[base]) + BigInt(parseInt(ch, 16)), 0n);
+  };
+
+  document.querySelectorAll<HTMLElement>('[data-base-conv]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const inputs = [...root.querySelectorAll<HTMLInputElement>('[data-base]')];
+    const numberError = root.querySelector<HTMLElement>('[data-number-error]')!;
+    const bitsBox = root.querySelector<HTMLElement>('[data-bits]')!;
+    const sum = root.querySelector<HTMLElement>('[data-sum]')!;
+
+    // Grille de bits : un octet par ligne de 8 cases, avec le poids de chaque bit
+    const renderBits = (n: bigint) => {
+      const width = Math.max(8, Math.ceil(n.toString(2).length / 8) * 8);
+      const bits = n.toString(2).padStart(width, '0');
+      let html = '<div class="inline-flex flex-wrap gap-3">';
+      for (let byte = 0; byte < width / 8; byte++) {
+        html += '<div class="grid grid-cols-8 gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800">';
+        for (let i = 0; i < 8; i++) {
+          const pos = width - 1 - (byte * 8 + i);
+          const on = bits[byte * 8 + i] === '1';
+          const weight = pos < 16 ? String(2 ** pos) : `2^${pos}`;
+          html += `<div class="flex w-11 flex-col items-center bg-white py-1.5 dark:bg-slate-950">
+            <span class="font-mono text-base font-semibold ${on ? 'text-sky-600 dark:text-sky-400' : 'text-slate-300 dark:text-slate-600'}">${on ? 1 : 0}</span>
+            <span class="font-mono text-[10px] ${on ? 'text-slate-700 dark:text-slate-300' : 'text-slate-400 dark:text-slate-600'}">${weight}</span>
+          </div>`;
+        }
+        html += '</div>';
+      }
+      bitsBox.innerHTML = html + '</div>';
+
+      const ones = [...bits].map((b, i) => (b === '1' ? width - 1 - i : -1)).filter((p) => p >= 0);
+      sum.textContent = ones.length
+        ? `${t.sum} : ${ones.map((p) => (p < 16 ? String(2 ** p) : `2^${p}`)).join(' + ')} = ${n.toString()}`
+        : `${t.sum} : 0`;
+    };
+
+    const syncFrom = (source: HTMLInputElement) => {
+      const base = source.dataset.base as keyof typeof RADIX;
+      const n = parseBase(source.value, base);
+      if (n === null || n > MAX) {
+        numberError.textContent = n === null ? t.invalid : t.tooBig;
+        numberError.hidden = false;
+        source.classList.add('border-rose-400');
+        return;
+      }
+      numberError.hidden = true;
+      source.classList.remove('border-rose-400');
+      for (const input of inputs) {
+        if (input === source) continue;
+        const b = input.dataset.base as keyof typeof RADIX;
+        const s = n.toString(RADIX[b]);
+        input.value = b === 'hex' ? s.toUpperCase() : s;
+        input.classList.remove('border-rose-400');
+      }
+      renderBits(n);
+    };
+    inputs.forEach((input) => input.addEventListener('input', () => syncFrom(input)));
+    syncFrom(inputs[0]);
+
+    // Adresses : chaque octet en décimal, hexadécimal et binaire
+    const address = root.querySelector<HTMLInputElement>('[data-address]')!;
+    const addressError = root.querySelector<HTMLElement>('[data-address-error]')!;
+    const kind = root.querySelector<HTMLElement>('[data-address-kind]')!;
+    const table = root.querySelector<HTMLElement>('[data-address-table]')!;
+    const flags = root.querySelector<HTMLElement>('[data-mac-flags]')!;
+
+    const parseAddress = (value: string): { type: 'ipv4' | 'mac'; bytes: number[] } | null => {
+      const s = value.trim();
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) {
+        const bytes = s.split('.').map(Number);
+        return bytes.every((b) => b <= 255) ? { type: 'ipv4', bytes } : null;
+      }
+      const hex = s.replace(/[:.\-\s]/g, '');
+      if (/^[0-9a-f]{12}$/i.test(hex) && /^[0-9a-f:.\-\s]+$/i.test(s)) {
+        return { type: 'mac', bytes: hex.match(/../g)!.map((b) => parseInt(b, 16)) };
+      }
+      return null;
+    };
+
+    const renderAddress = () => {
+      const parsed = parseAddress(address.value);
+      addressError.hidden = parsed !== null;
+      table.classList.toggle('opacity-40', parsed === null);
+      if (!parsed) return;
+      kind.textContent = parsed.type === 'ipv4' ? t.ipv4 : t.mac;
+      const cell = 'border-b border-slate-200 px-2 py-1.5 dark:border-slate-800';
+      const head = `<tr class="text-xs text-slate-500"><th class="${cell} font-normal"></th>${parsed.bytes.map((_, i) => `<th class="${cell} font-normal">${t.byte} ${i + 1}</th>`).join('')}</tr>`;
+      const row = (label: string, values: string[], strong = false) =>
+        `<tr><th class="${cell} text-xs font-normal text-slate-500">${label}</th>${values.map((v) => `<td class="${cell} ${strong ? 'font-semibold text-slate-900 dark:text-white' : 'text-slate-700 dark:text-slate-300'}">${v}</td>`).join('')}</tr>`;
+      table.innerHTML =
+        head +
+        row(t.dec, parsed.bytes.map(String), parsed.type === 'ipv4') +
+        row(t.hex, parsed.bytes.map((b) => b.toString(16).padStart(2, '0').toUpperCase()), parsed.type === 'mac') +
+        row(t.bin, parsed.bytes.map((b) => b.toString(2).padStart(8, '0')));
+
+      flags.innerHTML = '';
+      if (parsed.type === 'mac') {
+        const first = parsed.bytes[0];
+        const oui = parsed.bytes.slice(0, 3).map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(':');
+        const items = [t.ig[first & 1], t.ul[(first >> 1) & 1], `${t.oui} : ${oui}`];
+        flags.innerHTML = items.map((item) => `<li class="flex gap-2"><span class="text-sky-500">▸</span><span>${item}</span></li>`).join('');
+      }
+    };
+    address.addEventListener('input', renderAddress);
+    renderAddress();
+  });
+</script>

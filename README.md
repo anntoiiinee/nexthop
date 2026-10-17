@@ -245,6 +245,8 @@ Mise en route (une seule fois) :
 - [x] Saut 8 · Le réseau dans le cloud en FR et EN : 5 chapitres (bases AWS, security groups et NACL, interconnexion de VPC, cloud hybride, Terraform), équivalents Azure / GCP, lab Terraform `cloud-aws` (validé avec Terraform 1.10.5 et le fournisseur AWS 6.69.1 : `validate` et `plan` avec des identifiants factices, 24 ressources par défaut, 35 avec les options payantes ; jamais appliqué sur un vrai compte)
 - [x] Page Formations triée par niveau (débutant, intermédiaire, avancé), puis dans l'ordre des sauts
 - [ ] Lab `cloud-aws` : faire un `terraform apply` réel sur un compte AWS, puis vérifier les consignes « Dans le lab » de chaque chapitre
+- [x] Outils : calculateur IPv6, calculateur MTU / overhead, visualiseur ContainerLab (même placement que les schémas des labs, `src/lib/clab.ts`), convertisseur binaire / hexa / décimal
+- [x] Tutoriel « Dépanner un réseau : la méthode » (`troubleshooting`) en FR et EN
 - [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
 
 ---
@@ -283,14 +285,14 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 Tous fonctionnent dans le navigateur, sans serveur, comme les outils existants. Pour en ajouter un :
 un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 
-**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting, décodeur de certificat X.509 / CSR, référence ports et protocoles.
+**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting, décodeur de certificat X.509 / CSR, référence ports et protocoles, calculateur IPv6, calculateur MTU / overhead, visualiseur ContainerLab, convertisseur binaire / hexa / décimal. La logique de calcul est dans `src/lib/` (`ipv4.ts`, `ipv6.ts`, `mtu.ts`, `clab.ts`), le composant ne fait que l'affichage.
 
 | Priorité | Outil | Ce qu'il fait | Effort |
 |---|---|---|---|
-| Haute | Calculateur IPv6 | Forme courte / complète, préfixe, nombre de /64, type (link-local, ULA, globale), EUI-64 depuis une MAC | Moyen |
-| Haute | Convertisseur binaire / hexa / décimal | Conversion d'un octet ou d'une adresse, avec le poids de chaque bit | Faible |
-| Haute | Visualiseur ContainerLab | Coller un `topology.clab.yml` et obtenir le schéma (réutilise `ClabDiagram`) | Faible |
-| Haute | Calculateur MTU / overhead | Empiler les en-têtes (802.1Q, IP, UDP, VXLAN, GRE, IPsec…) et obtenir MTU utile et MSS TCP | Moyen |
+| Haute | ~~Calculateur IPv6~~ (fait) | Forme courte / complète, préfixe, nombre de /64, type (link-local, ULA, globale), EUI-64 depuis une MAC | Moyen |
+| Haute | ~~Convertisseur binaire / hexa / décimal~~ (fait) | Conversion d'un octet ou d'une adresse, avec le poids de chaque bit | Faible |
+| Haute | ~~Visualiseur ContainerLab~~ (fait) | Coller un `topology.clab.yml` et obtenir le schéma (réutilise `ClabDiagram`) | Faible |
+| Haute | ~~Calculateur MTU / overhead~~ (fait) | Empiler les en-têtes (802.1Q, IP, UDP, VXLAN, GRE, IPsec…) et obtenir MTU utile et MSS TCP | Moyen |
 | Moyenne | Formateur d'adresse MAC | Formats Linux / Cisco / Windows, unicast/multicast, universelle/locale (option : constructeur via l'OUI) | Faible |
 | Moyenne | Résumé de routes | Plus petit agrégat d'une liste de préfixes, avec l'explication en binaire | Moyen |
 | Moyenne | Générateur de wildcard / ACL | Réseau ou plage → masque inverse et ligne d'ACL Cisco / Arista | Faible |

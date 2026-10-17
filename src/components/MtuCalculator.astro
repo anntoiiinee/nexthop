@@ -1,0 +1,251 @@
+---
+import type { Lang } from '@/i18n/ui';
+
+interface Props { lang?: Lang }
+const { lang = 'fr' } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Calculateur MTU et overhead',
+    linkMtu: 'MTU du lien (en octets)',
+    linkHint: 'La MTU IP de l’interface qui transporte le tout : 1500 par défaut en Ethernet, souvent 9000 à 9214 dans un data center.',
+    scenarios: 'Scénarios courants',
+    add: 'Ajouter une encapsulation (la dernière ajoutée est la plus extérieure)',
+    stack: 'Pile d’encapsulations, de l’extérieur vers l’intérieur',
+    empty: 'Aucune encapsulation : le paquet part tel quel sur le lien.',
+    remove: 'Retirer',
+    clear: 'Tout retirer',
+    innerMtu: 'MTU disponible à l’intérieur',
+    overhead: 'Surcoût total',
+    mss4: 'MSS TCP (IPv4)',
+    mss6: 'MSS TCP (IPv6)',
+    needed: 'MTU de lien nécessaire pour un paquet intérieur de 1500',
+    frame: 'Trame Ethernet maximale sur le lien',
+    vlanTag: 'Le lien porte un tag 802.1Q',
+    padded: 'taille variable (bourrage) : valeur au pire cas',
+    payload: 'paquet intérieur',
+    bytes: 'octets',
+    tooSmall: 'La MTU du lien est trop petite pour ces encapsulations.',
+    layers: {
+      vxlan4: 'VXLAN (underlay IPv4)',
+      vxlan6: 'VXLAN (underlay IPv6)',
+      gre: 'GRE (IPv4)',
+      ipip: 'IP dans IP (IPv4)',
+      mpls: 'Label MPLS',
+      ipsecGcm: 'IPsec ESP tunnel (AES-GCM)',
+      ipsecCbc: 'IPsec ESP tunnel (AES-CBC + SHA-256)',
+      natt: 'NAT-T (UDP 4500)',
+      wireguard4: 'WireGuard (IPv4)',
+      pppoe: 'PPPoE',
+    },
+    presets: [
+      { label: 'VXLAN sur un lien 1500', mtu: 1500, stack: ['vxlan4'] },
+      { label: 'VXLAN en data center (9214)', mtu: 9214, stack: ['vxlan4'] },
+      { label: 'VPN IPsec derrière du NAT', mtu: 1500, stack: ['ipsecCbc', 'natt'] },
+      { label: 'GRE sur IPsec', mtu: 1500, stack: ['gre', 'ipsecCbc'] },
+      { label: 'WireGuard', mtu: 1500, stack: ['wireguard4'] },
+      { label: 'Fibre ou ADSL en PPPoE', mtu: 1500, stack: ['pppoe'] },
+    ],
+  },
+  en: {
+    title: 'MTU and overhead calculator',
+    linkMtu: 'Link MTU (bytes)',
+    linkHint: 'The IP MTU of the interface carrying everything: 1500 by default on Ethernet, often 9000 to 9214 in a data center.',
+    scenarios: 'Common scenarios',
+    add: 'Add an encapsulation (the last one added is the outermost)',
+    stack: 'Encapsulation stack, from outside to inside',
+    empty: 'No encapsulation: the packet goes on the link as is.',
+    remove: 'Remove',
+    clear: 'Remove all',
+    innerMtu: 'MTU available inside',
+    overhead: 'Total overhead',
+    mss4: 'TCP MSS (IPv4)',
+    mss6: 'TCP MSS (IPv6)',
+    needed: 'Link MTU needed for a 1500-byte inner packet',
+    frame: 'Largest Ethernet frame on the link',
+    vlanTag: 'The link carries an 802.1Q tag',
+    padded: 'variable size (padding): worst-case value',
+    payload: 'inner packet',
+    bytes: 'bytes',
+    tooSmall: 'The link MTU is too small for these encapsulations.',
+    layers: {
+      vxlan4: 'VXLAN (IPv4 underlay)',
+      vxlan6: 'VXLAN (IPv6 underlay)',
+      gre: 'GRE (IPv4)',
+      ipip: 'IP in IP (IPv4)',
+      mpls: 'MPLS label',
+      ipsecGcm: 'IPsec ESP tunnel (AES-GCM)',
+      ipsecCbc: 'IPsec ESP tunnel (AES-CBC + SHA-256)',
+      natt: 'NAT-T (UDP 4500)',
+      wireguard4: 'WireGuard (IPv4)',
+      pppoe: 'PPPoE',
+    },
+    presets: [
+      { label: 'VXLAN over a 1500 link', mtu: 1500, stack: ['vxlan4'] },
+      { label: 'VXLAN in a data center (9214)', mtu: 9214, stack: ['vxlan4'] },
+      { label: 'IPsec VPN behind NAT', mtu: 1500, stack: ['ipsecCbc', 'natt'] },
+      { label: 'GRE over IPsec', mtu: 1500, stack: ['gre', 'ipsecCbc'] },
+      { label: 'WireGuard', mtu: 1500, stack: ['wireguard4'] },
+      { label: 'Fiber or DSL over PPPoE', mtu: 1500, stack: ['pppoe'] },
+    ],
+  },
+}[lang];
+
+const results = ['innerMtu', 'overhead', 'mss4', 'mss6', 'needed', 'frame'] as const;
+const chip = 'rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-700 transition hover:border-sky-400 hover:text-sky-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:border-sky-500 dark:hover:text-sky-300';
+---
+<div
+  data-mtu-calc
+  data-i18n={JSON.stringify(copy)}
+  class="not-prose my-8 rounded-xl border border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900/50"
+>
+  <p class="font-mono text-xs font-medium uppercase tracking-wide text-sky-600 dark:text-sky-400">{copy.title}</p>
+
+  <div class="mt-4 grid gap-4 sm:grid-cols-[14rem_1fr] sm:items-start">
+    <label class="block">
+      <span class="text-xs text-slate-500">{copy.linkMtu}</span>
+      <input type="number" min="68" max="65535" value="1500" data-link class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 font-mono text-lg text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+    </label>
+    <p class="text-xs text-slate-500 sm:mt-6">{copy.linkHint}</p>
+  </div>
+
+  <p class="mt-6 text-xs text-slate-500">{copy.scenarios}</p>
+  <div class="mt-2 flex flex-wrap gap-2">
+    {copy.presets.map((p, i) => <button type="button" data-preset={i} class={chip}>{p.label}</button>)}
+  </div>
+
+  <p class="mt-6 text-xs text-slate-500">{copy.add}</p>
+  <div class="mt-2 flex flex-wrap gap-2">
+    {Object.entries(copy.layers).map(([id, label]) => (
+      <button type="button" data-add={id} class={chip}>+ {label}</button>
+    ))}
+  </div>
+
+  <div class="mt-6 border-t border-slate-200 pt-4 dark:border-slate-800">
+    <div class="flex items-center justify-between gap-4">
+      <p class="text-xs text-slate-500">{copy.stack}</p>
+      <button type="button" data-clear class="text-xs font-medium text-sky-600 hover:underline dark:text-sky-400">{copy.clear}</button>
+    </div>
+    <ol data-stack class="mt-2 space-y-2"></ol>
+    <p data-empty class="mt-2 text-sm text-slate-500">{copy.empty}</p>
+
+    <!-- Barre : en-têtes et paquet intérieur, à l'échelle de la MTU du lien -->
+    <div data-bar class="mt-4 flex h-9 overflow-hidden rounded-lg border border-slate-200 font-mono text-[11px] dark:border-slate-800"></div>
+  </div>
+
+  <p data-too-small hidden class="mt-4 text-sm text-rose-600 dark:text-rose-400">{copy.tooSmall}</p>
+  <dl data-results class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
+    {results.map((r) => (
+      <div>
+        <dt class="text-xs text-slate-500">{copy[r]}</dt>
+        <dd data-field={r} class="mt-1 font-mono text-sm font-medium text-slate-900 dark:text-white">—</dd>
+      </div>
+    ))}
+  </dl>
+  <label class="mt-4 flex items-center gap-2 text-xs text-slate-500">
+    <input type="checkbox" data-vlan class="rounded border-slate-300 dark:border-slate-700" />
+    {copy.vlanTag}
+  </label>
+</div>
+
+<script>
+  import { layers, maxInner, totalSize, mss, type Layer } from '@/lib/mtu';
+
+  // Couleur par couche : la même que dans la liste et dans la barre
+  const tones = [
+    'bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200',
+    'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200',
+    'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-200',
+    'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-200',
+  ];
+
+  document.querySelectorAll<HTMLElement>('[data-mtu-calc]').forEach((root) => {
+    const t = JSON.parse(root.dataset.i18n!);
+    const link = root.querySelector<HTMLInputElement>('[data-link]')!;
+    const vlan = root.querySelector<HTMLInputElement>('[data-vlan]')!;
+    const list = root.querySelector<HTMLElement>('[data-stack]')!;
+    const empty = root.querySelector<HTMLElement>('[data-empty]')!;
+    const bar = root.querySelector<HTMLElement>('[data-bar]')!;
+    const tooSmall = root.querySelector<HTMLElement>('[data-too-small]')!;
+    const set = (field: string, value: string) => {
+      root.querySelector<HTMLElement>(`[data-field="${field}"]`)!.textContent = value;
+    };
+    const bytes = (n: number) => `${n} ${t.bytes}`;
+
+    // La pile est rangée de l'intérieur vers l'extérieur : stack[0] est la plus proche du paquet d'origine
+    let stack: string[] = ['vxlan4'];
+
+    const render = () => {
+      const linkMtu = Number(link.value);
+      const chain: Layer[] = stack.map((id) => layers[id]);
+      const inner = Number.isFinite(linkMtu) && linkMtu >= 68 ? maxInner(chain, linkMtu) : 0;
+
+      // Liste, de l'extérieur vers l'intérieur
+      empty.hidden = stack.length > 0;
+      list.innerHTML = '';
+      [...stack].reverse().forEach((id, k) => {
+        const index = stack.length - 1 - k;
+        const layer = layers[id];
+        const fixed = layer.parts.reduce((s, p) => s + p.bytes, 0);
+        const li = document.createElement('li');
+        li.className = 'flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950';
+        li.innerHTML = `
+          <span class="flex flex-wrap items-center gap-2">
+            <span class="rounded px-1.5 py-0.5 font-mono text-[11px] ${tones[index % tones.length]}">${fixed}${layer.padded ? '+' : ''}</span>
+            <span class="font-medium text-slate-800 dark:text-slate-200">${t.layers[id]}</span>
+            <span class="font-mono text-xs text-slate-500">${layer.parts.map((p) => `${p.label} ${p.bytes}`).join(' · ')}</span>
+          </span>
+          <button type="button" class="text-xs text-slate-500 hover:text-rose-600 dark:hover:text-rose-400">${t.remove}</button>`;
+        if (layer.padded) li.title = t.padded;
+        li.querySelector('button')!.addEventListener('click', () => { stack.splice(index, 1); render(); });
+        list.append(li);
+      });
+
+      tooSmall.hidden = inner > 0;
+      const ok = inner > 0;
+      set('innerMtu', ok ? bytes(inner) : '—');
+      set('overhead', ok ? bytes(linkMtu - inner) : '—');
+      set('mss4', ok ? bytes(mss(inner)) : '—');
+      set('mss6', ok ? bytes(mss(inner, true)) : '—');
+      set('needed', bytes(totalSize(chain, 1500)));
+      set('frame', Number.isFinite(linkMtu) ? bytes(linkMtu + 14 + 4 + (vlan.checked ? 4 : 0)) : '—');
+
+      // Barre : chaque couche occupe sa part de la MTU du lien, le paquet intérieur le reste
+      bar.innerHTML = '';
+      if (!ok) return;
+      const segments: { label: string; size: number; cls: string }[] = [];
+      for (let i = stack.length - 1; i >= 0; i--) {
+        // Octets ajoutés par la couche i autour du paquet intérieur maximal (bourrage compris)
+        const added = totalSize(chain.slice(0, i + 1), inner) - totalSize(chain.slice(0, i), inner);
+        segments.push({ label: t.layers[stack[i]], size: added, cls: tones[i % tones.length] });
+      }
+      segments.push({ label: t.payload, size: inner, cls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-200' });
+      const used = segments.reduce((s, x) => s + x.size, 0);
+      for (const s of segments) {
+        const div = document.createElement('div');
+        div.className = `flex min-w-0 items-center justify-center overflow-hidden whitespace-nowrap px-1 ${s.cls}`;
+        // Largeur minimale pour qu'un en-tête de 4 octets reste visible à côté de 1500 octets de données
+        div.style.flex = `${Math.max(s.size / used, 0.06)} 1 0`;
+        div.textContent = s.size >= 1 ? `${s.size}` : '';
+        div.title = `${s.label} : ${bytes(s.size)}`;
+        bar.append(div);
+      }
+    };
+
+    root.querySelectorAll<HTMLButtonElement>('[data-add]').forEach((b) =>
+      b.addEventListener('click', () => { stack.push(b.dataset.add!); render(); }),
+    );
+    root.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const preset = t.presets[Number(b.dataset.preset)];
+        link.value = String(preset.mtu);
+        stack = [...preset.stack];
+        render();
+      }),
+    );
+    root.querySelector('[data-clear]')!.addEventListener('click', () => { stack = []; render(); });
+    link.addEventListener('input', render);
+    vlan.addEventListener('change', render);
+    render();
+  });
+</script>
