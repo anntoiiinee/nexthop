@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Code } from 'astro-expressive-code/components';
 import type { Lang } from '@/i18n/ui';
 import ClabDiagram from './ClabDiagram.astro';
+import { tutorialUrl } from '@/lib/content';
 
 interface Props {
   name: string;
@@ -20,6 +21,7 @@ const copy = {
       'Linux (ou WSL2) avec Docker et ContainerLab installés',
       "L'image cEOS-lab, téléchargeable gratuitement sur arista.com (compte requis)",
     ],
+    setup: 'Première fois ? Le tutoriel « Monter son lab » explique toute l\'installation pas à pas',
     importImage: "Importer l'image cEOS",
     download: 'Récupérer le lab',
     files: 'Fichiers',
@@ -34,6 +36,7 @@ const copy = {
       'Linux (or WSL2) with Docker and ContainerLab installed',
       'The cEOS-lab image, free to download from arista.com (account required)',
     ],
+    setup: 'First time? The "Building your network lab" tutorial walks through the whole setup',
     importImage: 'Import the cEOS image',
     download: 'Get the lab',
     files: 'Files',
@@ -84,9 +87,15 @@ const h3 = 'mt-6 text-sm font-semibold text-slate-900 dark:text-white';
     <ul class="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-400">
       {copy.req.map((r) => <li class="flex gap-2"><span class="text-emerald-500">▸</span>{r}</li>)}
     </ul>
+    <a
+      href={tutorialUrl(lang, 'containerlab-setup')}
+      class="mt-3 inline-block text-sm font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+    >
+      {copy.setup} →
+    </a>
 
     <h3 class={h3}>{copy.importImage}</h3>
-    <Code code={'docker import cEOS64-lab-<version>.tar.xz ceos:latest'} lang="bash" />
+    <Code code={'docker import cEOS64-lab-<version>.tar.xz ceos:<version>\ndocker tag ceos:<version> ceos:latest'} lang="bash" />
 
     <h3 class={h3}>{copy.download}</h3>
     <Code code={downloadScript} lang="bash" />
