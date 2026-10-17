@@ -1,0 +1,161 @@
+---
+title: "How the Internet works on a global scale"
+description: "A network of networks: autonomous systems, transit providers, peering and exchange points, submarine cables, address registries and BGP. A packet's path across the Internet, and how to observe it from home."
+pubDate: 2026-10-17
+level: beginner
+tags: [internet, wan, bgp, peering]
+vendor: []
+---
+
+When you open a web page hosted on the other side of the world, the answer arrives in a fraction of a second.
+Between your home router and the server, the packet crossed a dozen networks belonging to different companies,
+often competitors, in several countries, sometimes at the bottom of the ocean. Nobody runs the Internet as a
+whole: it works because tens of thousands of organisations have **agreements** with each other, and a common
+**protocol** to announce their routes.
+
+## A network of networks
+
+The Internet is not one network: it is the **interconnection** of more than 70,000 independent networks, the
+**autonomous systems** (<Term id="as" />). Each has a number (ASN) and runs its own routers and its own policy:
+
+| AS type | Examples | Role |
+|---|---|---|
+| **Access providers** | Your Internet provider, mobile operators | Connecting homes and businesses |
+| **Transit providers** | Large international carriers | Carrying other networks' traffic, from one continent to another |
+| **Content providers and clouds** | Google, Microsoft, Amazon, Meta, Netflix | Hosting services, as close to users as possible |
+| **Companies and institutions** | Universities, banks, governments | Having their own addresses and several providers |
+
+IP addresses and AS numbers are allocated by five **regional registries** (RIRs), under IANA's authority: **RIPE
+NCC** for Europe and the Middle East, ARIN for North America, APNIC for Asia-Pacific, LACNIC for Latin America and
+AFRINIC for Africa. Their databases are public: you can find who owns any address.
+
+## Transit and peering: who pays whom
+
+For two networks to exchange traffic, they make one of these two agreements:
+
+<Topology
+  width={720}
+  height={300}
+  nodes={[
+    { id: 't1', type: 'cloud', x: 360, y: 60, label: 'Transit provider', sub: 'global', tone: 'violet' },
+    { id: 'a', type: 'cloud', x: 170, y: 200, label: 'ISP A', sub: 'access' },
+    { id: 'b', type: 'cloud', x: 550, y: 200, label: 'ISP B', sub: 'access' },
+    { id: 'c', type: 'server', x: 360, y: 240, label: 'Content provider', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'a', to: 't1', label: 'transit (paid)', tone: 'violet' },
+    { from: 'b', to: 't1', label: 'transit (paid)', tone: 'violet' },
+    { from: 'a', to: 'c', label: 'peering', tone: 'emerald', style: 'dashed' },
+    { from: 'c', to: 'b', label: 'peering', tone: 'emerald', style: 'dashed' },
+  ]}
+  caption="Transit gives access to the whole Internet, for a fee. Peering connects two networks directly for their mutual traffic, usually for free."
+/>
+
+- **Transit**: a network pays a transit provider to reach the **whole** Internet. The provider announces every route
+  in the world to it and carries its traffic everywhere. The largest providers, called *Tier 1*, buy transit from
+  nobody: they exchange traffic among themselves.
+- **Peering**: two networks exchange the traffic that concerns them **directly**, without an intermediary, most
+  often without payment. An access provider and a video provider have every reason to do so: traffic is faster,
+  and neither pays transit for it.
+
+### Exchange points
+
+Building a physical link with every network you want to peer with would cost too much. **Internet eXchange Points**
+(IXPs) solve the problem: a large switched network, in a few data centers of a city, which hundreds of networks
+connect to once. Each can then set up peering sessions with all the others. The largest are in Frankfurt (DE-CIX),
+Amsterdam (AMS-IX) and London (LINX); in France, France-IX in Paris and Marseille.
+
+## Submarine cables
+
+Between continents, almost all Internet traffic travels through **fibre optic cables laid on the ocean floor**:
+more than 500 cables, carrying most intercontinental traffic, far ahead of satellites. A modern cable carries
+hundreds of terabits per second over a few fibre pairs, with repeaters every 50 to 100 km to amplify the signal.
+
+They come ashore at **landing stations**, then reach data centers. **Marseille** is one of the world's main hubs:
+around fifteen cables connect Europe to Africa, the Middle East and Asia there. Cables are built by carrier
+consortiums and, more and more, by the content giants themselves. They are sometimes cut (ship anchors,
+earthquakes): traffic then goes through the other cables, more slowly, while a cable ship repairs it.
+
+## BGP, the Internet's glue
+
+How does each network know how to reach the 70,000 others? Through <Term id="bgp" />: each AS announces to its
+neighbours the prefixes it owns, and relays those it learned, according to its business agreements. A carrier
+router thus knows more than a million IPv4 and IPv6 prefixes. The [Dynamic routing](/en/courses/routing) course
+explains BGP in detail.
+
+BGP relies on **trust**: an AS can announce, by mistake or malice, addresses that are not its own. In 2008, a
+Pakistani operator wanting to block YouTube in its country announced YouTube's addresses to the whole world, and
+made YouTube unreachable for two hours. In 2021, Facebook withdrew its own announcements by mistake: its services
+vanished from the Internet for six hours. Operators now deploy <Term id="rpki" />, which lets them check that an AS
+is entitled to announce a prefix.
+
+## A packet's path
+
+What happens when you open `www.example.com` from home?
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'box', label: 'Home router' },
+    { id: 'fai', label: 'Your ISP', tone: 'sky' },
+    { id: 'ix', label: 'IXP or transit', tone: 'violet' },
+    { id: 'srv', label: 'Hosting provider', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'box', to: 'fai', label: 'DNS query, then HTTPS', tone: 'sky' },
+    { note: 'the ISP looks up the best BGP route to the hosting provider', tone: 'slate' },
+    { from: 'fai', to: 'ix', label: 'peering or transit', tone: 'violet' },
+    { from: 'ix', to: 'srv', label: 'hosting provider network', tone: 'emerald' },
+    { from: 'srv', to: 'box', label: 'reply, maybe through another path', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="The path crosses several independent networks. Each picks its route according to its own agreements: the way back does not necessarily follow the way out."
+/>
+
+1. Your router asks your provider's **DNS** for the site's address (see
+   [DDI: DNS, DHCP and IPAM](/en/courses/operations/ddi)).
+2. The packet goes into your access provider's network, which looks up its BGP table.
+3. If the hosting provider is one of its **peering** partners, the packet goes directly through an exchange point or
+   a private link; otherwise, it goes to a **transit provider**.
+4. The packet reaches the hosting provider's network, then the server.
+
+For large services, the server is often **very close to you**: video providers and content delivery networks
+(CDNs) install cache servers directly inside access providers' networks. Your video then crosses no ocean.
+
+## Observing it from home
+
+These tools work from any Linux, macOS or WSL machine connected to the Internet.
+
+**1. The steps of the path.** `mtr` combines `traceroute` and `ping`: it shows each router crossed, with latency and
+loss at each hop.
+
+```bash
+mtr -rwzc 10 one.one.one.one
+```
+
+The `-z` option shows the AS number of each hop: you see the packet leave your provider's network for
+Cloudflare's. Compare with a distant destination, for example a service hosted in Australia: latency jumps when
+crossing the ocean.
+
+**2. Who owns an address.** Team Cymru's public service gives the AS of an IP address:
+
+```bash
+whois -h whois.cymru.com " -v 8.8.8.8"
+```
+
+You get the AS number, the announced prefix, the country and the organisation name. Try it with your own public
+address.
+
+**3. A network's profile.** On **PeeringDB** (`www.peeringdb.com`), look up your access provider: you see which
+exchange points it connects to, and its peering policy. On **RIPEstat** (`stat.ripe.net`), look up an address or an
+AS: announced prefixes, BGP neighbours, history, and RPKI validity.
+
+## Key takeaways
+
+- The Internet is a **network of networks**: more than 70,000 independent **autonomous systems**, with addresses
+  allocated by five **regional registries**.
+- **Transit** (paid, to the whole Internet) and **peering** (direct, often free); **exchange points** make peering
+  possible at scale.
+- **Submarine cables** carry most traffic between continents; Marseille is one of the world's major hubs.
+- **BGP** ties it all together, based on trust, now strengthened by **RPKI**.
+- Major content is served **close to you**, by caches installed inside access providers.
+- `mtr`, `whois`, PeeringDB and RIPEstat let you see all this from home.

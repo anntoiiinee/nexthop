@@ -1,12 +1,130 @@
 ---
 title: "LAN, WAN, PAN : les types de réseaux"
-description: "Réseau personnel, local, métropolitain ou étendu : ce qui les distingue, et les technologies associées à chacun."
+description: "Réseau personnel, local, de campus, métropolitain ou étendu : ce qui les distingue (distance, débit, propriétaire, coût), les technologies associées à chacun, et les autres sigles qu'on croise (WLAN, SAN, VLAN)."
 pubDate: 2026-10-17
 level: beginner
 tags: [lan, wan, pan, fundamentals]
 vendor: []
 ---
 
-<Callout type="note" title="En cours d'écriture">
-Ce tutoriel est en cours de rédaction. Il sera publié très bientôt.
+PAN, LAN, MAN, WAN : ces sigles reviennent dans toutes les offres d'emploi, tous les cours et toutes les
+documentations. Ils classent les réseaux selon leur **étendue géographique**, et derrière la distance se cachent
+des différences très concrètes : qui possède les câbles, quelles technologies on utilise, quel débit on obtient,
+et combien ça coûte.
+
+## Du plus petit au plus grand
+
+<Topology
+  width={720}
+  height={360}
+  groups={[
+    { x: 20, y: 20, w: 680, h: 320, label: 'WAN · pays, continents', tone: 'violet' },
+    { x: 40, y: 60, w: 410, h: 260, label: 'MAN · une ville', tone: 'sky' },
+    { x: 60, y: 100, w: 220, h: 200, label: 'LAN · un bâtiment', tone: 'emerald' },
+    { x: 80, y: 205, w: 120, h: 80, label: 'PAN', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'phone', type: 'host', x: 140, y: 255, label: 'Portable', tone: 'amber' },
+    { id: 'sw', type: 'switch', x: 230, y: 150, label: 'Switch' },
+    { id: 'site2', type: 'router', x: 370, y: 150, label: 'Autre site', sub: 'même ville', tone: 'sky' },
+    { id: 'hq', type: 'router', x: 600, y: 150, label: 'Siège', sub: 'autre pays', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'phone', to: 'sw', style: 'dashed', tone: 'amber', label: 'Wi-Fi' },
+    { from: 'sw', to: 'site2', tone: 'sky', label: 'fibre' },
+    { from: 'site2', to: 'hq', tone: 'violet', label: 'opérateur' },
+  ]}
+  caption="Les réseaux s'emboîtent : un PAN autour d'une personne, un LAN dans un bâtiment, un MAN entre les sites d'une ville, un WAN entre les villes et les pays."
+/>
+
+| Type | Étendue | Technologies typiques | Débit courant | Qui possède les liens |
+|---|---|---|---|---|
+| **PAN** (*Personal Area Network*) | Quelques mètres, autour d'une personne | Bluetooth, USB, NFC | De quelques kb/s à quelques Mb/s | Vous |
+| **LAN** (*Local Area Network*) | Un bâtiment, un étage | Ethernet, Wi-Fi | 1 à 100 Gb/s | L'entreprise |
+| **CAN** (*Campus Area Network*) | Plusieurs bâtiments proches | Fibre entre bâtiments | 10 à 100 Gb/s | L'entreprise |
+| **MAN** (*Metropolitan Area Network*) | Une ville, une agglomération | Fibre noire, Ethernet métropolitain | 1 à 100 Gb/s | Un opérateur, ou une collectivité |
+| **WAN** (*Wide Area Network*) | Des villes, des pays, des continents | MPLS, Internet + VPN, SD-WAN | De quelques Mb/s à 10 Gb/s | Un ou plusieurs opérateurs |
+
+## Le PAN : autour de vous
+
+Le réseau personnel relie les appareils d'une seule personne : un casque Bluetooth au téléphone, une montre
+connectée, un clavier sans fil. Faible portée, faible consommation, peu de débit. Pour un ingénieur réseau, le PAN
+compte surtout pour la **sécurité** : un appareil Bluetooth mal configuré est une porte d'entrée sur un poste.
+
+## Le LAN : le réseau que vous gérez
+
+Le réseau local est celui d'un bâtiment ou d'un site : les postes, les imprimantes, les points d'accès Wi-Fi, les
+serveurs locaux, reliés par des **switches** en **Ethernet** (voir
+[Ethernet et adresses MAC](/formations/fundamentals/ethernet)). C'est le cœur de métier d'un administrateur
+réseau :
+
+- **l'entreprise possède tout** : câbles, switches, points d'accès. Elle peut les changer quand elle veut ;
+- **le débit est abondant et bon marché** : 1 Gb/s par poste, 10 à 100 Gb/s entre switches ;
+- **la latence est très faible** : moins d'une milliseconde ;
+- on le découpe en **VLAN** pour séparer les usages (voir [Les VLAN](/formations/fundamentals/vlan)).
+
+Le **WLAN** (*Wireless LAN*) est simplement la partie sans fil du LAN : le Wi-Fi.
+
+## Le CAN et le MAN : entre les bâtiments
+
+Quand une entreprise occupe plusieurs bâtiments, sur un campus universitaire, un site industriel ou un
+hôpital, on relie les LAN par de la **fibre optique** posée entre les bâtiments : c'est un réseau de campus (CAN),
+toujours possédé par l'entreprise.
+
+À l'échelle d'une ville, on ne peut plus tirer ses propres câbles sous la voirie. On loue alors :
+
+- de la **fibre noire** : une fibre nue, sans équipement, que l'on « allume » avec ses propres équipements ;
+- un service d'**Ethernet métropolitain** : l'opérateur fournit un lien Ethernet entre deux sites, comme un très
+  long câble.
+
+C'est le réseau métropolitain (MAN). Les collectivités en construisent aussi pour relier leurs écoles, leurs
+mairies et leurs hôpitaux.
+
+## Le WAN : entre les villes et les pays
+
+Le réseau étendu relie des sites éloignés : le siège à Paris, une agence à Lyon, une usine en Pologne. Ici,
+l'entreprise ne possède **plus rien** : elle achète des services à des opérateurs. Tout change :
+
+- **le débit est cher** : quelques centaines de Mb/s coûtent bien plus que 10 Gb/s dans un LAN ;
+- **la latence augmente avec la distance** : la lumière parcourt environ 1000 km en 5 ms dans la fibre, et un
+  aller-retour entre Paris et New York prend environ 75 ms ;
+- **on dépend d'un tiers** : sa qualité de service, ses délais d'intervention, ses pannes.
+
+Les technologies de WAN :
+
+| Technologie | Principe | Pour qui |
+|---|---|---|
+| **Liaison louée** | Un lien point à point dédié entre deux sites | Historique, encore utilisé pour des besoins critiques |
+| **MPLS** | Un réseau privé construit par l'opérateur, qui relie tous les sites de l'entreprise (voir [MPLS](/tutoriels/mpls)) | Les grandes entreprises, depuis vingt ans |
+| **Internet + VPN** | Chaque site a un accès Internet, et un tunnel chiffré relie les sites (voir [VPN IPsec](/formations/security/ipsec-vpn)) | Les petites structures, et en secours |
+| **SD-WAN** | Un pilotage centralisé qui combine plusieurs liens (MPLS, Internet, 4G/5G) et choisit le meilleur pour chaque application | La tendance actuelle |
+
+**Internet** lui-même est le plus grand des WAN : un réseau de réseaux, qui relie des dizaines de milliers
+d'opérateurs (voir [Comment fonctionne Internet à l'échelle mondiale](/tutoriels/internet-wan)).
+
+<Callout type="field">
+Dans un projet d'ouverture de site, c'est presque toujours le **WAN** qui fixe le calendrier. Le LAN se commande et
+se configure en quelques semaines ; un lien opérateur demande souvent deux à trois mois, parfois plus si des
+travaux de génie civil sont nécessaires pour amener la fibre. Commandez le lien WAN (et un lien de secours chez un
+autre opérateur) dès que l'adresse du site est connue, et prévoyez un accès 4G/5G provisoire.
 </Callout>
+
+## Les autres sigles
+
+Certains sigles en « AN » ne parlent pas d'étendue :
+
+- **WLAN** : le LAN sans fil (Wi-Fi) ;
+- **VLAN** (*Virtual LAN*) : un LAN **logique**, découpé dans un LAN physique, sans rapport avec la distance ;
+- **SAN** (*Storage Area Network*) : le réseau dédié au stockage dans un data center (Fibre Channel, iSCSI), séparé
+  du réseau des serveurs ;
+- **SD-WAN** et **SD-LAN** : des WAN ou des LAN pilotés par un contrôleur central (*Software-Defined*).
+
+## À retenir
+
+- Les types de réseaux se classent par **étendue** : **PAN** (une personne), **LAN** (un bâtiment), **CAN** (un
+  campus), **MAN** (une ville), **WAN** (des pays).
+- Plus le réseau est étendu, moins l'entreprise possède les liens : **le LAN lui appartient, le WAN est loué** à des
+  opérateurs.
+- LAN : débit abondant, latence minime. WAN : débit cher, latence liée à la distance, dépendance à l'opérateur.
+- Technologies de WAN : liaison louée, **MPLS**, **Internet + VPN**, **SD-WAN**.
+- WLAN, VLAN et SAN ne décrivent pas une distance, mais un **usage** ou un **découpage** logique.

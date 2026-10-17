@@ -1,0 +1,208 @@
+---
+title: "MPLS: label switching"
+description: "Understanding MPLS: labels and header, LSRs and LERs, push, swap and pop, LDP and LSPs, layer 3 VPNs with VRF, RD, RT and MP-BGP, traffic engineering and Segment Routing, and why carriers still use it everywhere."
+pubDate: 2026-10-17
+level: intermediate
+tags: [mpls, wan, routing, l3vpn, bgp]
+vendor: [multi]
+---
+
+To connect its sites, a company often buys an "MPLS VPN" from a carrier: each site connects to the carrier's
+network, and all sites see each other as if they were on one private network. Behind this offer lies **MPLS**
+(*Multiprotocol Label Switching*), the technology almost every carrier network has been built on for more than
+twenty years. This tutorial explains how it works, and why it is still around.
+
+## The idea: switch on a label rather than route on an address
+
+In a classic IP network, each router looks at each packet's destination address and searches its table for the
+**longest prefix** match (see [Static routing](/en/courses/fundamentals/static-routing)). MPLS adds a short tag, the
+**label**, in front of the packet at the network's edge. Core routers only look at that label: they look it up in a
+simple table, replace it with another, and forward. The IP packet is only examined at entry and exit.
+
+Originally, the benefit was speed (an exact lookup on a label rather than a prefix lookup). Modern routers route IP
+just as fast; MPLS's value now lies elsewhere: **separating transport from service**. The core only carries
+labels, and you can make it carry anything: customer VPNs, traffic whose path you choose, IPv6 over an IPv4 core.
+
+## The MPLS header
+
+The label sits between the Ethernet header and the IP header (hence "layer 2.5"):
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'MPLS header', fields: [
+      { label: 'Label', sub: '20 bits · 0 to 1,048,575', span: 20, tone: 'violet' },
+      { label: 'TC', sub: '3 bits · QoS', span: 3, tone: 'amber' },
+      { label: 'S', sub: '1 bit', span: 1, tone: 'sky' },
+      { label: 'TTL', sub: '8 bits', span: 8, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="4 bytes per label. The S bit (bottom of Stack) marks the last label of a stack: a packet can carry several stacked labels."
+/>
+
+- **Label**: the number used for switching;
+- **TC** (*Traffic Class*): the priority, for quality of service;
+- **S**: set to 1 on the last label of the stack. Services such as VPNs use **two labels**: one for transport, one for
+  the service;
+- **TTL**: as in IP, decremented at each hop, to avoid loops.
+
+## Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **LSR** (*Label Switching Router*) | A router switching on labels. In a carrier core: a **P** router (*Provider*) |
+| **LER** (*Label Edge Router*) | An edge router, adding and removing labels. At a carrier: a **PE** router (*Provider Edge*) |
+| **CE** (*Customer Edge*) | The customer's router, connected to the PE. It does no MPLS |
+| **LSP** (*Label Switched Path*) | The path followed by a labelled packet, from one PE to another |
+| **FEC** (*Forwarding Equivalence Class*) | A set of packets handled the same way, for example all those to one destination |
+
+## Push, swap, pop
+
+<Topology
+  width={720}
+  height={260}
+  groups={[{ x: 140, y: 30, w: 440, h: 200, label: "Carrier network (MPLS)", tone: 'violet' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 70, y: 130, label: 'CE1', sub: 'site A' },
+    { id: 'pe1', type: 'router', x: 210, y: 130, label: 'PE1', tone: 'violet' },
+    { id: 'p', type: 'router', x: 360, y: 130, label: 'P', tone: 'violet' },
+    { id: 'pe2', type: 'router', x: 510, y: 130, label: 'PE2', tone: 'violet' },
+    { id: 'ce2', type: 'router', x: 650, y: 130, label: 'CE2', sub: 'site B' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'pe1' }, { from: 'pe1', to: 'p', tone: 'violet' }, { from: 'p', to: 'pe2', tone: 'violet' }, { from: 'pe2', to: 'ce2' },
+  ]}
+  flows={[
+    { from: 'ce1', to: 'pe1', label: 'IP', tone: 'emerald', offset: -26 },
+    { from: 'pe1', to: 'p', label: 'push 24001', tone: 'violet', offset: -26 },
+    { from: 'p', to: 'pe2', label: 'swap → 24005', tone: 'violet', offset: -26 },
+    { from: 'pe2', to: 'ce2', label: 'pop → IP', tone: 'emerald', offset: -26 },
+  ]}
+  caption="The ingress PE adds a label (push), each P router replaces it (swap), the egress PE removes it (pop). Labels only have local meaning, from one router to its neighbour."
+/>
+
+1. **Push**: PE1 receives an IP packet from site A, works out its destination, and **adds** the label expected by the
+   next router.
+2. **Swap**: P looks up the label in its table (the *LFIB*), **replaces** it with the label expected by the next
+   router, and forwards. It does not look at the IP header.
+3. **Pop**: PE2 **removes** the label and routes the IP packet to site B.
+
+A label only means something **between two neighbouring routers**: that is why it changes at each hop. Often, the
+second-to-last router already removes the label (*Penultimate Hop Popping*), saving the egress PE a lookup.
+
+## LDP: distributing labels
+
+Each router picks its own labels for each destination, and must tell its neighbours. That is the job of **LDP**
+(*Label Distribution Protocol*): for each prefix of its routing table (in practice, the PEs' loopbacks), a router
+tells its neighbours "to reach this prefix, send me label 24001". LDP follows routing: the IGP (<Term id="ospf" /> or
+IS-IS) picks the path, LDP attaches labels to it.
+
+```text title="Cisco IOS: enabling MPLS and LDP"
+mpls label protocol ldp
+mpls ldp router-id Loopback0 force
+!
+interface GigabitEthernet0/1
+ mpls ip
+```
+
+```text title="Arista EOS: enabling MPLS and LDP"
+mpls ip
+!
+mpls ldp
+   router-id interface Loopback0
+   transport-address interface Loopback0
+   no shutdown
+!
+interface Ethernet1
+   mpls ldp interface
+```
+
+To verify: `show mpls ldp neighbor` (LDP neighbours), then `show mpls forwarding-table` on Cisco or
+`show mpls lfib route` on Arista (the label table: incoming label, outgoing label, interface).
+
+## The layer 3 VPN: the service carriers sell
+
+The carriers' "MPLS VPN" is an **L3VPN**: each customer has its own routes, isolated from other customers', even if
+they use the same private addresses. It combines three mechanisms seen elsewhere:
+
+- on each PE, one <Term id="vrf" /> per customer, holding its routes (see [VRFs](/en/courses/datacenter/vrf));
+- **MP-BGP** (multiprotocol BGP, `vpnv4` family) between PEs, to exchange the routes of every VRF. Each route carries
+  an <Term id="rd" /> (to make it unique) and an <Term id="rt" /> (to know which VRF to import it into);
+- **two labels** on each packet: the **transport** label (distributed by LDP) takes it to the right PE; the **service**
+  label (distributed by MP-BGP) tells the egress PE which VRF to hand it to.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'In the core', fields: [
+      { label: 'Ethernet', span: 2, tone: 'slate' },
+      { label: 'Transport label', sub: 'to PE2 · LDP', span: 3, tone: 'violet' },
+      { label: 'VPN label', sub: 'VRF CLIENT-A · MP-BGP', span: 3, tone: 'amber' },
+      { label: 'Customer IP packet', sub: '10.1.1.10 → 10.2.2.20', span: 4, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="An L3VPN packet in the core: P routers only look at the transport label; the VPN label is only read by the egress PE."
+/>
+
+```text title="Cisco IOS: a PE with a customer VRF"
+vrf definition CLIENT-A
+ rd 65000:100
+ address-family ipv4
+  route-target export 65000:100
+  route-target import 65000:100
+!
+interface GigabitEthernet0/2
+ description customer A CE
+ vrf forwarding CLIENT-A
+ ip address 192.0.2.1 255.255.255.252
+!
+router bgp 65000
+ neighbor 10.255.0.2 remote-as 65000
+ neighbor 10.255.0.2 update-source Loopback0
+ address-family vpnv4
+  neighbor 10.255.0.2 activate
+  neighbor 10.255.0.2 send-community extended
+ address-family ipv4 vrf CLIENT-A
+  redistribute connected
+```
+
+For the customer company, all of this is invisible: its CE router simply exchanges its routes with the carrier's
+PE, over BGP or static routes.
+
+## Beyond the L3VPN
+
+- **L2VPN**: the same principle to carry Ethernet between sites, as if the sites were on one switch (pseudowires,
+  VPLS, and now EVPN, the same as in data centers).
+- **Traffic engineering**: with RSVP-TE, the carrier chooses an LSP's path (avoid a saturated link, guarantee
+  bandwidth), instead of following the IGP's shortest path.
+- **Segment Routing**: the next generation. The ingress PE stacks the list of routers (*segments*) the packet must
+  go through; no more LDP or RSVP, the IGP distributes the labels itself (SR-MPLS), or segments are IPv6 addresses
+  (SRv6).
+
+## MPLS and the enterprise today
+
+For a company, a carrier MPLS VPN remains a safe bet: contractual quality of service, controlled latency, a
+private network that does not go through the Internet. But it is expensive, slow to deliver, and fits poorly with
+today's usage, where most traffic goes to the cloud and SaaS, over the Internet. **SD-WAN** now often combines an
+MPLS link, for critical applications, with one or more cheaper Internet accesses for the rest (see
+[LAN, WAN, PAN](/en/tutorials/lan-wan-pan)). On the carrier side, however, MPLS and Segment Routing remain at the
+heart of almost every network.
+
+<Callout type="field">
+A reflex to have with a carrier MPLS VPN: ask for the contract's **classes of service**, and mark traffic
+accordingly on the site router. Telephony that "crackles" at peak times often comes from missing or rewritten DSCP
+marking: voice then travels in the same class as backups, and suffers the same losses when the link is full.
+</Callout>
+
+## Key takeaways
+
+- MPLS switches on a 4-byte **label**, placed between Ethernet and IP. Core routers only look at the label.
+- **Push** at entry (PE), **swap** in the core (P), **pop** at exit. A label only means something between two
+  neighbours.
+- **LDP** distributes labels following the IGP; the path is an **LSP**.
+- The carriers' **L3VPN**: one **VRF** per customer, **MP-BGP** with **RD** and **RT**, and **two labels** (transport and
+  service).
+- **L2VPN**, **traffic engineering** and **Segment Routing** rely on the same principle.
+- In companies, the MPLS VPN now coexists with the Internet in **SD-WAN**.

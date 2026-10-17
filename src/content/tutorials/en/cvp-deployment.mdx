@@ -1,0 +1,157 @@
+---
+title: "Deploying CloudVision Portal (CVP)"
+description: "Arista CloudVision on premises (CVP) or as a service (CVaaS): architecture, installing a node or a cluster, onboarding switches with TerminAttr or ZTP, then provisioning with configlets or Studios and change controls."
+pubDate: 2026-10-17
+level: advanced
+tags: [cloudvision, automation, eos, ztp, telemetry]
+vendor: [arista]
+---
+
+**CloudVision** is Arista's network management platform: inventory, continuous telemetry, configuration and
+upgrade management, compliance, all from a single console. It comes in two versions: **CloudVision Portal**
+(CVP), installed on your own servers, and **CloudVision as-a-Service** (CVaaS), hosted by Arista. This tutorial
+covers the architecture, installing CVP, onboarding switches and the first configuration changes.
+
+CloudVision is a licensed product: no lab here. Arista offers CVaaS trials, and the onboarding principles are the
+same in both versions.
+
+## What CloudVision does
+
+| Feature | What it brings |
+|---|---|
+| **Inventory** | Every switch, its model, its EOS version, its optics |
+| **Telemetry** | Each switch's complete state, received continuously: interfaces, routes, MAC tables, events, with a history you can browse through time |
+| **Provisioning** | Each switch's configuration, built from reusable blocks or templates, and applied through **change controls** |
+| **Images** | EOS upgrades on groups of switches, with pre and post checks |
+| **Compliance** | Detecting drift between intended and running configuration, and known vulnerabilities |
+
+Telemetry is CloudVision's great strength: through the **TerminAttr** agent, each switch continuously streams its
+whole internal state (its *Sysdb* database), and CloudVision keeps it. You can go back in time and see a switch's
+routing table or MAC tables as they were when an incident happened.
+
+## On premises or as a service
+
+| | CVP (on premises) | CVaaS |
+|---|---|---|
+| **Where** | Your servers: virtual machines (VMware ESXi, KVM) or Arista appliances | Arista's cloud, in the region of your choice |
+| **Operations** | Installation, backups, upgrades, monitoring: your job | Handled by Arista; new features available earlier |
+| **Switch onboarding** | To your CVP nodes' addresses, port 9910 | To the CVaaS region's address, over HTTPS (443) |
+| **For whom** | Networks isolated from the Internet, regulatory constraints | Most other cases |
+
+## Installing CVP
+
+### One node or a cluster
+
+CVP installs on **a single node** (lab, small networks) or as a **three-node cluster**, which tolerates losing one
+of them. In production, choose the cluster. The resources required (CPU, memory, disk) are significant and depend
+on the version and the number of switches: several dozen cores and GB of memory per node. Refer to your version's
+installation guide, and follow it: an undersized CVP is slow, and falls behind on telemetry.
+
+### Before starting
+
+CVP is demanding about its environment. Prepare:
+
+- **a fixed IP address** per node, and a virtual address for the cluster if you use one;
+- **forward and reverse DNS records** for each node: their absence is the first cause of installation failure;
+- **a reachable NTP server**: cluster nodes and switches must share the same time;
+- **open flows** between switches and CVP (port 9910 for TerminAttr, 443 for the interface and API), and between
+  cluster nodes.
+
+### The steps
+
+1. **Deploy the image**: the OVA on VMware, or the KVM image, with the planned resources.
+2. **Run the configuration**: on the virtual machine's console, log in with the `cvpadmin` account. An interactive
+   wizard asks for the mode (single node or cluster), then each node's addresses, mask, gateway, DNS and NTP servers
+   and name.
+3. **Wait for the services to start**, several tens of minutes on the first run, and check it:
+
+```bash title="On a CVP node"
+cvpi status all
+```
+
+Every component must be `RUNNING`. The same `cvpi` commands stop and start services (`cvpi stop all`,
+`cvpi start all`) and run backups (`cvpi backup cvp`).
+
+4. **Log in to the web interface**, over HTTPS on the node's address, and create the administration accounts. In
+   production, authentication goes through TACACS+ or RADIUS, as for the switches.
+
+## Onboarding switches
+
+### With TerminAttr
+
+Each switch runs an agent, **TerminAttr**, which opens a connection to CloudVision and streams its telemetry.
+Authentication uses a **token** generated in CloudVision (device onboarding menu), copied to the switch.
+
+```text title="Arista EOS: onboarding to an on-premises CVP cluster"
+daemon TerminAttr
+   exec /usr/bin/TerminAttr -cvaddr=192.0.2.51:9910,192.0.2.52:9910,192.0.2.53:9910 -cvauth=token,/tmp/token -cvvrf=MGMT -taillogs
+   no shutdown
+```
+
+- `-cvaddr`: the CVP nodes' addresses (the three nodes of a cluster);
+- `-cvauth=token,/tmp/token`: the file holding the onboarding token;
+- `-cvvrf=MGMT`: the VRF used to reach CVP, usually the management VRF (see
+  [Management and out-of-band access](/en/courses/operations/oob));
+- `-taillogs`: also send the switch's logs.
+
+For CVaaS, `-cvaddr` points to your region's address over HTTPS (port 443) and authentication uses
+`-cvauth=token-secure,<file>`; CloudVision shows the exact line to copy when generating the token.
+
+```text title="Verify on the switch"
+show daemon TerminAttr
+```
+
+The agent must be running. If something is wrong, its logs are in `/var/log/agents/` (from `bash`, `TerminAttr-*`
+files): token rejected, address unreachable, clock drift.
+
+The switch then shows up in CloudVision's inventory, and its telemetry starts flowing.
+
+### With ZTP
+
+For a new, unconfigured switch, CloudVision can also act as a **Zero Touch Provisioning** server: the switch boots,
+gets an address over DHCP along with CVP's bootstrap script address (option 67), downloads the script, and
+registers on its own. All that is left is to assign its configuration and image from CloudVision. It is the ideal
+method to deploy a new fabric (see [DDI: DNS, DHCP and IPAM](/en/courses/operations/ddi) for DHCP options).
+
+## Changing the configuration
+
+CloudVision offers two approaches, which coexist depending on the version.
+
+**Provisioning with configlets** (the historical approach): a switch's configuration is the assembly of
+**configlets**, reusable configuration blocks (an "NTP" configlet shared by all, a "VLAN" configlet per site, a
+configlet specific to the switch). They are assigned to containers (groups of switches) or to a switch, and
+CloudVision computes the complete configuration.
+
+**Studios** (the current approach): you describe the intent (the fabric, VLANs, services) in forms and templates,
+and CloudVision generates the configurations. Changes are prepared in a **workspace**, which shows the differences
+before submitting them.
+
+Either way, nothing is applied directly: each change becomes a task, grouped into a **change control**. It is
+reviewed, approved (by another person if you wish), then executed, switch by switch or in parallel, with rollback
+available.
+
+<Callout type="field">
+The classic trap of the first months with CloudVision: changes made directly in CLI on a switch, "just to
+troubleshoot". CloudVision detects the drift, and at the next change control on that switch, offers to restore its
+own configuration, silently erasing the fix. Set a clear rule: either every change goes through CloudVision, or
+every CLI fix is reported in CloudVision the same day.
+</Callout>
+
+## Automating around CloudVision
+
+- **API**: CloudVision exposes a REST API and gRPC APIs (*Resource APIs*), for inventory, telemetry and
+  provisioning.
+- **Ansible**: the `arista.cvp` collection drives configlets, containers and change controls.
+- **AVD**: Arista AVD generates a fabric's configurations from a data model, and can deploy them **through
+  CloudVision**, to benefit from its change controls and telemetry.
+
+## Key takeaways
+
+- **CloudVision** manages an Arista fleet: inventory, continuous and historised **telemetry**, provisioning, images,
+  compliance. On premises (**CVP**) or as **CVaaS**.
+- CVP: one node or a **three-node cluster**, with a carefully prepared environment (forward and reverse DNS, NTP,
+  open flows). `cvpi status all` to check.
+- Switches onboard with the **TerminAttr** agent and a **token**, through the management VRF, or on their own with
+  **ZTP**.
+- Configuration through **configlets** or **Studios**, applied by reviewed and approved **change controls**.
+- Any change outside CloudVision creates drift: decide on a rule and stick to it.

@@ -1,0 +1,222 @@
+---
+title: "Installing plugins in NetBox"
+description: "Extending NetBox with plugins: choosing a compatible plugin, installing it on a classic install or with netbox-docker, checking it is loaded, upgrading and removing it without breaking the database."
+pubDate: 2026-10-17
+level: intermediate
+tags: [netbox, automation, source-of-truth, docker]
+vendor: [netbox]
+---
+
+NetBox describes devices, cables, addresses and circuits very well. But every company has needs it does not
+cover out of the box: BGP sessions, a graphical view of the topology, DNS zones, floor plans. **Plugins** add
+these features: new data models, new pages and new API endpoints, integrated into the NetBox interface as if
+they were part of it.
+
+This tutorial installs the **netbox-bgp** plugin in two ways: on a classic install, then with **netbox-docker**.
+The Docker procedure was tested with netbox-docker 5.1.1 (NetBox 4.7.3) and netbox-bgp 0.20.2.
+
+## A few useful plugins
+
+| Plugin | What it adds |
+|---|---|
+| **netbox-bgp** | BGP sessions, peer groups, routing policies, communities |
+| **netbox-topology-views** | A topology diagram, drawn from the cables recorded in NetBox |
+| **netbox-dns** | DNS zones and records, tied to NetBox IP addresses |
+| **netbox-floorplan** | Room floor plans, with rack locations |
+| **netbox-branching** | Change branches, to review before applying them (by NetBox Labs) |
+
+The full list is on the NetBox Labs website, which flags **certified** plugins (maintained and tested with each
+release), and on GitHub.
+
+## The crucial point: compatibility
+
+A plugin hooks into NetBox's internals: it uses its internal models, which change from one release to the next.
+Most plugins therefore publish **one release per NetBox minor version**. Here is netbox-bgp's matrix:
+
+| netbox-bgp | Minimum NetBox | Maximum NetBox |
+|---|---|---|
+| 0.20.2 | 4.7.0 | 4.7.x |
+| 0.19.0 | 4.6.0 | 4.6.x |
+| 0.18.1 | 4.5.0 | 4.5.x |
+| 0.17.0 | 4.4.0 | 4.4.x |
+
+**Before installing a plugin, read its compatibility matrix.** And before upgrading NetBox, check that **every**
+installed plugin already has a release for the new NetBox version.
+
+What happens with an incompatible version? With netbox-bgp 0.19.0 on NetBox 4.7, NetBox still starts, and only
+writes a warning in its logs:
+
+```text
+UserWarning: Unable to load plugin netbox_bgp: Plugin netbox_bgp requires NetBox maximum version 4.6.99 (current: 4.7.3).
+```
+
+The plugin is not loaded, its menus disappear, and nothing else tells you. Remember to read the logs after each
+installation.
+
+<Callout type="field">
+The classic scenario: NetBox must be upgraded to fix a vulnerability, but a plugin installed two years ago no
+longer has a maintainer and no longer follows releases. The upgrade is blocked, or the plugin must be removed,
+losing the data it held. Before adopting a plugin, look at the date of its last release, the number of
+contributors and how quickly it follows new NetBox versions. A plugin is a **dependency**: it commits you for the
+whole life of your NetBox.
+</Callout>
+
+## Classic installation
+
+On a "manual" NetBox install (in `/opt/netbox`, with a Python virtual environment), the procedure takes five
+steps.
+
+**1. Install the package** in NetBox's virtual environment:
+
+```bash
+source /opt/netbox/venv/bin/activate
+pip install netbox-bgp==0.20.2
+```
+
+**2. Record it in `local_requirements.txt`**, so it is reinstalled at every NetBox upgrade (the `upgrade.sh`
+script reads this file):
+
+```bash
+echo "netbox-bgp==0.20.2" >> /opt/netbox/local_requirements.txt
+```
+
+**3. Enable it** in `/opt/netbox/netbox/netbox/configuration.py`:
+
+```python title="configuration.py"
+PLUGINS = ["netbox_bgp"]
+
+PLUGINS_CONFIG = {
+    "netbox_bgp": {},
+}
+```
+
+Mind the name: the package is `netbox-bgp` (with a hyphen) for `pip`, but the Python module is `netbox_bgp` (with
+an underscore) in `PLUGINS`.
+
+**4. Create its tables and collect its static files:**
+
+```bash
+cd /opt/netbox/netbox
+python3 manage.py migrate
+python3 manage.py collectstatic --no-input
+```
+
+**5. Restart NetBox** and its worker:
+
+```bash
+sudo systemctl restart netbox netbox-rq
+```
+
+## With netbox-docker
+
+With **netbox-docker**, you do not change the container by hand: you build an **image** that already contains the
+plugin. Four files, to put in the netbox-docker folder.
+
+The list of plugins, with their version:
+
+```text title="plugin_requirements.txt"
+netbox-bgp==0.20.2
+```
+
+An image built from the official one. It has no `pip`, but `uv`, a faster Python installer:
+
+```dockerfile title="Dockerfile-Plugins"
+FROM netboxcommunity/netbox:v4.7-5.1.1
+
+COPY ./plugin_requirements.txt /opt/netbox/
+RUN /usr/local/bin/uv pip install -r /opt/netbox/plugin_requirements.txt
+```
+
+An override file telling Docker Compose to use that image, for NetBox **and** its worker:
+
+```yaml title="docker-compose.override.yml"
+services:
+  netbox:
+    image: netbox:v4.7-5.1.1-plugins
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile-Plugins
+    ports:
+      - "8000:8080"
+  netbox-worker:
+    image: netbox:v4.7-5.1.1-plugins
+    pull_policy: never
+```
+
+And the activation, in the file netbox-docker provides for it:
+
+```python title="configuration/plugins.py"
+PLUGINS = ["netbox_bgp"]
+
+PLUGINS_CONFIG = {
+    "netbox_bgp": {},
+}
+```
+
+Build the image, then start. The plugin's migrations are applied automatically at startup:
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+<Callout type="warning">
+On the **first** start, NetBox creates all its tables, plus the plugins' ones: this can exceed the health check
+delay (90 seconds by default). `docker compose up` then prints
+`dependency failed to start: container … is unhealthy`, while NetBox is simply still starting. Wait until
+`docker compose ps` shows `healthy` for the `netbox` container, then run `docker compose up -d` again to start the
+worker. To avoid the error, raise `start_period` in the override file.
+</Callout>
+
+## Checking the plugin is loaded
+
+The most reliable way is the API: the `/api/status/` endpoint lists the plugins actually loaded, with their
+version.
+
+```bash
+curl -s -H "Authorization: Bearer $NETBOX_TOKEN" http://localhost:8000/api/status/
+```
+
+```text
+{"netbox-version": "4.7.3", …, "plugins": {"netbox_bgp": "0.20.2"}, …}
+```
+
+The plugin also exposes its own API endpoints, under `/api/plugins/`:
+
+```bash
+curl -s -H "Authorization: Bearer $NETBOX_TOKEN" http://localhost:8000/api/plugins/bgp/session/
+```
+
+In the interface, a new **BGP** menu appears. In recent NetBox versions (as in 4.7), API tokens look like
+`nbt_<key>.<secret>`, sent with `Authorization: Bearer`; scripts written for older tokens
+(`Authorization: Token …`) must be adapted.
+
+## Upgrading
+
+Order matters:
+
+1. **back up the database** (`pg_dump`);
+2. check the compatibility matrix of **every** plugin for the new NetBox version;
+3. upgrade NetBox **and** the plugin versions at the same time (in `local_requirements.txt` or
+   `plugin_requirements.txt`);
+4. apply migrations, then check `/api/status/` and the logs.
+
+With netbox-docker, that means changing the version in the `FROM` line and in `plugin_requirements.txt`,
+rebuilding the image and restarting.
+
+## Removing a plugin
+
+Removing a plugin from `PLUGINS` disables it, but **its tables remain** in the database. To remove them cleanly,
+most plugins document a procedure (a migration back to zero, to run **before** uninstalling the package). Back up
+the database first: the plugin's data will be lost.
+
+## Key takeaways
+
+- A plugin adds models, pages and APIs to NetBox; it is a long-term **dependency**.
+- **One plugin release per NetBox minor version**: read the compatibility matrix before installing and before
+  every upgrade.
+- Classic install: `pip install`, `local_requirements.txt`, `PLUGINS`, `migrate`, `collectstatic`, restart.
+- netbox-docker: an image built with `uv pip install`, used by NetBox **and** the worker.
+- Check with `/api/status/` and the logs: an incompatible plugin does not stop NetBox from starting, it silently
+  disappears.

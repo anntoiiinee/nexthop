@@ -1,12 +1,214 @@
 ---
 title: "MPLS : la commutation par labels"
-description: "Comprendre MPLS : labels, LDP, LSP, VPN de niveau 3, et pourquoi les opérateurs l'utilisent encore partout."
+description: "Comprendre MPLS : labels et en-tête, LSR et LER, push, swap et pop, LDP et LSP, VPN de niveau 3 avec VRF, RD, RT et MP-BGP, ingénierie de trafic et Segment Routing, et pourquoi les opérateurs l'utilisent encore partout."
 pubDate: 2026-10-17
 level: intermediate
-tags: [mpls, wan, routing]
+tags: [mpls, wan, routing, l3vpn, bgp]
 vendor: [multi]
 ---
 
-<Callout type="note" title="En cours d'écriture">
-Ce tutoriel est en cours de rédaction. Il sera publié très bientôt.
+Pour relier ses sites, une entreprise achète souvent un « VPN MPLS » à un opérateur : chaque site est raccordé au
+réseau de l'opérateur, et tous les sites se voient comme s'ils étaient sur un même réseau privé. Derrière cette
+offre se cache **MPLS** (*Multiprotocol Label Switching*), la technologie sur laquelle reposent les réseaux de
+presque tous les opérateurs depuis plus de vingt ans. Ce tutoriel explique comment elle fonctionne, et pourquoi
+elle est toujours là.
+
+## L'idée : commuter sur un label plutôt que router sur une adresse
+
+Dans un réseau IP classique, chaque routeur examine l'adresse de destination de chaque paquet et cherche dans sa
+table la route au **plus long préfixe** (voir [Le routage statique](/formations/fundamentals/static-routing)). MPLS
+ajoute une étiquette courte, le **label**, devant le paquet à l'entrée du réseau. Les routeurs du cœur ne regardent
+plus que ce label : ils le cherchent dans une table simple, le remplacent par un autre, et transmettent. Le paquet
+IP n'est examiné qu'à l'entrée et à la sortie.
+
+À l'origine, l'intérêt était la vitesse (une recherche exacte sur un label plutôt qu'une recherche de préfixe).
+Les routeurs modernes routent l'IP tout aussi vite ; l'intérêt de MPLS est aujourd'hui ailleurs : **séparer le
+transport du service**. Le cœur ne fait que transporter des labels, et on peut lui faire transporter n'importe quoi :
+des VPN de clients, du trafic dont on choisit le chemin, de l'IPv6 sur un cœur IPv4.
+
+## L'en-tête MPLS
+
+Le label est placé entre l'en-tête Ethernet et l'en-tête IP (on parle de « couche 2,5 ») :
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'En-tête MPLS', fields: [
+      { label: 'Label', sub: '20 bits · 0 à 1 048 575', span: 20, tone: 'violet' },
+      { label: 'TC', sub: '3 bits · QoS', span: 3, tone: 'amber' },
+      { label: 'S', sub: '1 bit', span: 1, tone: 'sky' },
+      { label: 'TTL', sub: '8 bits', span: 8, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="4 octets par label. Le bit S (bottom of Stack) indique le dernier label d'une pile : un paquet peut porter plusieurs labels empilés."
+/>
+
+- **Label** : le numéro qui sert à commuter ;
+- **TC** (*Traffic Class*) : la priorité, pour la qualité de service ;
+- **S** : à 1 sur le dernier label de la pile. Les services comme les VPN utilisent **deux labels** : un pour le
+  transport, un pour le service ;
+- **TTL** : comme en IP, décrémenté à chaque saut, pour éviter les boucles.
+
+## Le vocabulaire
+
+| Terme | Signification |
+|---|---|
+| **LSR** (*Label Switching Router*) | Un routeur qui commute sur les labels. Dans le cœur d'un opérateur : un routeur **P** (*Provider*) |
+| **LER** (*Label Edge Router*) | Un routeur en bordure, qui ajoute et retire les labels. Chez un opérateur : un routeur **PE** (*Provider Edge*) |
+| **CE** (*Customer Edge*) | Le routeur du client, raccordé au PE. Il ne fait pas de MPLS |
+| **LSP** (*Label Switched Path*) | Le chemin suivi par un paquet labellisé, d'un PE à un autre |
+| **FEC** (*Forwarding Equivalence Class*) | Un ensemble de paquets traités de la même façon, par exemple tous ceux vers une même destination |
+
+## Push, swap, pop
+
+<Topology
+  width={720}
+  height={260}
+  groups={[{ x: 140, y: 30, w: 440, h: 200, label: "Réseau de l'opérateur (MPLS)", tone: 'violet' }]}
+  nodes={[
+    { id: 'ce1', type: 'router', x: 70, y: 130, label: 'CE1', sub: 'site A' },
+    { id: 'pe1', type: 'router', x: 210, y: 130, label: 'PE1', tone: 'violet' },
+    { id: 'p', type: 'router', x: 360, y: 130, label: 'P', tone: 'violet' },
+    { id: 'pe2', type: 'router', x: 510, y: 130, label: 'PE2', tone: 'violet' },
+    { id: 'ce2', type: 'router', x: 650, y: 130, label: 'CE2', sub: 'site B' },
+  ]}
+  links={[
+    { from: 'ce1', to: 'pe1' }, { from: 'pe1', to: 'p', tone: 'violet' }, { from: 'p', to: 'pe2', tone: 'violet' }, { from: 'pe2', to: 'ce2' },
+  ]}
+  flows={[
+    { from: 'ce1', to: 'pe1', label: 'IP', tone: 'emerald', offset: -26 },
+    { from: 'pe1', to: 'p', label: 'push 24001', tone: 'violet', offset: -26 },
+    { from: 'p', to: 'pe2', label: 'swap → 24005', tone: 'violet', offset: -26 },
+    { from: 'pe2', to: 'ce2', label: 'pop → IP', tone: 'emerald', offset: -26 },
+  ]}
+  caption="Le PE d'entrée ajoute un label (push), chaque routeur P le remplace (swap), le PE de sortie le retire (pop). Les labels n'ont qu'une signification locale, d'un routeur à son voisin."
+/>
+
+1. **Push** : PE1 reçoit un paquet IP du site A, détermine sa destination, et **ajoute** le label attendu par le
+   routeur suivant.
+2. **Swap** : P cherche le label dans sa table (la *LFIB*), le **remplace** par le label attendu par le routeur
+   suivant, et transmet. Il ne regarde pas l'en-tête IP.
+3. **Pop** : PE2 **retire** le label et route le paquet IP vers le site B.
+
+Un label n'a de sens qu'**entre deux routeurs voisins** : c'est pourquoi il change à chaque saut. Souvent,
+l'avant-dernier routeur retire déjà le label (*Penultimate Hop Popping*), pour épargner une recherche au PE de
+sortie.
+
+## LDP : distribuer les labels
+
+Chaque routeur choisit ses propres labels pour chaque destination, et doit les faire connaître à ses voisins.
+C'est le rôle de **LDP** (*Label Distribution Protocol*) : pour chaque préfixe de sa table de routage (en pratique,
+les loopbacks des PE), un routeur annonce à ses voisins « pour joindre ce préfixe, envoyez-moi le label 24001 ».
+LDP suit le routage : c'est l'IGP (<Term id="ospf" /> ou IS-IS) qui choisit le chemin, LDP y associe des labels.
+
+```text title="Cisco IOS : activer MPLS et LDP"
+mpls label protocol ldp
+mpls ldp router-id Loopback0 force
+!
+interface GigabitEthernet0/1
+ mpls ip
+```
+
+```text title="Arista EOS : activer MPLS et LDP"
+mpls ip
+!
+mpls ldp
+   router-id interface Loopback0
+   transport-address interface Loopback0
+   no shutdown
+!
+interface Ethernet1
+   mpls ldp interface
+```
+
+Pour vérifier : `show mpls ldp neighbor` (les voisins LDP), puis `show mpls forwarding-table` chez Cisco ou
+`show mpls lfib route` chez Arista (la table des labels : label entrant, label sortant, interface).
+
+## Le VPN de niveau 3 : le service que vendent les opérateurs
+
+Le « VPN MPLS » des opérateurs est un **L3VPN** : chaque client a ses propres routes, isolées de celles des autres
+clients, même s'ils utilisent les mêmes adresses privées. Il combine trois mécanismes déjà vus ailleurs :
+
+- sur chaque PE, une <Term id="vrf" /> par client, qui contient ses routes (voir [Les VRF](/formations/datacenter/vrf)) ;
+- **MP-BGP** (BGP multiprotocole, famille `vpnv4`) entre les PE, pour échanger les routes de toutes les VRF. Chaque
+  route porte un <Term id="rd" /> (pour la rendre unique) et un <Term id="rt" /> (pour savoir dans quelle VRF
+  l'importer) ;
+- **deux labels** sur chaque paquet : le label **de transport** (distribué par LDP) l'amène jusqu'au bon PE ; le
+  label **de service** (distribué par MP-BGP) dit au PE de sortie dans quelle VRF le remettre.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Dans le cœur', fields: [
+      { label: 'Ethernet', span: 2, tone: 'slate' },
+      { label: 'Label transport', sub: 'vers PE2 · LDP', span: 3, tone: 'violet' },
+      { label: 'Label VPN', sub: 'VRF CLIENT-A · MP-BGP', span: 3, tone: 'amber' },
+      { label: 'Paquet IP du client', sub: '10.1.1.10 → 10.2.2.20', span: 4, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Un paquet de L3VPN dans le cœur : les routeurs P ne regardent que le label de transport ; le label VPN n'est lu que par le PE de sortie."
+/>
+
+```text title="Cisco IOS : un PE avec la VRF d'un client"
+vrf definition CLIENT-A
+ rd 65000:100
+ address-family ipv4
+  route-target export 65000:100
+  route-target import 65000:100
+!
+interface GigabitEthernet0/2
+ description CE du client A
+ vrf forwarding CLIENT-A
+ ip address 192.0.2.1 255.255.255.252
+!
+router bgp 65000
+ neighbor 10.255.0.2 remote-as 65000
+ neighbor 10.255.0.2 update-source Loopback0
+ address-family vpnv4
+  neighbor 10.255.0.2 activate
+  neighbor 10.255.0.2 send-community extended
+ address-family ipv4 vrf CLIENT-A
+  redistribute connected
+```
+
+Pour l'entreprise cliente, tout cela est invisible : son routeur CE échange simplement ses routes avec le PE de
+l'opérateur, en BGP ou en statique.
+
+## Au-delà du L3VPN
+
+- **L2VPN** : le même principe pour transporter de l'Ethernet entre sites, comme si les sites étaient sur un même
+  switch (pseudowires, VPLS, et aujourd'hui EVPN, le même que dans les data centers).
+- **Ingénierie de trafic** : avec RSVP-TE, l'opérateur choisit le chemin d'un LSP (éviter un lien saturé, garantir
+  une bande passante), au lieu de suivre le plus court chemin de l'IGP.
+- **Segment Routing** : la nouvelle génération. Le PE d'entrée empile la liste des routeurs (des *segments*) par
+  lesquels le paquet doit passer ; plus besoin de LDP ni de RSVP, l'IGP distribue lui-même les labels (SR-MPLS), ou
+  les segments sont des adresses IPv6 (SRv6).
+
+## MPLS et l'entreprise aujourd'hui
+
+Pour une entreprise, le VPN MPLS d'un opérateur reste une valeur sûre : qualité de service garantie par contrat,
+latence maîtrisée, réseau privé qui ne passe pas par Internet. Mais il coûte cher, se livre lentement, et suit mal
+les usages actuels, où l'essentiel du trafic part vers le cloud et le SaaS, sur Internet. Le **SD-WAN** combine
+désormais souvent un lien MPLS, pour les applications critiques, et un ou plusieurs accès Internet, moins chers,
+pour le reste (voir [LAN, WAN, PAN](/tutoriels/lan-wan-pan)). Côté opérateurs, en revanche, MPLS et Segment Routing
+restent le cœur de presque tous les réseaux.
+
+<Callout type="field">
+Un réflexe à avoir avec un VPN MPLS opérateur : demander les **classes de service** du contrat, et marquer le
+trafic en conséquence sur le routeur du site. Une téléphonie qui « grésille » aux heures de pointe vient souvent
+d'un marquage DSCP absent ou réécrit : la voix voyage alors dans la même classe que les sauvegardes, et subit les
+mêmes pertes quand le lien est plein.
 </Callout>
+
+## À retenir
+
+- MPLS commute sur un **label** de 4 octets, placé entre Ethernet et IP. Les routeurs du cœur ne regardent que le
+  label.
+- **Push** à l'entrée (PE), **swap** dans le cœur (P), **pop** à la sortie. Un label n'a de sens qu'entre deux voisins.
+- **LDP** distribue les labels en suivant l'IGP ; le chemin est un **LSP**.
+- Le **L3VPN** des opérateurs : une **VRF** par client, **MP-BGP** avec **RD** et **RT**, et **deux labels** (transport
+  et service).
+- **L2VPN**, **ingénierie de trafic** et **Segment Routing** reposent sur le même principe.
+- En entreprise, le VPN MPLS cohabite désormais avec Internet dans le **SD-WAN**.
