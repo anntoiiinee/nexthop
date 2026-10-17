@@ -1,0 +1,88 @@
+---
+title: "Cloud networking"
+description: "Extending the corporate network into the cloud: AWS VPCs, subnets and routing, security groups and NACLs, Transit Gateway, VPN and Direct Connect to the data center, and the whole network described in Terraform. Azure and GCP equivalents in every chapter."
+pubDate: 2026-10-17
+level: intermediate
+tags: [cloud, aws, azure, gcp, vpc, terraform, vpn, bgp]
+vendor: [multi]
+order: 0
+---
+
+The path started with a cable and an Ethernet frame. It ends where many applications now live: in the
+**public cloud**. A cloud network is configured through an API rather than a CLI, but everything the
+previous hops built is still there: an addressing plan, route tables, firewalls, BGP, IPsec tunnels and
+versioned code. This hop shows what stays the same, what really changes, and how to connect the cloud to
+the data center properly.
+
+## The common thread: the company moves into the Paris region
+
+The company from the previous courses deploys its new applications on **AWS**, in the `eu-west-3` (Paris)
+region. The network has to follow: a well-structured VPC, filtering as strict as in the data center, several
+VPCs talking to each other without turning into spaghetti, a reliable link to the data center, and all of
+it described as code.
+
+<Topology
+  width={780}
+  height={330}
+  groups={[
+    { x: 330, y: 20, w: 430, h: 290, label: 'AWS · eu-west-3 region (Paris)', tone: 'amber' },
+    { x: 20, y: 60, w: 250, h: 210, label: 'Data center', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 'dc', type: 'router', x: 145, y: 120, label: 'VPN router', sub: 'AS 65001' },
+    { id: 'srv', type: 'server', x: 145, y: 225, label: 'Servers', sub: '10.10.0.0/16' },
+    { id: 'tgw', type: 'router', x: 450, y: 165, label: 'Transit Gateway', sub: 'the hub', tone: 'violet' },
+    { id: 'prod', type: 'cloud', x: 660, y: 85, label: 'prod VPC', sub: '10.50.0.0/16', tone: 'emerald' },
+    { id: 'dev', type: 'cloud', x: 660, y: 175, label: 'dev VPC', sub: '10.70.0.0/16', tone: 'emerald' },
+    { id: 'shared', type: 'cloud', x: 660, y: 265, label: 'shared VPC', sub: '10.60.0.0/16', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'srv', to: 'dc' },
+    { from: 'dc', to: 'tgw', label: 'IPsec + BGP', tone: 'violet' },
+    { from: 'tgw', to: 'prod' }, { from: 'tgw', to: 'dev' }, { from: 'tgw', to: 'shared' },
+  ]}
+  caption="The target of this hop: VPCs separated by environment, connected by a Transit Gateway, itself connected to the data center by an IPsec VPN with BGP (and later by Direct Connect)."
+/>
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **1. AWS networking basics** | Split a VPC into public and private subnets, route to the Internet, understand what differs from a LAN |
+| **2. Security groups and NACLs** | Filter with and without state, reference groups rather than addresses, troubleshoot with VPC Flow Logs |
+| **3. Interconnecting VPCs** | Choose between peering, Transit Gateway and PrivateLink, and segment with route tables |
+| **4. Hybrid cloud** | Build a site-to-site VPN with BGP, understand Direct Connect, control the path traffic takes |
+| **5. Network as code with Terraform** | Describe the whole network as code, manage state, and deploy through a pipeline |
+
+Examples use **AWS**, the most widespread. Each chapter points out the **Azure** and **Google Cloud**
+equivalents: names change, principles stay.
+
+## Prerequisites
+
+- The [Fundamentals](/en/courses/fundamentals) course, especially [IPv4 addressing](/en/courses/fundamentals/ipv4-subnetting).
+- [Dynamic routing](/en/courses/routing) (BGP) and [IPsec VPN](/en/courses/security/ipsec-vpn) for the hybrid chapter.
+- [Automation](/en/courses/automation) helps for the Terraform chapter: Git, pipelines and idempotency are back.
+
+## The lab: Terraform, not ContainerLab
+
+A VPC can't be emulated in a container: this hop's lab is a set of <Term id="iac">Terraform</Term> files
+that builds a real network in **your AWS account**. It is designed to cost nothing by default: VPCs,
+subnets, route tables, Internet Gateways, security groups and NACLs are not billed.
+
+```bash title="Get the lab"
+mkdir cloud-aws && cd cloud-aws
+for f in versions.tf variables.tf vpc.tf security.tf vpn.tf outputs.tf terraform.tfvars.example; do
+  curl -fsSL -o "$f" "https://nexthop.alcpt.network/labs/cloud-aws/$f"
+done
+```
+
+Comments and descriptions in the lab files are in French.
+
+<Callout type="warning">
+Some resources are **billed by the hour**, whether used or not: the NAT Gateway, Transit Gateway attachments,
+VPN connections, and every public IPv4 address. Expect a few cents per hour per resource, which adds up to
+tens of dollars a month if you forget them. In the lab they are disabled by default (`enable_nat_gateway`,
+`enable_vpn`…). Enable them for the duration of an exercise, then **always** run `terraform destroy` at the
+end of the session. Also create a **budget alert** (*Billing > Budgets*) as soon as the account is open, and
+check the free offer's terms on the *AWS Free Tier* page: they change regularly.
+</Callout>

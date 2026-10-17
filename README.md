@@ -88,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible, supervision : rsyslog, SNMP, gNMIc, Prometheus, Grafana), ddi (Kea, BIND), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN), loki-syslog (Docker Compose : Loki, Alloy, Grafana)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible, supervision : rsyslog, SNMP, gNMIc, Prometheus, Grafana), ddi (Kea, BIND), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN), loki-syslog (Docker Compose : Loki, Alloy, Grafana), cloud-aws (Terraform AWS : VPC, security groups, NACL, VPN ; options payantes désactivées par défaut)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -149,7 +149,8 @@ src/
   - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
   - `<OsiModel />`, `<Lab name="…" />` ;
-  - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé).
+  - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé) ;
+  - `<CliOutput title output notes />` : sortie CLI annotée (lignes surlignées, repères numérotés et légende). Chaque note : `{ line, text, match?, tone? }`, `line` commence à 1, `match` surligne un passage, `` `code` `` est mis en forme dans `text`. MDX retire les espaces de début de ligne à l'intérieur des balises : déclarer la sortie dans un ``export const maSortie = `…`;`` en haut du fichier (après le frontmatter), puis `output={maSortie}` (voir `fundamentals/stp.mdx`).
 - **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`). Mode sombre : variante `dark:`, pilotée par la classe `.dark` sur `<html>`.
 - **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
@@ -215,7 +216,7 @@ Mise en route (une seule fois) :
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
 - [x] Formation Fondamentaux complète en FR (10 chapitres illustrés, dont ARP, LLDP/CDP, agrégation de liens et TCP/UDP, + lab `static-routing`)
-- [ ] Composant `<CliOutput>` (sortie CLI annotée) 
+- [x] Composant `<CliOutput>` (sortie CLI annotée), utilisé sur `show spanning-tree` (chapitre STP)
 - [x] Images Open Graph propres à chaque article (générées au build) + boutons de partage
 - [x] Outil : décodeur de certificat X.509 / CSR
 - [x] Traduction anglaise des formations Fondamentaux et Routage dynamique
@@ -223,8 +224,8 @@ Mise en route (une seule fois) :
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
 - [x] Formation Automatisation en FR (7 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, conventions de nommage et IPAM, NetBox, AVD + lab `netops`)
 - [x] Saut 3 · Formation Data center en FR et EN : 4 chapitres (VRF, spine/leaf, VXLAN, EVPN), lab `dc-fabric` (2 spines, 3 leafs cEOS, underlay eBGP, EVPN, IRB symétrique, VRF PROD et DEV)
-- [ ] Traduction anglaise de la formation Automatisation
-- [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
+- [x] Traduction anglaise de la formation Automatisation (7 chapitres ; les fichiers du lab `netops` restent commentés en français)
+- [x] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
 - [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
 - [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
@@ -241,6 +242,9 @@ Mise en route (une seule fois) :
 - [x] Accueil : section « Pour qui ? » enrichie (4 profils, « ce que vous trouverez ici »)
 - [ ] Tutoriel `ldaps-arista` : rédaction par Antoine (visible en « en cours de rédaction », `wip: true`) ; `bgp-evpn-route-types` à étoffer
 - [ ] Page « Aller plus loin » : mettre à jour les événements (une date passée bascule seule vers le rythme habituel, mais il faut ajouter les nouvelles éditions)
+- [x] Saut 8 · Le réseau dans le cloud en FR et EN : 5 chapitres (bases AWS, security groups et NACL, interconnexion de VPC, cloud hybride, Terraform), équivalents Azure / GCP, lab Terraform `cloud-aws` (validé avec Terraform 1.10.5 et le fournisseur AWS 6.69.1 : `validate` et `plan` avec des identifiants factices, 24 ressources par défaut, 35 avec les options payantes ; jamais appliqué sur un vrai compte)
+- [x] Page Formations triée par niveau (débutant, intermédiaire, avancé), puis dans l'ordre des sauts
+- [ ] Lab `cloud-aws` : faire un `terraform apply` réel sur un compte AWS, puis vérifier les consignes « Dans le lab » de chaque chapitre
 - [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
 
 ---
@@ -251,7 +255,7 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
-**8 Le réseau dans le cloud** (`cloud`). Le saut 8 apparaît déjà sur l'accueil, avec ses chapitres pas encore écrits marqués « bientôt ».
+**8 Le réseau dans le cloud** (`cloud`). Les 8 sauts sont rédigés.
 
 ### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
 
@@ -271,27 +275,6 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
 - Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
   le fichier produit commence bien par `$ANSIBLE_VAULT`.
-
-### Saut 8 · Le réseau dans le cloud
-
-Le dernier saut ferme le parcours « du câble au cloud » et réutilise les précédents (routage, BGP, IPsec, Terraform).
-Exemples sur **AWS**, avec les équivalents Azure et GCP signalés. Le lab ne peut pas être un lab ContainerLab : prévoir
-du Terraform à appliquer sur un compte gratuit (offre Free Tier), avec un `terraform destroy` rappelé à chaque fois, et
-une mise en garde sur les coûts (NAT Gateway, Transit Gateway et VPN sont facturés à l'heure).
-
-- **Les bases du réseau AWS** (`aws-vpc`) : régions et zones de disponibilité, VPC et plan d'adressage (lien avec le
-  chapitre IPv4 et le découpeur VLSM), sous-réseaux publics et privés, tables de routage, Internet Gateway, NAT Gateway,
-  adresses Elastic IP ; ce qui change par rapport à un réseau classique (pas de broadcast, pas de VLAN, routeur implicite).
-- **Security groups et NACL** (`security-groups`) : firewall avec état (security group, attaché à l'interface) et sans
-  état (NACL, attachée au sous-réseau), référencer un groupe plutôt qu'une adresse, VPC Flow Logs pour le dépannage.
-- **Interconnecter des VPC** (`transit-gateway`) : VPC peering (non transitif) puis Transit Gateway (hub, tables de
-  routage par attachement), PrivateLink pour exposer un service sans router tout le VPC ; architecture hub and spoke.
-- **Le cloud hybride : VPN et Direct Connect** (`hybrid-cloud`) : VPN site à site IPsec avec BGP vers le data center
-  (renvoi aux sauts 2 et 5), Direct Connect pour un lien dédié, redondance et choix du chemin (LOCAL_PREF, AS-path
-  prepending, comme au chapitre sur les attributs BGP).
-- **Le réseau en code avec Terraform** (`terraform`) : fournisseurs, ressources, état (`terraform.tfstate`, à stocker
-  à distance et à protéger), `plan` / `apply` / `destroy`, modules ; un VPC complet décrit en code et déployé par un
-  pipeline, dans la continuité du saut Automatisation.
 
 ---
 

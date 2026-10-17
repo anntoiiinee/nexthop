@@ -8,6 +8,23 @@ vendor: [arista, cisco]
 order: 4
 ---
 
+{/* Sortie CLI déclarée en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const stpOutput = `MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    4096
+             Address     0200.0000.0001
+             Cost        2000 (Ext) 0 (Int)
+             Port        1 (Ethernet1)
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     0200.0000.0003
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et1              root       forwarding 2000      128.1    P2p
+Et2              alternate  discarding 2000      128.2    P2p`;
+
 Dans un réseau d'entreprise, on relie les switches par **plusieurs chemins** : si un câble ou
 un switch tombe, le trafic doit passer ailleurs. Mais en couche 2, cette redondance crée une
 **boucle**, et une boucle Ethernet peut mettre un réseau entier à genoux en quelques secondes.
@@ -260,26 +277,18 @@ interface GigabitEthernet1/0/1
 
 Sur SW3, on retrouve exactement le résultat de l'élection :
 
-```text title="SW3#show spanning-tree"
-MST0
-  Spanning tree enabled protocol mstp
-  Root ID    Priority    4096
-             Address     0200.0000.0001
-             Cost        2000 (Ext) 0 (Int)
-             Port        1 (Ethernet1)
-             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
-
-  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
-             Address     0200.0000.0003
-
-Interface        Role       State      Cost      Prio.Nbr Type
----------------- ---------- ---------- --------- -------- --------------------
-Et1              root       forwarding 2000      128.1    P2p
-Et2              alternate  discarding 2000      128.2    P2p
-```
-
-- **Root ID** : la racine est bien SW1 (priorité 4096, MAC `…0001`), à un coût de 2000.
-- **Et1** est le port racine, **Et2** est le port alternatif, en discarding : c'est lui qui casse la boucle.
+<CliOutput
+  title="SW3#show spanning-tree"
+  output={stpOutput}
+  notes={[
+    { line: 3, match: 'Priority    4096', tone: 'emerald', text: 'La racine a la priorité `4096` : c\'est le switch dont on a baissé la priorité.' },
+    { line: 4, match: '0200.0000.0001', tone: 'emerald', text: 'Son adresse MAC, `…0001`, confirme qu\'il s\'agit de SW1.' },
+    { line: 5, match: 'Cost        2000', tone: 'sky', text: 'SW3 est à un coût de `2000` de la racine : un seul lien à 10 Gb/s.' },
+    { line: 9, match: 'Priority    32768', tone: 'sky', text: 'SW3 lui-même, avec la priorité par défaut, `32768`.' },
+    { line: 14, match: 'root       forwarding', tone: 'emerald', text: '`Et1` est le port racine : le meilleur chemin vers SW1, en forwarding.' },
+    { line: 15, match: 'alternate  discarding', tone: 'rose', text: '`Et2` est le port alternatif, bloqué (`discarding`) : c\'est lui qui casse la boucle.' },
+  ]}
+/>
 
 ## À retenir
 

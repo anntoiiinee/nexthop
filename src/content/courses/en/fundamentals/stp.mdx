@@ -8,6 +8,23 @@ vendor: [arista, cisco]
 order: 4
 ---
 
+{/* Sortie CLI déclarée en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const stpOutput = `MST0
+  Spanning tree enabled protocol mstp
+  Root ID    Priority    4096
+             Address     0200.0000.0001
+             Cost        2000 (Ext) 0 (Int)
+             Port        1 (Ethernet1)
+             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
+
+  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
+             Address     0200.0000.0003
+
+Interface        Role       State      Cost      Prio.Nbr Type
+---------------- ---------- ---------- --------- -------- --------------------
+Et1              root       forwarding 2000      128.1    P2p
+Et2              alternate  discarding 2000      128.2    P2p`;
+
 In an enterprise network, switches are connected through **several paths**: if a cable or a switch
 fails, traffic must go another way. But at layer 2, this redundancy creates a **loop**, and an
 Ethernet loop can bring an entire network to its knees within seconds. <Term id="stp" /> exists to
@@ -255,26 +272,18 @@ interface GigabitEthernet1/0/1
 
 On SW3, we find exactly the result of the election:
 
-```text title="SW3#show spanning-tree"
-MST0
-  Spanning tree enabled protocol mstp
-  Root ID    Priority    4096
-             Address     0200.0000.0001
-             Cost        2000 (Ext) 0 (Int)
-             Port        1 (Ethernet1)
-             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec
-
-  Bridge ID  Priority    32768  (priority 32768 sys-id-ext 0)
-             Address     0200.0000.0003
-
-Interface        Role       State      Cost      Prio.Nbr Type
----------------- ---------- ---------- --------- -------- --------------------
-Et1              root       forwarding 2000      128.1    P2p
-Et2              alternate  discarding 2000      128.2    P2p
-```
-
-- **Root ID**: the root is indeed SW1 (priority 4096, MAC `…0001`), at a cost of 2000.
-- **Et1** is the root port, **Et2** is the alternate port, discarding: it is the one breaking the loop.
+<CliOutput
+  title="SW3#show spanning-tree"
+  output={stpOutput}
+  notes={[
+    { line: 3, match: 'Priority    4096', tone: 'emerald', text: 'The root has priority `4096`: it is the switch whose priority was lowered.' },
+    { line: 4, match: '0200.0000.0001', tone: 'emerald', text: 'Its MAC address, `…0001`, confirms it is SW1.' },
+    { line: 5, match: 'Cost        2000', tone: 'sky', text: 'SW3 is at a cost of `2000` from the root: a single 10 Gb/s link.' },
+    { line: 9, match: 'Priority    32768', tone: 'sky', text: 'SW3 itself, with the default priority, `32768`.' },
+    { line: 14, match: 'root       forwarding', tone: 'emerald', text: '`Et1` is the root port: the best path to SW1, forwarding.' },
+    { line: 15, match: 'alternate  discarding', tone: 'rose', text: '`Et2` is the alternate port, blocked (`discarding`): it is the one breaking the loop.' },
+  ]}
+/>
 
 ## Key takeaways
 

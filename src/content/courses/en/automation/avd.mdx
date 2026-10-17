@@ -1,0 +1,266 @@
+---
+title: "Arista AVD"
+description: "Arista Validated Designs: describing a fabric in YAML, generating configurations and documentation, deploying through eAPI or CloudVision and validating with ANTA, in a GitOps workflow."
+pubDate: 2026-10-18
+level: advanced
+tags: [avd, ansible, gitops, evpn, cloudvision, anta]
+vendor: [arista]
+order: 7
+---
+
+With NetBox and templates, you generate pieces of configuration. <Term id="avd" /> (Arista Validated
+Designs) goes much further: from a **high-level description** of a data center fabric ("two spines, four
+leafs, EVPN, these VLANs in this VRF"), it produces each device's **complete** configuration, its
+documentation, and the tests to validate it.
+
+<Callout type="note">
+This chapter uses data center fabric vocabulary (spine/leaf, underlay, EVPN-VXLAN), covered in detail in
+the [data center course](/en/courses/datacenter). Here it is enough to know that a fabric connects leafs to
+spines, and that BGP carries both the routes (underlay) and the customer networks (EVPN overlay).
+</Callout>
+
+## The principle: describe, generate, deploy, validate
+
+AVD is an Ansible collection (`arista.avd`) organized in successive steps:
+
+<PacketFormat
+  cols={15}
+  rows={[
+    { fields: [
+      { label: 'YAML model', sub: 'topology + services', span: 3, tone: 'violet' },
+      { label: 'eos_designs', sub: 'computes everything', span: 3, tone: 'sky' },
+      { label: 'Structured config', sub: 'per device', span: 3, tone: 'sky' },
+      { label: 'eos_cli_config_gen', sub: 'configs + docs', span: 3, tone: 'emerald' },
+      { label: 'Deployment', sub: 'eAPI or CloudVision', span: 3, tone: 'amber' },
+    ] },
+    { fields: [
+      { label: 'ANTA validation', sub: 'does the actual state match the intent?', span: 15, tone: 'rose' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="AVD turns a high-level description into complete configurations, then checks the result on the network."
+/>
+
+1. **The model**: a few YAML files describe the topology (who is a spine, who is a leaf, which address
+   pools) and the services (VRFs, VLANs, SVIs).
+2. **eos_designs** computes everything that follows: link addresses, AS numbers, BGP sessions, VNIs,
+   interface configuration. The result is a **structured configuration** (YAML) per device.
+3. **eos_cli_config_gen** turns each structured configuration into an EOS configuration, and generates the
+   **documentation** (interface, addressing and BGP session tables) in Markdown.
+4. **Deployment** pushes the configurations, directly through eAPI or via **CloudVision**.
+5. **Validation** with **ANTA** compares the network's actual state with the intent (BGP sessions
+   established, expected LLDP neighbors, interfaces up…).
+
+## The inventory
+
+The AVD inventory groups devices by role. Group names are up to you, but must be consistent with the
+variable files:
+
+```yaml title="inventory.yml"
+all:
+  children:
+    FABRIC:
+      children:
+        SPINES:
+          hosts:
+            spine1: { ansible_host: 172.20.30.11 }
+            spine2: { ansible_host: 172.20.30.21 }
+        LEAFS:
+          hosts:
+            leaf1: { ansible_host: 172.20.30.12 }
+            leaf2: { ansible_host: 172.20.30.13 }
+      vars:
+        ansible_connection: ansible.netcommon.httpapi
+        ansible_network_os: arista.eos.eos
+        ansible_httpapi_use_ssl: true
+```
+
+## The fabric model
+
+The topology fits in a few lines. AVD derives each link's addresses, the ASNs and every BGP session from it:
+
+```yaml title="group_vars/FABRIC.yml (simplified excerpt)"
+fabric_name: FABRIC
+underlay_routing_protocol: ebgp
+overlay_routing_protocol: ebgp
+
+spine:
+  defaults:
+    platform: cEOS-lab
+    bgp_as: 65100
+    loopback_ipv4_pool: 10.255.0.0/27
+  nodes:
+    - name: spine1
+      id: 1
+      mgmt_ip: 172.20.30.11/24
+    - name: spine2
+      id: 2
+      mgmt_ip: 172.20.30.21/24
+
+l3leaf:
+  defaults:
+    platform: cEOS-lab
+    loopback_ipv4_pool: 10.255.0.0/27
+    vtep_loopback_ipv4_pool: 10.255.1.0/27
+    uplink_switches: [spine1, spine2]
+    uplink_interfaces: [Ethernet1, Ethernet2]
+    uplink_ipv4_pool: 10.0.1.0/24
+  node_groups:
+    - group: LEAF-1
+      bgp_as: 65101
+      nodes:
+        - name: leaf1
+          id: 1
+          mgmt_ip: 172.20.30.12/24
+          uplink_switch_interfaces: [Ethernet1, Ethernet1]
+    - group: LEAF-2
+      bgp_as: 65102
+      nodes:
+        - name: leaf2
+          id: 2
+          mgmt_ip: 172.20.30.13/24
+          uplink_switch_interfaces: [Ethernet2, Ethernet2]
+```
+
+And the services, independently of the topology:
+
+```yaml title="group_vars/NETWORK_SERVICES.yml (simplified excerpt)"
+tenants:
+  - name: ENTREPRISE
+    mac_vrf_vni_base: 10000
+    vrfs:
+      - name: PROD
+        vrf_vni: 10
+        svis:
+          - id: 10
+            name: USERS
+            enabled: true
+            ip_address_virtual: 192.168.10.1/26
+          - id: 30
+            name: SERVERS
+            enabled: true
+            ip_address_virtual: 192.168.10.97/28
+```
+
+<Callout type="warning">
+AVD's data model evolves from one major version to the next (key names, default values). These excerpts
+illustrate the logic; always start from the documentation examples for the installed version, and pin that
+version in `requirements.yml`.
+</Callout>
+
+## Generating
+
+The build playbook calls both roles, without connecting to the devices:
+
+```yaml title="build.yml"
+- name: Generate configurations and documentation
+  hosts: FABRIC
+  gather_facts: false
+  tasks:
+    - name: Compute structured configurations
+      ansible.builtin.import_role:
+        name: arista.avd.eos_designs
+
+    - name: Produce EOS configurations and documentation
+      ansible.builtin.import_role:
+        name: arista.avd.eos_cli_config_gen
+```
+
+```text title="After ansible-playbook build.yml"
+intended/
+├── configs/           spine1.cfg, spine2.cfg, leaf1.cfg, leaf2.cfg
+└── structured_configs/ spine1.yml, …
+documentation/
+├── devices/           one Markdown page per device
+└── fabric/            FABRIC-documentation.md: links, addressing, BGP sessions
+```
+
+A generated leaf configuration runs to several hundred lines: interfaces, underlay and overlay BGP, VXLAN,
+VRFs, SVIs… without a single line written by hand, and identical in form on every leaf.
+
+## Deploying
+
+Two paths, depending on the environment:
+
+- **through eAPI**, directly from Ansible: simple, ideal for a lab or a small network;
+- **via CloudVision**: AVD sends the configurations to CloudVision, which creates a *change control*.
+  Changes are reviewed, approved, applied in stages, with rollback available.
+
+<Callout type="field">
+In production, AVD and CloudVision together bring the best of both worlds: AVD's deterministic generation,
+and CloudVision's change control (review, maintenance window, progressive rollout, rollback). It is the
+classic approach for migrating entire fabrics to Infrastructure as Code.
+</Callout>
+
+## Validating with ANTA
+
+**ANTA** (Arista Network Test Automation) runs a catalog of tests against the devices and produces a report.
+AVD can generate that catalog from the model: every link and every expected BGP session becomes a test.
+
+```yaml title="catalog.yml (example)"
+anta.tests.software:
+  - VerifyEOSVersion:
+      versions: ["4.32.0F"]
+anta.tests.connectivity:
+  - VerifyLLDPNeighbors:
+      neighbors:
+        - port: Ethernet1
+          neighbor_device: spine1
+          neighbor_port: Ethernet1
+anta.tests.routing.bgp:
+  - VerifyBGPPeersHealth:
+      address_families:
+        - afi: evpn
+```
+
+```bash
+anta nrfu --catalog catalog.yml table
+```
+
+A swapped cable, a missing BGP session or a non-compliant version shows up immediately in the report, before
+users notice.
+
+## The complete GitOps workflow
+
+With AVD, Git no longer just **records** the network's state (chapter 3): it **decides** it.
+
+<Topology
+  width={760}
+  height={260}
+  nodes={[
+    { id: 'eng', type: 'host', x: 70, y: 120, label: 'Engineer', sub: 'edits the YAML' },
+    { id: 'mr', type: 'server', x: 230, y: 114, label: 'Merge request', sub: 'build + diff', tone: 'violet' },
+    { id: 'rev', type: 'host', x: 390, y: 120, label: 'Reviewer', sub: 'approves the diff', tone: 'violet' },
+    { id: 'cd', type: 'server', x: 550, y: 114, label: 'Pipeline', sub: 'deploys', tone: 'emerald' },
+    { id: 'net', type: 'switch', x: 700, y: 120, label: 'Fabric', sub: 'ANTA tests' },
+  ]}
+  links={[{ from: 'eng', to: 'mr' }, { from: 'mr', to: 'rev' }, { from: 'rev', to: 'cd' }, { from: 'cd', to: 'net' }]}
+  flows={[
+    { from: 'eng', to: 'mr', label: 'commit', tone: 'violet', offset: -18 },
+    { from: 'rev', to: 'cd', label: 'merge', tone: 'emerald', offset: -18 },
+    { from: 'cd', to: 'net', label: 'deploys', tone: 'emerald', offset: -18 },
+  ]}
+  caption="Every change goes through a merge request: the pipeline generates the configurations, the reviewer approves the diff, and the merge triggers deployment, then tests."
+/>
+
+1. The engineer changes the model (adding a VLAN, a leaf) in a branch.
+2. The pipeline runs `build.yml` and shows the **diff of the generated configurations** in the merge request.
+3. A reviewer approves that diff: you review the **exact** change that will be applied.
+4. The merge triggers deployment (eAPI or CloudVision), then the ANTA tests.
+
+Adding a VLAN across the whole fabric becomes a three-line YAML change, reviewed and traced, rather than
+dozens of SSH sessions.
+
+## Key takeaways
+
+- **AVD** generates a fabric's **complete** configurations and its **documentation** from a high-level YAML
+  model.
+- **eos_designs** computes (addresses, ASNs, sessions), **eos_cli_config_gen** produces configurations and
+  docs.
+- Deployment through **eAPI** or via **CloudVision** (*change control*, review, rollback).
+- **ANTA** validates that the actual state matches the intent.
+- In a **GitOps** workflow, every change is a merge request, reviewed, deployed and tested automatically.
+
+Congratulations, you have completed the automation course! You now have a complete toolchain: Python
+scripts and Ansible playbooks, backups in Git, break-glass accounts that rotate on their own, a source of
+truth and a fabric described as code.

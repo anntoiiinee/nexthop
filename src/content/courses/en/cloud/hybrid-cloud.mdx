@@ -1,0 +1,209 @@
+---
+title: "Hybrid cloud: VPN and Direct Connect"
+description: "Connecting the data center to the cloud: site-to-site IPsec VPN with BGP, two tunnels per connection, Direct Connect and its virtual interfaces, redundancy, and path control with AWS route priority, AS-path prepending and LOCAL_PREF."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, vpn, ipsec, bgp, direct-connect, hybrid, cloud]
+vendor: [multi]
+order: 4
+---
+
+A company almost never moves entirely to the cloud: the directory, some databases, telephony or factories
+stay in the data center, and cloud applications need to reach them. **Hybrid cloud** is that link between the
+two worlds. Two building blocks from earlier hops come back, [IPsec VPN](/en/courses/security/ipsec-vpn) and
+[BGP](/en/courses/routing/bgp-basics), used exactly as between two sites.
+
+## Two ways to connect
+
+| | Site-to-site VPN | Direct Connect |
+|---|---|---|
+| Medium | the Internet, encrypted with IPsec | a dedicated physical link, in an AWS point of presence |
+| Provisioning | a few minutes | a few weeks (order, cross-connect, carrier) |
+| Throughput | up to 1.25 Gbit/s per tunnel | from 50 Mbit/s (through a partner) to 100 Gbit/s and more |
+| Latency and jitter | the Internet's, variable | stable and predictable |
+| Encryption | yes, it is IPsec | **no** by default (MACsec on some links, or a VPN on top) |
+| Cost | low: hourly per connection, plus traffic | hourly port fee, plus traffic (cheaper per GB), plus the carrier |
+
+The most common design combines both: **Direct Connect for traffic, a VPN as backup**. Teams often start
+with the VPN alone, which can be up in a day.
+
+## The site-to-site VPN
+
+An AWS **VPN connection** links two ends:
+
+- on the AWS side, a **Virtual Private Gateway** (attached to a single VPC) or, better, the previous
+  chapter's **Transit Gateway**, which gives access to every VPC;
+- on the data center side, the **Customer Gateway**, an object describing your router: its public IP
+  address and its AS number.
+
+Each connection includes **two IPsec tunnels**, ending on two distinct AWS devices, in two different zones.
+AWS performs maintenance on its devices one tunnel at a time: **bring up both tunnels**, otherwise every
+maintenance cuts the link.
+
+<Topology
+  width={780}
+  height={340}
+  groups={[
+    { x: 20, y: 40, w: 280, h: 250, label: 'Data center · AS 65001', tone: 'sky' },
+    { x: 480, y: 40, w: 280, h: 250, label: 'AWS · eu-west-3', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'lan', type: 'server', x: 100, y: 165, label: 'Servers', sub: '10.10.0.0/16' },
+    { id: 'cgw', type: 'router', x: 230, y: 165, label: 'VPN router', sub: '203.0.113.10' },
+    { id: 'net', type: 'cloud', x: 390, y: 165, label: 'Internet' },
+    { id: 'aws', type: 'router', x: 560, y: 165, label: 'VGW / TGW', sub: 'AS 64512', tone: 'violet' },
+    { id: 'vpc', type: 'cloud', x: 690, y: 165, label: 'VPC', sub: '10.50.0.0/16', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'lan', to: 'cgw' }, { from: 'aws', to: 'vpc' },
+    { from: 'cgw', to: 'net', offset: -14, tone: 'emerald' }, { from: 'cgw', to: 'net', offset: 14, tone: 'emerald' },
+    { from: 'net', to: 'aws', offset: -14, tone: 'emerald' }, { from: 'net', to: 'aws', offset: 14, tone: 'emerald' },
+  ]}
+  notes={[
+    { x: 390, y: 118, text: 'tunnel 1', tone: 'emerald' },
+    { x: 390, y: 222, text: 'tunnel 2', tone: 'emerald' },
+    { x: 390, y: 318, text: 'each tunnel: IPsec + one BGP session', tone: 'slate' },
+  ]}
+  caption="An AWS VPN connection: two tunnels to two distinct AWS endpoints, each with its own BGP session. If a tunnel goes down, BGP withdraws its routes and traffic moves to the other one."
+/>
+
+### Static or BGP?
+
+A VPN connection can use **static** routing (the data center's prefixes are declared by hand) or **dynamic**
+routing, with a **BGP** session in each tunnel. Choose BGP: it detects a tunnel failure and moves traffic,
+and new data center networks are announced without touching AWS.
+
+Each tunnel gets a small interconnection network in `169.254.x.x/30`: the first usable address is on the AWS
+side, the second on the data center side. AWS provides, in the console, a ready-to-use configuration file for
+many devices (Cisco, Juniper, Fortinet, Palo Alto, strongSwan…) with every IPsec and BGP parameter. The BGP
+part looks like this, here in Arista EOS syntax:
+
+```text title="Data center VPN router: BGP to AWS (example addresses)"
+router bgp 65001
+   router-id 10.10.255.1
+   neighbor AWS peer group
+   neighbor AWS remote-as 64512
+   neighbor AWS timers 10 30
+   neighbor 169.254.21.1 peer group AWS
+   neighbor 169.254.22.1 peer group AWS
+   network 10.10.0.0/16
+```
+
+The `10 30` timers (keepalive 10 s, hold 30 s) are the ones AWS recommends: losing a tunnel is detected
+within 30 seconds at most. To go faster, AWS also supports DPD on the IPsec side.
+
+<Callout type="warning">
+An IPsec tunnel's MTU is smaller than 1500 bytes: the ESP header and the new IP header take up room. Without
+adjustment, small requests go through and large transfers hang, the classic symptom seen in the
+[TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter. AWS recommends clamping the TCP MSS to 1379 bytes on
+tunnel interfaces (`ip tcp adjust-mss 1379` or equivalent).
+</Callout>
+
+### In the lab
+
+The lab's `vpn.tf` file creates the full connection (Virtual Private Gateway, Customer Gateway, VPN
+connection, BGP route propagation into the private table) when `enable_vpn` is `true`. After deployment,
+`terraform output vpn_tunnels` gives the public addresses of both AWS endpoints and each tunnel's
+`169.254.x.x` addresses, and `terraform output -json vpn_preshared_keys` gives the pre-shared keys.
+
+## Direct Connect
+
+**Direct Connect** is a physical link between your network and AWS, established in a **Direct Connect point
+of presence** (a colocation data center where AWS has equipment; there are several in and around Paris). Two
+ways to get one:
+
+- a **dedicated connection**: a 1, 10, 100 or 400 Gbit/s port, cross-connected between your device and
+  AWS's in the point of presence;
+- a **hosted connection**: a partner (carrier) that already has links to AWS allocates you capacity, from
+  50 Mbit/s to several Gbit/s. It is the usual route when you have no equipment in the point of presence.
+
+On that link, you create **virtual interfaces** (VIFs), each in its own 802.1Q VLAN, with its own BGP
+session:
+
+| Virtual interface | Gives access to |
+|---|---|
+| **Private** | one VPC (through a Virtual Private Gateway) or several, through a Direct Connect Gateway |
+| **Transit** | one or more Transit Gateways, through a Direct Connect Gateway |
+| **Public** | AWS public services (S3, for example) at their public addresses, without going through the Internet |
+
+The **Direct Connect Gateway** is a global object: it lets one interface reach VPCs or Transit Gateways in
+several regions.
+
+<Callout type="field">
+A single Direct Connect link is a single point of failure: a cable pulled in the point of presence, a carrier
+maintenance, and the data center loses the cloud. AWS recommends at least **two connections in two different
+points of presence** for critical workloads. Failing that, a backup VPN over the Internet is the economical
+option, provided you **actually test the failover**: a backup that has never been tried doesn't work the day
+you need it.
+</Callout>
+
+## Controlling the path
+
+As soon as there are two paths (two tunnels, or Direct Connect plus a VPN), you must decide which one is
+used, and in which direction. The tools from the [BGP attributes](/en/courses/routing/bgp-attributes) chapter
+come back.
+
+### From the data center to AWS
+
+Your router decides: **LOCAL_PREF** is the natural tool. Raise it on routes learned over Direct Connect, or
+over the preferred tunnel, and it applies to every router in the AS.
+
+### From AWS to the data center
+
+AWS decides, according to a documented priority order. For the same prefix, from most to least preferred:
+
+| Order | Criterion |
+|---|---|
+| 1 | the **most specific** prefix (as everywhere in routing) |
+| 2 | routes learned over **Direct Connect** |
+| 3 | **static** routes of a VPN connection |
+| 4 | routes learned over **BGP** through a VPN |
+| 5 | between several BGP VPNs: the shortest **AS_PATH**, then the lowest **MED** |
+
+Practical consequences:
+
+- with Direct Connect and a backup VPN announcing the same prefix, **Direct Connect wins** with no extra
+  work;
+- to make a tunnel or VPN connection secondary, **lengthen the AS_PATH** of its announcements (*AS-path
+  prepending*);
+- beware of more specific prefixes: announcing a /24 over the VPN and the /16 over Direct Connect sends that
+  /24 through the VPN, whatever the path priority;
+- on Direct Connect, AWS accepts **BGP communities** that set your routes' LOCAL_PREF on its side
+  (`7224:7100` low, `7224:7200` medium, `7224:7300` high), to choose between several connections.
+
+```text title="Making a VPN secondary: lengthen the AS_PATH (Arista EOS)"
+route-map RM-AWS-BACKUP-OUT permit 10
+   set as-path prepend 65001 65001 65001
+!
+router bgp 65001
+   neighbor 169.254.31.1 route-map RM-AWS-BACKUP-OUT out
+```
+
+<Callout type="tip">
+An asymmetric path (out over Direct Connect, back over the VPN) works for routing, but breaks stateful
+firewalls, which only see one direction of the connection. Tune **both directions** consistently, then check
+with a `traceroute` from each side.
+</Callout>
+
+## Azure and Google Cloud equivalents
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| Site-to-Site VPN, Virtual Private Gateway | **VPN Gateway** (in a `GatewaySubnet` subnet of the VNet) | **Cloud VPN** (HA VPN: two interfaces, 99.99% SLA) |
+| BGP sessions handled by the gateway | BGP on the VPN Gateway | **Cloud Router**, which carries the BGP sessions |
+| Direct Connect | **ExpressRoute** | **Cloud Interconnect** (Dedicated or Partner) |
+| Direct Connect Gateway | ExpressRoute Global Reach, Virtual WAN | Network Connectivity Center |
+
+## Key takeaways
+
+- The **site-to-site VPN** runs over the Internet, is up in minutes, encrypts everything, and often serves as
+  backup.
+- Each AWS VPN connection has **two tunnels**, to two distinct endpoints: **bring up both**, with **BGP**, so
+  failover is automatic.
+- **Direct Connect** is a dedicated physical link with stable throughput and latency, **unencrypted** by
+  default; its **virtual interfaces** (private, transit, public) each carry a BGP session.
+- On the data center side, **LOCAL_PREF** picks the outbound path; on the AWS side, the **most specific
+  prefix**, then Direct Connect before VPN, then **AS_PATH** and MED.
+- Tune both directions consistently: an asymmetric path breaks stateful firewalls.
+
+Last chapter: **network as code with Terraform**, to describe all of this in versioned files.

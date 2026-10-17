@@ -1,0 +1,110 @@
+---
+// Sortie CLI annotée : les lignes importantes sont surlignées, avec un repère numéroté
+// renvoyant à une légende sous la sortie. Disponible dans tous les MDX sans import.
+//
+// <CliOutput
+//   title="SW3#show spanning-tree"
+//   output={`ligne 1
+// ligne 2`}
+//   notes={[
+//     { line: 2, text: 'Ce que montre cette ligne', match: 'mot à surligner', tone: 'emerald' },
+//   ]}
+// />
+// `line` commence à 1. `match` (facultatif) surligne un passage précis de la ligne.
+// `tone` : sky (par défaut), emerald, amber, violet, rose.
+type Tone = 'sky' | 'emerald' | 'amber' | 'violet' | 'rose';
+interface Note { line: number; text: string; match?: string; tone?: Tone }
+interface Props { title?: string; output: string; notes?: Note[] }
+
+const { title, output, notes = [] } = Astro.props;
+const lineWord = (Astro.currentLocale ?? 'fr') === 'en' ? 'Line' : 'Ligne';
+
+/** Texte d'une note : échappé, puis `code` entre accents graves mis en forme */
+const noteHtml = (text: string) =>
+  text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/`([^`]+)`/g, '<code class="rounded bg-slate-200/70 px-1 font-mono text-[0.8em] dark:bg-slate-800">$1</code>');
+
+const tones: Record<Tone, { row: string; mark: string; badge: string }> = {
+  sky: {
+    row: 'bg-sky-500/10',
+    mark: 'bg-sky-500/25 text-sky-900 dark:text-sky-100',
+    badge: 'bg-sky-500 text-white',
+  },
+  emerald: {
+    row: 'bg-emerald-500/10',
+    mark: 'bg-emerald-500/25 text-emerald-900 dark:text-emerald-100',
+    badge: 'bg-emerald-500 text-white',
+  },
+  amber: {
+    row: 'bg-amber-500/10',
+    mark: 'bg-amber-500/30 text-amber-900 dark:text-amber-100',
+    badge: 'bg-amber-500 text-white',
+  },
+  violet: {
+    row: 'bg-violet-500/10',
+    mark: 'bg-violet-500/25 text-violet-900 dark:text-violet-100',
+    badge: 'bg-violet-500 text-white',
+  },
+  rose: {
+    row: 'bg-rose-500/10',
+    mark: 'bg-rose-500/25 text-rose-900 dark:text-rose-100',
+    badge: 'bg-rose-500 text-white',
+  },
+};
+
+// Lignes de la sortie (sans les lignes vides de début et de fin), et notes numérotées dans l'ordre des lignes
+const lines = output.replace(/^\n+|\n+$/g, '').split('\n');
+const numbered = [...notes].sort((a, b) => a.line - b.line).map((note, i) => ({ ...note, n: i + 1 }));
+for (const note of numbered) {
+  if (note.line < 1 || note.line > lines.length) {
+    throw new Error(`<CliOutput> : la note ${note.n} vise la ligne ${note.line}, mais la sortie n'a que ${lines.length} lignes`);
+  }
+}
+const notesByLine = (i: number) => numbered.filter((note) => note.line === i + 1);
+
+/** Découpe une ligne autour du premier passage à surligner */
+function split(line: string, match?: string) {
+  const at = match ? line.indexOf(match) : -1;
+  if (!match || at < 0) return { before: line, match: '', after: '' };
+  return { before: line.slice(0, at), match, after: line.slice(at + match.length) };
+}
+---
+<figure class="not-prose my-8 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800">
+  {title && (
+    <figcaption class="flex items-center gap-2 border-b border-slate-200 bg-slate-100 px-4 py-2 font-mono text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+      <span class="flex gap-1.5" aria-hidden="true">
+        <span class="size-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></span>
+        <span class="size-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></span>
+        <span class="size-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></span>
+      </span>
+      <span>{title}</span>
+    </figcaption>
+  )}
+  <div class="overflow-x-auto bg-white py-3 [contain:inline-size] dark:bg-slate-950">
+    <pre class="min-w-max font-mono text-[0.8rem] leading-6 text-slate-800 dark:text-slate-200"><code>{lines.map((line, i) => {
+      const lineNotes = notesByLine(i);
+      const first = lineNotes[0];
+      const parts = split(line, first?.match);
+      return (
+        <span class:list={['flex pr-4', first && tones[first.tone ?? 'sky'].row]}>
+          <span class="w-10 shrink-0 select-none pr-3 text-right text-slate-400 dark:text-slate-600">{i + 1}</span>
+          <span class="whitespace-pre">{parts.before}{parts.match && <mark class:list={['rounded px-0.5', tones[first.tone ?? 'sky'].mark]}>{parts.match}</mark>}{parts.after}</span>
+          {lineNotes.map((note) => (
+            <span class:list={['ml-3 inline-flex size-5 shrink-0 select-none items-center justify-center self-center rounded-full font-sans text-[0.7rem] font-bold', tones[note.tone ?? 'sky'].badge]} aria-hidden="true">{note.n}</span>
+          ))}
+        </span>
+      );
+    })}</code></pre>
+  </div>
+  {numbered.length > 0 && (
+    <ol class="space-y-2 border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
+      {numbered.map((note) => (
+        <li class="flex gap-3">
+          <span class:list={['mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[0.7rem] font-bold', tones[note.tone ?? 'sky'].badge]}>{note.n}</span>
+          <span><span class="sr-only">{lineWord} {note.line} : </span><Fragment set:html={noteHtml(note.text)} /></span>
+        </li>
+      ))}
+    </ol>
+  )}
+</figure>

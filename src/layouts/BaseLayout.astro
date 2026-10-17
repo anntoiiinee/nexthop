@@ -156,7 +156,7 @@ const isActive = (href: string) => path === href || path.startsWith(`${href}/`);
       </nav>
     </header>
 
-    <main class="flex-1" data-pagefind-body={searchable ? '' : undefined}>
+    <main class="flex-1 overflow-x-clip" data-pagefind-body={searchable ? '' : undefined}>
       <slot />
     </main>
 

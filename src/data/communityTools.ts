@@ -62,7 +62,7 @@ export const communityTools: CommunityTool[] = [
       en: 'Roman Dodin is a network engineer and the lead maintainer of Containerlab, the premier CLI tool for orchestrating container-based networking labs. Originally developed within Nokia\'s SR Linux team, the project enables engineers to deploy complex topologies as code.',
     },
     tags: ['containerlab', 'go', 'docker', 'networking'],
-    tutorial: { fr: '/formations/automation/containerlab', en: '/en/tutorials/containerlab-setup' },
+    tutorial: { fr: '/tutoriels/containerlab-setup', en: '/en/tutorials/containerlab-setup' },
   },
   {
     name: 'Boxen',
@@ -83,5 +83,23 @@ export const communityTools: CommunityTool[] = [
     },
     tags: ['containerlab', 'go', 'docker', 'networking'],
     tutorial: { fr: '', en: ''},
-  }
+  },
+  {
+    name: 'Arista AVD',
+    url: 'https://github.com/aristanetworks/avd',
+    docs: 'https://avd.arista.com/',
+    authors: [
+      {
+        name: 'Arista Networks',
+        url: 'https://github.com/aristanetworks',
+      },
+    ],
+    license: 'Apache License 2.0',
+    description: {
+      fr: "Arista AVD (Architect, Validate, Deploy) est un projet open source qui permet de concevoir, modéliser et automatiser des architectures réseau à l'aide du principe Infrastructure as Code. Basé sur des modèles de données structurés et Ansible, il génère les configurations des équipements Arista EOS, facilite le déploiement des fabrics réseau et permet de valider leur état. Il prend notamment en charge des architectures de datacenter telles que L3LS, VXLAN-EVPN, ainsi que des scénarios campus et WAN.",
+      en: "Arista AVD (Architect, Validate, Deploy) is an open-source framework for designing, modeling, and automating network architectures using Infrastructure as Code principles. Built around structured data models and Ansible, it generates configurations for Arista EOS devices, streamlines network fabric deployment, and enables network state validation. It supports data center designs such as L3LS and VXLAN-EVPN, as well as campus and WAN use cases."
+    },
+    tags: ['networking', 'network-automation', 'infrastructure-as-code', 'ansible', 'python', 'netdevops', 'arista', 'eos', 'datacenter', 'evpn-vxlan'],
+    tutorial: { fr: '/formations/automation/avd', en: '/en/courses/automation/avd' },
+  },
 ];

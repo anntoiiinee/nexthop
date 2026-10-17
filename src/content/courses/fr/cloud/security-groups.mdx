@@ -1,0 +1,188 @@
+---
+title: "Security groups et NACL"
+description: "Filtrer le trafic dans un VPC : security groups avec état attachés aux interfaces, NACL sans état attachées aux sous-réseaux, référencer des groupes plutôt que des adresses, et dépanner avec les VPC Flow Logs."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aws, security-groups, nacl, firewall, flow-logs, cloud]
+vendor: [multi]
+order: 2
+---
+
+{/* Sortie déclarée en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const flowLogs = `2 123456789010 eni-1235b8ca123456789 172.31.16.139 172.31.16.21 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK
+2 123456789010 eni-1235b8ca123456789 172.31.9.69 172.31.9.12 49761 3389 6 20 4249 1418530010 1418530070 REJECT OK`;
+
+Au chapitre précédent, on a vu que la route `local` relie tous les sous-réseaux d'un VPC : par défaut, rien
+n'empêche une machine d'en joindre une autre. Le filtrage se fait à deux niveaux, avec deux outils très
+différents : le **security group**, un firewall avec état collé à chaque interface, et la **NACL**, une liste
+de contrôle d'accès sans état posée sur le sous-réseau. Bien les distinguer évite des heures de dépannage.
+
+## Le security group : un firewall avec état sur chaque interface
+
+Un **security group** (SG) s'attache à l'interface réseau d'une ressource (une machine, une base de données,
+un load balancer), pas au sous-réseau. Ses règles ont quatre propriétés à connaître :
+
+- **avec état** : si une connexion entrante est autorisée, sa réponse repart automatiquement, sans règle de
+  sortie. C'est la [table de sessions](/formations/security/ngfw-basics) d'un firewall ;
+- **uniquement des autorisations** : on ne peut pas écrire « refuser ». Ce qui n'est pas autorisé est refusé ;
+- **pas d'ordre** : toutes les règles sont évaluées ensemble, la plus permissive l'emporte ;
+- **cumulables** : une interface peut porter plusieurs groupes (cinq par défaut), leurs règles s'additionnent.
+
+Un groupe nouvellement créé refuse toutes les entrées et autorise toutes les sorties.
+
+<Callout type="note">
+Terraform se comporte autrement que la console : quand il crée un security group, il **supprime** la règle de
+sortie « tout autoriser » qu'AWS ajoute d'habitude. Le lab déclare donc ses règles de sortie explicitement.
+C'est plutôt une bonne chose : chaque flux, même sortant, est une décision écrite.
+</Callout>
+
+## Référencer un groupe plutôt qu'une adresse
+
+C'est la fonction qui change la façon de penser le filtrage. La source d'une règle peut être un **autre
+security group** : « autoriser le port 8080 depuis tout ce qui porte le groupe `web` ». Peu importe les
+adresses des serveurs web, leur nombre, ou qu'ils soient recréés chaque nuit par un autoscaling : dès qu'une
+interface porte le groupe `web`, elle est autorisée.
+
+<Topology
+  width={780}
+  height={260}
+  groups={[
+    { x: 20, y: 30, w: 220, h: 200, label: 'sg web', tone: 'sky' },
+    { x: 280, y: 30, w: 220, h: 200, label: 'sg app', tone: 'emerald' },
+    { x: 540, y: 30, w: 220, h: 200, label: 'sg db', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'w1', type: 'server', x: 130, y: 95, label: 'web-a' },
+    { id: 'w2', type: 'server', x: 130, y: 180, label: 'web-b' },
+    { id: 'a1', type: 'server', x: 390, y: 95, label: 'app-a' },
+    { id: 'a2', type: 'server', x: 390, y: 180, label: 'app-b' },
+    { id: 'd1', type: 'server', x: 650, y: 135, label: 'base', sub: 'PostgreSQL' },
+  ]}
+  links={[{ from: 'w1', to: 'a1' }, { from: 'w2', to: 'a2' }, { from: 'a1', to: 'd1' }, { from: 'a2', to: 'd1' }]}
+  notes={[
+    { x: 260, y: 252, text: 'app : 8080 depuis sg web', tone: 'emerald', mono: true },
+    { x: 520, y: 252, text: 'db : 5432 depuis sg app', tone: 'violet', mono: true },
+  ]}
+  caption="Une architecture à trois niveaux filtrée uniquement par références de groupes : aucune adresse IP dans les règles. Un serveur web ne peut pas joindre la base, seul le niveau applicatif le peut."
+/>
+
+Dans le lab, c'est exactement la règle du groupe `app` :
+
+```hcl title="security.tf (extrait)"
+resource "aws_vpc_security_group_ingress_rule" "app_from_web" {
+  security_group_id            = aws_security_group.app.id
+  description                  = "Application depuis les serveurs web"
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+  referenced_security_group_id = aws_security_group.web.id
+}
+```
+
+<Callout type="tip">
+Les groupes se nomment comme des rôles (`web`, `app`, `db`, `bastion`), jamais comme des adresses ou des
+personnes. On retrouve la logique des objets d'un firewall vue au chapitre
+[Politiques de sécurité](/formations/security/security-policies) : la règle décrit une intention, les membres
+peuvent changer.
+</Callout>
+
+## La NACL : une ACL sans état sur le sous-réseau
+
+La **Network ACL** (NACL) s'applique à tout le trafic qui **entre ou sort d'un sous-réseau**. Elle fonctionne
+comme une <Term id="acl" /> de routeur :
+
+- **sans état** : chaque paquet est évalué seul. Autoriser l'entrée vers le port 443 ne suffit pas, il faut
+  aussi autoriser la **sortie** des réponses vers les ports éphémères du client (1024 à 65535) ;
+- **des règles numérotées**, évaluées dans l'ordre croissant : la première qui correspond décide ;
+- **autoriser et refuser** : c'est le seul endroit d'un VPC où l'on peut écrire un refus explicite ;
+- **un refus implicite** final (la règle `*`).
+
+La NACL par défaut d'un VPC autorise tout ; une NACL créée à la main refuse tout tant qu'on n'y ajoute rien.
+
+| Règle (entrée) | Protocole | Ports | Source | Action |
+|---|---|---|---|---|
+| 100 | tous | tous | `10.50.0.0/16` | autoriser |
+| 200 | TCP | 1024-65535 | `0.0.0.0/0` | autoriser (réponses aux sorties via la NAT Gateway) |
+| `*` | tous | tous | `0.0.0.0/0` | refuser |
+
+C'est la NACL des sous-réseaux privés du lab. La seconde règle illustre l'absence d'état : sans elle, les
+machines privées pourraient envoyer leurs requêtes vers Internet, mais les réponses seraient jetées à
+l'entrée du sous-réseau.
+
+## Security group ou NACL ?
+
+| | Security group | NACL |
+|---|---|---|
+| S'applique à | une interface | un sous-réseau entier |
+| État | **avec état** | **sans état** (penser aux réponses) |
+| Règles | autorisations seulement | autorisations et refus |
+| Évaluation | toutes les règles ensemble | dans l'ordre des numéros, la première gagne |
+| Source possible | adresse, préfixe ou **autre groupe** | adresse ou préfixe |
+| Usage | **le filtrage fin, au quotidien** | des barrières grossières : bloquer une plage, isoler un niveau |
+
+En pratique, le filtrage se fait dans les security groups, et les NACL restent proches du défaut, avec
+quelques règles larges. Un paquet doit passer **les deux** : NACL du sous-réseau, puis security group de
+l'interface, et le chemin inverse pour la réponse.
+
+## Dépanner avec les VPC Flow Logs
+
+Quand une connexion échoue, on ne peut pas brancher de sonde sur un VPC. Les **VPC Flow Logs** enregistrent
+une ligne par flux, accepté ou refusé, au niveau d'un VPC, d'un sous-réseau ou d'une interface. Ils
+s'envoient vers CloudWatch Logs ou S3, sans impact sur les performances. Le format par défaut, avec deux
+exemples tirés de la documentation AWS :
+
+<CliOutput
+  title="VPC Flow Logs (format par défaut)"
+  output={flowLogs}
+  notes={[
+    { line: 1, match: '172.31.16.139 172.31.16.21', text: "Adresses source et destination, telles que l'interface les voit (adresses privées).", tone: 'sky' },
+    { line: 1, match: '20641 22 6', text: "Port source, port destination et protocole (`6` = TCP) : une connexion SSH.", tone: 'violet' },
+    { line: 1, match: 'ACCEPT', text: 'Le flux a été accepté par le security group et par la NACL.', tone: 'emerald' },
+    { line: 2, match: 'REJECT', text: "Ici, une connexion RDP (port `3389`) refusée : par le security group ou par la NACL, le journal ne dit pas lequel.", tone: 'rose' },
+  ]}
+/>
+
+Les champs, dans l'ordre : version, compte, interface, adresse source, adresse destination, port source,
+port destination, protocole, paquets, octets, début et fin de la fenêtre d'agrégation, action, état du journal.
+
+<Callout type="field">
+Une astuce de la documentation AWS pour savoir qui a refusé : si le flux entrant apparaît en `ACCEPT` mais
+que la réponse sortante apparaît en `REJECT`, le coupable est une **NACL**, car un security group, avec état,
+aurait laissé passer la réponse. Pour une analyse sans trafic réel, *Reachability Analyzer* calcule le chemin
+entre deux ressources et désigne la règle qui bloque (chaque analyse est facturée).
+</Callout>
+
+## Les équivalents Azure et Google Cloud
+
+| AWS | Azure | Google Cloud |
+|---|---|---|
+| Security group (interface, avec état, autorisations) | **NSG** : avec état, autorisations **et** refus, priorités numérotées, attachable au sous-réseau **ou** à l'interface | **Règles de firewall** du VPC : avec état, priorités, autorisations et refus |
+| Référence à un autre groupe | **Application Security Group** (ASG) | **Tags réseau** ou **comptes de service** comme source et cible |
+| NACL (sous-réseau, sans état) | pas d'équivalent séparé : le NSG sur le sous-réseau joue ce rôle | pas d'équivalent ; politiques de firewall hiérarchiques au niveau de l'organisation |
+| VPC Flow Logs | Flow logs des VNet (via Network Watcher) | VPC Flow Logs |
+
+## Dans le lab
+
+1. Déployez le lab (`terraform apply`) et ouvrez *VPC > Security groups* : le groupe `nexthop-app` a une
+   seule règle entrante, dont la source est l'identifiant du groupe `nexthop-web` (`sg-…`), pas une adresse.
+2. Ouvrez *VPC > Network ACLs* : la NACL `nexthop-nacl-private` est associée aux deux sous-réseaux privés.
+   Retrouvez ses règles 100 et 200 et la règle `*`.
+3. Supprimez la règle 200 dans `security.tf`, faites un `terraform plan` : Terraform annonce la destruction
+   d'une seule ressource. Rétablissez-la.
+4. Activez les Flow Logs (`terraform apply -var enable_flow_logs=true`), et ouvrez le groupe de journaux
+   `/vpc/nexthop/flow-logs` dans CloudWatch. Sans machine dans le VPC, il reste presque vide : pour voir du
+   trafic, lancez une petite instance dans un sous-réseau public (et pensez à la supprimer).
+5. En fin de séance : `terraform destroy`.
+
+## À retenir
+
+- Le **security group** est attaché à l'**interface** : **avec état**, autorisations seulement, toutes les
+  règles évaluées ensemble.
+- **Référencez des groupes** plutôt que des adresses : la règle survit aux changements d'adresses et à
+  l'autoscaling.
+- La **NACL** est attachée au **sous-réseau** : **sans état** (autoriser les réponses sur les ports
+  éphémères), numérotée, avec des refus possibles.
+- Filtrage fin dans les security groups, barrières grossières dans les NACL ; un paquet doit passer les deux.
+- Les **VPC Flow Logs** montrent chaque flux accepté ou refusé : le premier outil de dépannage.
+
+Prochain chapitre : **interconnecter des VPC**, quand un seul ne suffit plus.

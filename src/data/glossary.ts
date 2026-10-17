@@ -56,6 +56,14 @@ export const glossary = {
       en: "Arista Ansible collection that generates the complete configurations of a fabric (and its documentation) from a YAML data model.",
     },
   },
+  az: {
+    term: 'AZ',
+    expansion: 'Availability Zone',
+    definition: {
+      fr: "Zone de disponibilité : un ou plusieurs data centers isolés au sein d'une région cloud, avec leur propre alimentation et leur propre réseau. Répartir ses ressources sur plusieurs zones protège de la panne de l'une d'elles.",
+      en: 'One or more isolated data centers within a cloud region, with their own power and networking. Spreading resources across several zones protects against the failure of one of them.',
+    },
+  },
   bastion: {
     term: 'Bastion',
     definition: {
@@ -228,6 +236,14 @@ export const glossary = {
     definition: {
       fr: "Protocole du web : un client envoie une requête (méthode, chemin, en-têtes) et le serveur renvoie une réponse avec un code (200, 404…). HTTPS est HTTP chiffré par TLS.",
       en: "The web protocol: a client sends a request (method, path, headers) and the server returns a response with a status code (200, 404…). HTTPS is HTTP encrypted with TLS.",
+    },
+  },
+  iac: {
+    term: 'IaC',
+    expansion: 'Infrastructure as Code',
+    definition: {
+      fr: "Décrire l'infrastructure (réseaux, serveurs, règles de filtrage) dans des fichiers texte versionnés, qu'un outil comme Terraform applique, plutôt que de la configurer à la main.",
+      en: 'Describing infrastructure (networks, servers, filtering rules) in versioned text files that a tool such as Terraform applies, instead of configuring it by hand.',
     },
   },
   ibgp: {
@@ -648,6 +664,14 @@ export const glossary = {
     definition: {
       fr: "Numéro sur 24 bits (16 millions de valeurs) qui identifie un segment VXLAN, l'équivalent d'un numéro de VLAN à l'échelle de la fabric.",
       en: "24-bit number (16 million values) identifying a VXLAN segment, the equivalent of a VLAN ID across the fabric.",
+    },
+  },
+  vpc: {
+    term: 'VPC',
+    expansion: 'Virtual Private Cloud',
+    definition: {
+      fr: "Réseau privé virtuel, isolé, créé dans une région d'un cloud public, avec son propre plan d'adressage, ses sous-réseaux et ses tables de routage. Azure parle de VNet.",
+      en: 'An isolated virtual private network created in a public cloud region, with its own addressing plan, subnets and route tables. Azure calls it a VNet.',
     },
   },
   vrrp: {

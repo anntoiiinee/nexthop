@@ -1,0 +1,229 @@
+---
+title: "Le réseau en code avec Terraform"
+description: "Décrire le réseau cloud en code avec Terraform : fournisseurs, ressources, variables, plan / apply / destroy, l'état et son stockage à distance, les modules, et un pipeline GitLab CI qui déploie après relecture."
+pubDate: 2026-10-17
+level: intermediate
+tags: [terraform, iac, aws, gitops, gitlab-ci, cloud]
+vendor: [multi]
+order: 5
+---
+
+Tout ce que ce saut a construit peut se faire en cliquant dans la console AWS. C'est même la meilleure façon
+de découvrir un service. Mais un réseau créé à la main a les défauts d'un switch configuré à la main : on ne
+sait plus pourquoi telle route existe, on ne peut pas reproduire l'environnement à l'identique, et une
+erreur de clic ne laisse aucune trace. **Terraform** applique au cloud ce que le saut
+[Automatisation](/formations/automation) a appliqué aux équipements : l'<Term id="iac" />, de l'infrastructure
+décrite dans des fichiers versionnés.
+
+## Le principe
+
+Terraform est **déclaratif**, comme Ansible : on décrit l'état voulu (« un VPC `10.50.0.0/16`, quatre
+sous-réseaux, ces routes »), Terraform compare avec l'existant et calcule les actions nécessaires. Il est
+aussi **multi-fournisseurs** : le même outil pilote AWS, Azure, Google Cloud, mais aussi Cloudflare,
+NetBox, des firewalls Fortinet ou Palo Alto, grâce à des milliers de *providers*.
+
+| Notion | Rôle | Dans le lab |
+|---|---|---|
+| **Provider** | le greffon qui parle à l'API d'un service | `hashicorp/aws`, épinglé en `~> 6.0` |
+| **Resource** | un objet à créer et à maintenir | `aws_vpc.main`, `aws_subnet.public["a"]`… |
+| **Variable** | un paramètre, avec une valeur par défaut | `vpc_cidr`, `enable_nat_gateway` |
+| **Output** | une valeur à afficher ou à transmettre | `vpc_id`, `vpn_tunnels` |
+| **Data source** | une lecture d'un objet existant, non géré | (par exemple, la liste des zones d'une région) |
+| **State** | la mémoire de ce que Terraform a créé | `terraform.tfstate` |
+| **Module** | un ensemble de ressources réutilisable | (un module « VPC » appelé pour chaque environnement) |
+
+Le code s'écrit en **HCL** (HashiCorp Configuration Language), réparti dans des fichiers `.tf` que
+Terraform lit tous ensemble : leur découpage ne sert qu'à la lisibilité.
+
+## Le lab, fichier par fichier
+
+Les versions sont épinglées, et toutes les ressources reçoivent les mêmes étiquettes :
+
+<CodeFile lab="cloud-aws" file="versions.tf" />
+
+Les paramètres, avec les options payantes désactivées par défaut :
+
+<CodeFile lab="cloud-aws" file="variables.tf" />
+
+Le réseau lui-même, tel que décrit dans le chapitre [Les bases du réseau AWS](/formations/cloud/aws-vpc).
+Remarquez `for_each`, qui crée un sous-réseau par entrée de la variable, et `count`, qui ne crée la NAT
+Gateway que si l'option est activée :
+
+<CodeFile lab="cloud-aws" file="vpc.tf" />
+
+Le filtrage du chapitre [Security groups et NACL](/formations/cloud/security-groups) est dans `security.tf`,
+le VPN du chapitre [Le cloud hybride](/formations/cloud/hybrid-cloud) dans `vpn.tf`, et les valeurs utiles
+dans `outputs.tf`.
+
+Terraform ne lit pas l'ordre des fichiers : il déduit les **dépendances** des références. Comme
+`aws_subnet.public` cite `aws_vpc.main.id`, le VPC est créé d'abord ; et à la destruction, l'ordre s'inverse.
+
+## Le cycle de travail
+
+```bash
+terraform init       # télécharge les providers (et configure le stockage de l'état)
+terraform fmt        # met le code en forme, comme un linter
+terraform validate   # vérifie la syntaxe et la cohérence des références
+terraform plan       # calcule et affiche ce qui va changer, sans rien toucher
+terraform apply      # affiche le plan, demande confirmation, puis applique
+terraform destroy    # supprime tout ce que cette configuration a créé
+```
+
+Le **plan** est le moment le plus important : c'est le `--check --diff` d'Ansible. Chaque ressource est
+précédée d'un symbole : `+` création, `~` modification sur place, `-` suppression, `-/+` remplacement
+(suppression puis recréation). Voici un extrait réel du plan du lab :
+
+```text title="terraform plan (extrait)"
+  # aws_route.public_default will be created
+  + resource "aws_route" "public_default" {
+      + destination_cidr_block = "0.0.0.0/0"
+      + gateway_id             = (known after apply)
+      + id                     = (known after apply)
+      ...
+      + region                 = "eu-west-3"
+      + route_table_id         = (known after apply)
+      + state                  = (known after apply)
+    }
+
+Plan: 24 to add, 0 to change, 0 to destroy.
+```
+
+`(known after apply)` désigne une valeur qu'AWS n'attribuera qu'à la création, comme l'identifiant de la
+passerelle. Avec les trois options payantes activées, le même plan annonce 35 ressources.
+
+<Callout type="warning">
+Lisez chaque plan avant de l'appliquer, en cherchant les `-` et les `-/+`. Certains changements anodins en
+apparence imposent un **remplacement** : modifier le bloc d'adresses d'un sous-réseau, par exemple, le
+supprime et le recrée, avec tout ce qui s'y trouve. Le plan l'annonce par `# forces replacement` : c'est le
+signal pour s'arrêter et réfléchir.
+</Callout>
+
+## L'état : la mémoire de Terraform
+
+Après un `apply`, Terraform enregistre dans **`terraform.tfstate`** la correspondance entre chaque ressource
+du code et l'objet réel chez AWS (`aws_vpc.main` = `vpc-0a1b2c…`). C'est grâce à lui qu'il sait quoi
+modifier ou supprimer au prochain plan. Trois règles :
+
+- **L'état contient des secrets.** Les clés pré-partagées du VPN, par exemple, y sont en clair, même si
+  l'output est marqué `sensitive`. Il ne va **jamais dans Git**.
+- **En équipe, il est stocké à distance**, par exemple dans un bucket S3 chiffré, versionné et à accès
+  restreint. Le bloc `backend "s3"` est préparé, en commentaire, dans `versions.tf`.
+- **Un seul `apply` à la fois.** Avec `use_lockfile = true` (Terraform 1.10 et plus), un fichier de verrou
+  dans S3 empêche deux personnes, ou deux pipelines, de modifier l'état en même temps.
+
+### Les modifications faites à la main
+
+Si quelqu'un modifie dans la console une ressource gérée par Terraform, le prochain `plan` le détecte et
+propose de **revenir à ce que dit le code**. C'est la détection d'écarts (*drift*) vue avec
+[NetBox](/formations/automation/netbox), intégrée à l'outil. La règle d'équipe qui en découle : une fois
+qu'une ressource est dans Terraform, **on ne la modifie plus que par le code**. Pour reprendre en main une
+ressource créée à la main, un bloc `import` permet de l'ajouter à l'état sans la recréer.
+
+## Les modules
+
+Un **module** est un dossier de fichiers `.tf` avec ses variables et ses outputs, qu'on appelle comme une
+fonction. On écrit une fois « un VPC conforme aux règles de l'entreprise », et chaque environnement
+l'appelle avec ses paramètres :
+
+```hcl title="environnements/prod/main.tf"
+module "vpc" {
+  source = "../../modules/vpc"
+
+  name               = "prod"
+  vpc_cidr           = "10.50.0.0/16"
+  enable_nat_gateway = true
+}
+```
+
+Des modules communautaires très utilisés existent aussi, comme `terraform-aws-modules/vpc/aws`. Épinglez
+toujours leur version (`version = "~> 6.0"`) : un module qui change de version majeure peut changer le plan.
+
+## Déployer par un pipeline
+
+Comme pour les [sauvegardes GitOps](/formations/automation/config-backup), le code vit dans Git et c'est un
+pipeline qui l'applique :
+
+1. sur une **merge request**, le pipeline lance `fmt`, `validate` et `plan`, et publie le plan ;
+2. un relecteur lit le plan, pas seulement le code ;
+3. après la fusion sur `main`, le pipeline applique **exactement** le plan relu.
+
+```yaml title=".gitlab-ci.yml (extrait)"
+stages: [validate, plan, apply]
+
+default:
+  image:
+    name: hashicorp/terraform:1.10
+    entrypoint: [""]
+  before_script:
+    - terraform init -input=false
+
+validate:
+  stage: validate
+  script:
+    - terraform fmt -check -recursive
+    - terraform validate
+
+plan:
+  stage: plan
+  script:
+    - terraform plan -input=false -out=plan.tfplan
+  artifacts:
+    paths: [plan.tfplan]
+
+apply:
+  stage: apply
+  script:
+    - terraform apply -input=false plan.tfplan
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+```
+
+<Callout type="field">
+Le pipeline a besoin de droits sur AWS, et ce sont des droits étendus : il peut supprimer des VPC. Évitez les
+clés d'accès permanentes stockées dans des variables CI. GitLab, GitHub et la plupart des outils de CI
+savent fournir un jeton **OIDC** que AWS échange contre des droits temporaires sur un rôle IAM, limité au
+dépôt et à la branche. Plus de clé qui fuit, plus de clé à faire tourner.
+</Callout>
+
+## Terraform, OpenTofu et les autres
+
+Depuis août 2023, Terraform est distribué sous licence *Business Source License* et n'est plus open source
+au sens strict. **OpenTofu**, un fork maintenu sous l'égide de la Linux Foundation, est resté sous licence
+open source (MPL 2.0) ; il reste compatible avec le code HCL, et la commande `tofu` remplace `terraform`.
+Les deux conviennent pour ce lab.
+
+| Outil | Particularité |
+|---|---|
+| **Terraform / OpenTofu** | multi-fournisseurs, HCL, l'outil de référence |
+| **AWS CloudFormation** | natif AWS, YAML ou JSON, état géré par AWS |
+| **Azure Bicep** | natif Azure, successeur des templates ARM |
+| **Pulumi** | la même logique, mais en Python, TypeScript ou Go |
+
+## Dans le lab
+
+1. Lancez `terraform fmt -check`, `terraform validate` puis `terraform plan` : vous devez obtenir
+   `Plan: 24 to add, 0 to change, 0 to destroy.`
+2. Appliquez, puis relancez `terraform plan` : `No changes`, c'est l'idempotence.
+3. Dans la console, ajoutez à la main une étiquette sur le VPC, puis relancez `terraform plan` : Terraform
+   propose de la retirer. C'est un écart détecté.
+4. Changez `public_subnets["b"]` en `10.50.2.0/24` et lisez le plan : repérez `forces replacement`.
+   Annulez la modification.
+5. Copiez `terraform.tfvars.example` en `terraform.tfvars`, activez la NAT Gateway, et comparez le plan.
+6. `terraform destroy` : vérifiez dans la console qu'il ne reste rien, et regardez la page de facturation
+   le lendemain.
+
+## À retenir
+
+- Terraform est **déclaratif** et **multi-fournisseurs** : on décrit l'état voulu, il calcule les actions.
+- **plan avant apply**, toujours : repérez les suppressions et les `forces replacement`.
+- L'**état** fait le lien entre le code et le réel ; il contient des **secrets**, se stocke **à distance**,
+  chiffré, avec un **verrou**, et jamais dans Git.
+- Une fois une ressource dans Terraform, **on ne la modifie plus à la main** ; le plan révèle les écarts.
+- Le flux GitOps s'applique au cloud : merge request, plan relu, apply par le pipeline, avec des droits
+  temporaires (OIDC).
+
+Félicitations, vous avez terminé le parcours ! Du câble au cloud, vous avez traversé les huit sauts :
+commutation et routage, data center, automatisation, sécurité, proxies, services et supervision, et enfin
+le réseau dans le cloud. La page [Aller plus loin](/aller-plus-loin) propose des événements, des podcasts et
+des communautés pour continuer à apprendre.

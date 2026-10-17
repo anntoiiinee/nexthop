@@ -1,0 +1,221 @@
+---
+title: "GitOps configuration backups"
+description: "Backing up every device's configuration to Git each day, with Python or Ansible and a scheduled GitLab CI pipeline: history, diffs, alerts and restore."
+pubDate: 2026-10-18
+level: intermediate
+tags: [gitops, backup, git, gitlab-ci, python, ansible]
+vendor: [arista]
+order: 3
+---
+
+A switch that dies, a wrong command, a "quick" change on a Friday evening: without an up-to-date backup, you
+rebuild the configuration from memory. One backup per device in a shared folder is better than nothing…
+but it tells you neither **what changed** nor **when**. By storing configurations in **Git**, you get all
+of that for free.
+
+## Why Git
+
+| Need | What Git brings |
+|---|---|
+| Restore a configuration | every past version, for every device |
+| Know what changed | line-by-line `git diff` between two backups |
+| Know when | a timestamped commit for each detected change |
+| Get alerted | one commit = one change: just watch the repository |
+| Audit | a complete history, impossible to rewrite quietly if the branch is protected |
+
+This is a first step towards <Term id="gitops" />: Git becomes the **reference** for the network's state.
+Here, Git **records** the actual state of the devices; in the AVD chapter we go further, with Git
+**deciding** the desired state.
+
+## The architecture
+
+Every night, a scheduled <Term id="cicd" /> pipeline connects to every device, fetches its configuration
+and commits whatever changed to the repository:
+
+<Topology
+  width={760}
+  height={300}
+  groups={[{ x: 470, y: 30, w: 274, h: 255, label: 'Management network', tone: 'sky' }]}
+  nodes={[
+    { id: 'gl', type: 'server', x: 90, y: 80, label: 'GitLab', sub: 'schedule 2 am', tone: 'violet' },
+    { id: 'repo', type: 'server', x: 90, y: 230, label: 'Repository', sub: 'backups/*.cfg', tone: 'violet' },
+    { id: 'runner', type: 'server', x: 320, y: 150, label: 'Runner', sub: 'Python or Ansible', tone: 'emerald' },
+    { id: 'sp', type: 'switch', x: 600, y: 90, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 530, y: 225, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 670, y: 225, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'gl', to: 'runner' }, { from: 'runner', to: 'repo' },
+    { from: 'runner', to: 'sp' }, { from: 'runner', to: 'l1' }, { from: 'runner', to: 'l2' },
+  ]}
+  flows={[
+    { from: 'gl', to: 'runner', label: '① starts the job', tone: 'violet' },
+    { from: 'runner', to: 'sp', label: '② show running-config', tone: 'sky', offset: -14 },
+    { from: 'runner', to: 'repo', label: '③ commit + push', tone: 'emerald' },
+  ]}
+  caption="The runner, placed in the management network, queries the devices then pushes the configurations to the repository. Nothing changes on the devices: it is read-only."
+/>
+
+The job always goes through the same steps:
+
+<PacketFormat
+  cols={14}
+  rows={[
+    { fields: [
+      { label: 'Schedule', sub: 'cron', span: 2, tone: 'violet' },
+      { label: 'Connect', sub: 'service account', span: 2, tone: 'sky' },
+      { label: 'Read', sub: 'running-config', span: 2, tone: 'sky' },
+      { label: 'Clean', sub: 'volatile lines', span: 2, tone: 'amber' },
+      { label: 'Commit', sub: 'if changed', span: 2, tone: 'emerald' },
+      { label: 'Push', sub: 'to the repo', span: 2, tone: 'emerald' },
+      { label: 'Alert', sub: 'failed job', span: 2, tone: 'rose' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="The daily cycle of a GitOps backup. Without a configuration change, no commit is created."
+/>
+
+## The trap of lines that change on their own
+
+If you save the raw output of `show running-config`, some lines change at every read even though the
+configuration doesn't: a timestamp, a counter. The result: a commit every night for nothing, and real
+changes drowned in noise. Remove them before writing the file:
+
+| Platform | Volatile line | Example |
+|---|---|---|
+| Arista EOS | command headers | `! Command: show running-config`, `! device: leaf1 (cEOSLab, EOS-4.32.0F)` |
+| Cisco IOS | change timestamp | `! Last configuration change at 02:00:13 UTC Sat Oct 18 2026` |
+
+<Callout type="tip">
+Test your cleanup by running the backup twice in a row: the second time, `git status` must show **no**
+changes. If a file changes, a volatile line slipped through.
+</Callout>
+
+## The Python version
+
+The script reads the inventory, queries the devices in parallel, cleans up and writes one file per device.
+A failing device doesn't prevent the others from being backed up, but the script exits with an error so
+the pipeline reports it.
+
+<CodeFile lab="netops" file="python/backup_configs.py" />
+
+```text title="python3 python/backup_configs.py"
+OK    leaf1
+OK    spine1
+OK    leaf2
+3/3 équipements sauvegardés dans backups/
+```
+
+The script's messages are in French, like the rest of the lab ("3/3 devices backed up to backups/").
+
+## The Ansible version
+
+Same result with a playbook. The running-config is fetched by `eos_command`, and the file is written on the
+control node (`delegate_to: localhost`):
+
+<CodeFile lab="netops" file="ansible/backup.yml" />
+
+<Callout type="note">
+The `eos_config` module also has a `backup: yes` option, which saves a copy of the configuration.
+Fetching the configuration explicitly, as here, lets you control the file name and the cleanup of volatile
+lines: that is what makes the Git diffs usable.
+</Callout>
+
+## The GitLab CI pipeline
+
+The pipeline runs the script (or the playbook), then commits and pushes the changes. It runs on a
+**schedule**, or manually from the interface (*Run pipeline* button):
+
+<CodeFile lab="netops" file="gitlab-ci.yml" />
+
+To set it up:
+
+1. Create a repository dedicated to backups, with the lab files (`python/`, `ansible/`, `inventory.yml`,
+   `requirements.txt`…) and rename `gitlab-ci.yml` to `.gitlab-ci.yml`.
+2. In *Settings > CI/CD > Variables*, create `NET_USER`, `NET_PASSWORD` and `BACKUP_PUSH_TOKEN`, ticked
+   **Masked** and **Protected**.
+3. Create a **project access token** (Developer role, `write_repository` scope): it is the one that pushes.
+4. In *Build > Pipeline schedules*, schedule the job, for example `0 2 * * *` (every day at 2 am).
+5. Use a **runner** installed in the management network: GitLab.com's shared runners, fortunately, have no
+   access to your devices.
+
+## The result
+
+Every morning, the repository history tells the story of the network:
+
+```text title="git log --oneline"
+8c41d2e backup 2026-10-21 : leaf1 leaf2
+3f2a1c9 backup 2026-10-19 : spine1
+b07e5a4 backup 2026-10-18 : leaf1 leaf2 spine1
+```
+
+No commit on the 20th: nothing changed that day. And on the 21st, what happened on the leafs?
+
+```text title="git show 8c41d2e -- backups/leaf1.cfg"
+--- a/backups/leaf1.cfg
++++ b/backups/leaf1.cfg
+@@ -14,6 +14,9 @@ vlan 30
+    name SERVERS
+ !
++vlan 40
++   name MANAGEMENT
++!
+ interface Ethernet1
+    description spine1
+```
+
+Someone added VLAN 40. If that change wasn't planned, you know it the next morning, with the exact diff.
+
+<Callout type="field">
+In production, add a notification for each backup commit (a message in the team channel, an email): a
+change nobody announced becomes immediately visible. It is often the first step that gets a team to adopt
+automation, because it touches nothing and is useful from day one.
+</Callout>
+
+## Restoring a configuration
+
+On Arista EOS, `configure replace` replaces the **whole** configuration with a file's, changing only the
+differences:
+
+```text title="Restoring leaf1"
+leaf1# copy scp:netops@172.20.30.1/home/netops/backups/leaf1.cfg flash:leaf1-restore.cfg
+leaf1# configure replace flash:leaf1-restore.cfg
+leaf1# write memory
+```
+
+For a brand-new replacement device, the backup serves as the startup configuration. And to find the state
+at a specific date: `git log -- backups/leaf1.cfg`, then `git show <commit>:backups/leaf1.cfg`.
+
+## Best practices
+
+- **A dedicated repository**, private, with a protected branch where only the pipeline account can push.
+- **A read-only service account** for backups (limited role on the devices or in TACACS+): a backup doesn't
+  need configuration rights.
+- **Watch for failures**: a backup that has been failing silently for three months protects nothing.
+
+<Callout type="warning">
+A configuration contains secrets: password hashes, TACACS+ or RADIUS keys, SNMP keys. Some are easy to
+reverse (Cisco "type 7" passwords in particular). The backup repository is therefore **as sensitive as the
+devices themselves**: restricted access, and never a copy on a public repository.
+</Callout>
+
+## In the lab
+
+1. Deploy the `netops` lab and run `python3 python/backup_configs.py`.
+2. Turn the folder into a Git repository: `git init`, `git add backups/`, `git commit -m "first backup"`.
+3. Run the backup again: `git status` must show nothing.
+4. Deploy the VLANs from the previous chapter (`ansible-playbook ansible/vlans.yml`), run the backup again
+   (the Ansible version this time), and look at `git diff`.
+5. Bonus: push the folder to a GitLab repository with a local runner, and schedule the pipeline.
+
+<Lab name="netops" lang="en" />
+
+## Key takeaways
+
+- Backing up to **Git** gives you history, diff, date and alerting, for free.
+- A **scheduled** pipeline connects **read-only** and commits **only when something changed**.
+- **Strip volatile lines**, otherwise every night produces a false change.
+- A failure on one device must not block the others, but must **fail the job**.
+- The backup repository contains **secrets**: protect it like the devices.
+
+Next chapter: a second script, one that **changes** the devices: **break-glass account rotation**.
