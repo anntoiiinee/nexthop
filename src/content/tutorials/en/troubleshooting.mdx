@@ -1,0 +1,178 @@
+---
+title: "Troubleshooting a network: the method"
+description: "Stay calm, define the problem precisely, check things in order (cable, VLAN, IP address, gateway, DNS, ports), pick a method, avoid the classic traps and learn from the incident."
+pubDate: 2026-10-17
+level: beginner
+tags: [troubleshooting, methodology, fundamentals]
+vendor: [multi]
+---
+
+"The Internet is down." "The app is slow." "I can't log in." Sooner or later, that message arrives, often at the
+worst moment, with someone waiting. The temptation is to try everything at once: reboot, change a rule, swap a
+cable. It is the best way to lose an hour, or to add a second outage to the first one. This tutorial offers a
+**method**: slower on the surface, much more effective in practice.
+
+## First, don't panic
+
+The first minutes matter more than the next ones, and not for the reasons you might think. Before typing a
+command:
+
+1. **Breathe.** A network outage almost never needs an answer within the second. A wrong move under pressure
+   does.
+2. **Note the time** the problem was reported, and open a notes file. You will write down every check and every
+   action in it, with the time. These notes help the troubleshooting ("what have I already tested?"), then the
+   report.
+3. **Let people know**: a short message to your manager or in the team channel ("incident in progress on this
+   scope, I'm looking into it"). It stops three people from chasing the same thing separately, or a colleague
+   from making a change at the same time as you.
+4. **Don't touch anything until you understand.** Rebooting a device often erases the evidence: in-memory logs,
+   ARP table, error counters, session state.
+
+<Callout type="warning">
+The golden rule of troubleshooting: **one change at a time**, and check its effect before the next one. If you
+change three things and it works again, you will never know which one fixed it, nor whether the other two created
+a new problem. And if it still doesn't work, undo the change before trying another one.
+</Callout>
+
+## Defining the problem
+
+"It doesn't work" is not a problem, it is a symptom. A few questions, asked to the person reporting the incident,
+narrow the search enormously:
+
+| Question | What the answer tells you |
+|---|---|
+| **Who** is affected? One person, an office, a floor, a site, everyone? | The smaller the scope, the closer the cause is to the user: their computer, their cable, their switch port. If everyone is affected, look at the network core, the Internet access or a central service (DNS, DHCP). |
+| **What** doesn't work? Everything, or a single application? | If everything is down, look at the lower layers (cable, VLAN, address, gateway). If a single application is affected, the basic network works: look at DNS, the firewall, the application itself. |
+| **Since when**? A precise time? | A precise time lets you cross-check with logs, monitoring and changes. |
+| **What changed?** | Often the most useful question. A planned change, an update, an office move, a new cable: most outages follow a change. |
+| Is it **permanent or intermittent**? | An intermittent issue points to congestion, packet loss, a loop or an MTU problem. A clean outage points to a configuration or a failed device. |
+| Is it **reproducible**? | If you can trigger the problem at will, you will be able to check it is really fixed. |
+
+<Callout type="tip">
+Restate the problem in one precise sentence before starting: "Since 9:40, computers on the 2nd floor can no longer
+reach the intranet, while the Internet works." That sentence already holds half the diagnosis: the problem is
+recent, localized, and affects an internal destination but not Internet access.
+</Callout>
+
+## First checks, in order
+
+A network is a stack of layers (see the [OSI model](/en/courses/fundamentals/osi)): each needs the one below to
+work. Checking in order, from the bottom up, avoids hunting for a DNS problem on an unplugged cable.
+
+| # | Check | What to look at |
+|---|---|---|
+| 1 | **Physical link** | Is the cable plugged in, the LED on, the Wi-Fi connected? On the switch side, is the port `up`? Are the error counters (CRC, *input errors*) increasing? |
+| 2 | **VLAN** | Is the port in the right VLAN? Does the machine show up in the switch's MAC table, on the right port? |
+| 3 | **IP address** | Does the machine have an address, with the right mask? An address in `169.254.x.x` means no DHCP server answered. |
+| 4 | **Gateway** | Is the default gateway the right one, and does it answer ping? Is its MAC address in the machine's ARP table? |
+| 5 | **Routing** | Does a remote address answer ping (an IP, not a name)? Where does the path stop, according to `traceroute`? |
+| 6 | **DNS** | Does the name resolve, and to the right address? Is the configured DNS server reachable? |
+| 7 | **Port** | Is the service listening, and is the port open end to end (firewall, security group, local filtering)? |
+| 8 | **Application** | If all of the above works, the network has done its job: certificate, authentication, the application itself. |
+
+### The matching commands
+
+| Check | Windows | Linux / macOS | Arista EOS / Cisco IOS |
+|---|---|---|---|
+| Link and counters | `Get-NetAdapter` | `ip link`, `ethtool eth0` | `show interfaces status`, `show interfaces counters errors` |
+| VLAN and MAC table | | | `show vlan`, `show mac address-table` |
+| IP address | `ipconfig /all` | `ip addr` | `show ip interface brief` |
+| Gateway and ARP | `ping <gateway>`, `arp -a` | `ip route`, `ip neigh` | `show ip arp` |
+| Routing | `tracert <ip>` | `traceroute <ip>`, `mtr <ip>` | `show ip route <ip>`, `traceroute <ip>` |
+| DNS | `nslookup <name>` | `dig <name>` | |
+| Port | `Test-NetConnection <ip> -Port 443` | `nc -vz <ip> 443` | |
+
+<Callout type="note">
+A failed ping doesn't prove the machine is down: many firewalls, and Windows by default, block ICMP. Conversely, a
+ping that answers only proves the network layer works, not that the application is reachable. For a service, test
+the port itself (`Test-NetConnection`, `nc`, or `curl`).
+</Callout>
+
+## Choosing a method
+
+Checking every layer in order is safe, but not always the fastest. Three approaches, depending on the situation:
+
+| Method | Principle | When to use it |
+|---|---|---|
+| **Bottom up** | From the cable to the application, in the order of the table above | When you know nothing, or for a problem affecting a single computer |
+| **Top down** | From the application down to the cable | When a single application is affected and everything else works |
+| **Divide and conquer** | Start in the middle, with a ping to the gateway then to the destination, and go down or up depending on the result | The most effective in most cases: one test rules out half the hypotheses |
+
+The most telling method for a network engineer is to **follow the path** of the packet, device by device,
+checking at each step that it arrives and leaves:
+
+<Topology
+  width={780}
+  height={250}
+  nodes={[
+    { id: 'pc', type: 'host', x: 70, y: 120, label: 'Computer', sub: '10.10.20.37' },
+    { id: 'sw', type: 'switch', x: 240, y: 120, label: 'Access switch', sub: 'VLAN 20' },
+    { id: 'gw', type: 'l3switch', x: 410, y: 120, label: 'Gateway', sub: '10.10.20.1' },
+    { id: 'fw', type: 'firewall', x: 570, y: 120, label: 'Firewall', tone: 'rose' },
+    { id: 'srv', type: 'server', x: 720, y: 120, label: 'Server', sub: '10.50.0.20:443', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'sw' }, { from: 'sw', to: 'gw' }, { from: 'gw', to: 'fw' }, { from: 'fw', to: 'srv' }]}
+  notes={[
+    { x: 155, y: 60, text: '① link, VLAN', tone: 'sky' },
+    { x: 325, y: 60, text: '② IP, ARP', tone: 'sky' },
+    { x: 490, y: 60, text: '③ routing', tone: 'sky' },
+    { x: 645, y: 60, text: '④ rule, port', tone: 'sky' },
+    { x: 390, y: 220, text: 'at each step: does the packet arrive? leave? does the reply come back?', tone: 'slate' },
+  ]}
+  caption="Following the path: each device is a checkpoint. The fault lies between the last point where everything is fine and the first one where something is wrong."
+/>
+
+At each point, a traffic capture (`tcpdump` on Linux, Wireshark, or a firewall's built-in capture) removes the
+doubt: if the packet arrives but the reply never comes back, the problem is beyond that point, or on the return
+path.
+
+## The classic traps
+
+Some outages come back so often that they deserve an early check:
+
+- **DNS.** The application no longer answers, but the server's IP address answers ping? It is very often name
+  resolution: wrong DNS server, changed record, stale cache. Hence the admins' saying: "it's always DNS".
+- **MTU.** Pings and small pages go through, but large transfers hang, especially through a VPN or a tunnel. It is
+  the signature of an MTU problem, detailed in the [TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter. The
+  [MTU calculator](/en/tools/mtu-calculator) gives the right values for each encapsulation.
+- **Asymmetric routing.** The way out goes through one firewall, the way back through another path: the firewall
+  only sees one direction of the connection and drops it. Ping may work while TCP fails.
+- **IP address conflict.** Two machines with the same address: the connection works, drops, then comes back,
+  depending on which machine last answered ARP.
+- **Physical errors.** A damaged cable or a tired optic cause small but constant losses: everything is slow, nothing
+  is down. The interface error counters show it.
+- **Layer 2 loop.** A whole VLAN becomes unusable at once, LEDs blink frantically, switch CPUs saturate. Look for a
+  cable plugged between two ports of the same switch, and check [Spanning Tree](/en/courses/fundamentals/stp).
+- **Time.** A clock a few minutes off breaks Kerberos authentication, certificate validation or one-time tokens.
+  Check NTP.
+- **Expired certificate.** The network works perfectly, but the browser refuses the connection: it is a date, not
+  a network outage.
+
+<Callout type="field">
+The network is often blamed first, because it is the part people see the least. Your job is not only to fix things:
+it is also to **prove** where the problem is. "The packet reaches the server's interface, and the server doesn't
+answer" is a sentence that saves everyone a lot of time, provided you have the capture to show it.
+</Callout>
+
+## During and after the incident
+
+- **Communicate regularly**, even to say there is nothing new: an update every 30 minutes reassures people, and
+  stops you from being interrupted constantly.
+- **If a change is involved, roll back first**, look for the why afterwards. Restoring service comes before
+  understanding.
+- **Know when to escalate.** After a reasonable time with no lead, asking a colleague, the carrier or the vendor's
+  support for help is not a failure. Your notes will save them precious time.
+- **Find the root cause.** "The port was disabled" is an observation. "The port was disabled by broadcast storm
+  control, triggered by a loop created by a cable plugged in twice" is a cause, and it says what to fix so it
+  doesn't happen again.
+- **Write a short report**: timeline, impact, cause, corrective actions. Without looking for someone to blame: the
+  goal is to improve the system (monitoring, procedure, configuration), not to point fingers.
+
+## Key takeaways
+
+- **Don't panic**: note the time, let people know, reboot nothing before you understand.
+- **Define the problem**: who, what, since when, and above all **what changed**.
+- **Check in order**: link, VLAN, IP address, gateway, routing, DNS, port, application.
+- **A method**: bottom up, top down, or divide and conquer; and follow the packet's path.
+- **One change at a time**, write everything down, roll back if a change is involved.
+- After the incident: **root cause** and report, so the same outage doesn't come back.
