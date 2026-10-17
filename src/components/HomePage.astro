@@ -1,4 +1,5 @@
 ---
+import SectionHeader from './SectionHeader.astro';
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { Image } from 'astro:assets';
 import TutorialCard from './TutorialCard.astro';
@@ -68,7 +69,9 @@ const copy = {
     ctaTutorials: 'Voir les tutoriels',
     ctaCourses: 'Les formations',
     audienceTitle: 'Pour qui ?',
-    audienceIntro: "Next Hop s'adresse à celles et ceux qui apprennent le réseau sur le terrain plutôt que dans les livres : en formation, en reconversion, ou déjà en poste. Les contenus partent des bases, mais vont jusqu'aux sujets rencontrés dans les grandes entreprises, avec de vraies configurations et des labs gratuits. Choisissez votre profil : voici ce qui vous attend, et par où commencer.",
+    audienceEyebrow: 'Public',
+    audienceIntro: "Pour celles et ceux qui apprennent le réseau sur le terrain plutôt que dans les livres : en formation, en reconversion ou déjà en poste.",
+    audienceHighlights: ["Des bases jusqu'aux sujets des grandes entreprises", 'De vraies configurations, sur plusieurs constructeurs', 'Des labs gratuits, à lancer chez soi'],
     audiencePoints: 'Ce que vous trouverez ici',
     startLabel: 'Par où commencer',
     stats: {
@@ -79,7 +82,8 @@ const copy = {
       terms: ['terme défini', 'termes définis'],
     },
     toolsTitle: 'Des outils pour s’entraîner',
-    toolsIntro: 'Calculer, découper, décoder, se tester : directement dans le navigateur, sans rien installer.',
+    toolsEyebrow: (n: number) => `${n} outils · dans le navigateur`,
+    toolsIntro: 'Calculer, découper, décoder, se tester : directement dans le navigateur, sans rien installer ni créer de compte.',
     toolsAll: 'Tous les outils →',
     faqTitle: 'Questions fréquentes',
     audience: [
@@ -93,7 +97,11 @@ const copy = {
         points: ["Ce qui se passe sous vos applications : TCP, DNS, TLS, proxys et load balancers", "Les outils de diagnostic pour prouver où est le problème", "Les bases du réseau dans le cloud : VPC, filtrage, VPN et Terraform (saut 8)"] },
     ],
     roadmapTitle: 'Le parcours, saut par saut',
-    roadmapIntro: "Un chemin progressif, des fondamentaux jusqu'aux sujets rencontrés dans les data centers et les grandes entreprises.",
+    roadmapEyebrow: (hops: number, chapters: number) => `${hops} sauts · ${chapters} chapitres`,
+    roadmapIntro: "Un chemin progressif, des fondamentaux jusqu'aux sujets rencontrés dans les data centers et les grandes entreprises. Chaque saut affiche son niveau : suivez-les dans l'ordre, ou entrez directement par celui qui vous concerne.",
+    levelsLabel: 'Niveaux',
+    methodEyebrow: 'La méthode',
+    latestEyebrow: 'Nouveautés',
     methodTitle: 'Des tutoriels pensés pour la pratique',
     method: [
       { title: 'Des configs réelles', text: "Pas de pseudo-code : des configurations telles qu'on les déploie, sur des équipements du marché." },
@@ -117,7 +125,9 @@ const copy = {
     ctaTutorials: 'Browse tutorials',
     ctaCourses: 'Courses',
     audienceTitle: 'Who is it for?',
-    audienceIntro: 'Next Hop is for people learning networking hands-on rather than from books: in training, changing careers, or already on the job. Content starts from the basics but goes all the way to the topics met in large companies, with real configurations and free labs. Pick your profile: here is what awaits you, and where to start.',
+    audienceEyebrow: 'Audience',
+    audienceIntro: 'For people learning networking hands-on rather than from books: in training, changing careers, or already on the job.',
+    audienceHighlights: ['From the basics to the topics met in large companies', 'Real configurations, across several vendors', 'Free labs you can run at home'],
     audiencePoints: 'What you will find here',
     startLabel: 'Where to start',
     stats: {
@@ -128,7 +138,8 @@ const copy = {
       terms: ['defined term', 'defined terms'],
     },
     toolsTitle: 'Tools to practice',
-    toolsIntro: 'Calculate, split, decode, test yourself: right in your browser, nothing to install.',
+    toolsEyebrow: (n: number) => `${n} tools · in your browser`,
+    toolsIntro: 'Calculate, split, decode, test yourself: right in your browser, with nothing to install and no account to create.',
     toolsAll: 'All tools →',
     faqTitle: 'Frequently asked questions',
     audience: [
@@ -142,7 +153,11 @@ const copy = {
         points: ['What happens under your applications: TCP, DNS, TLS, proxies and load balancers', 'The troubleshooting tools to prove where the problem is', 'Cloud networking basics: VPCs, filtering, VPN and Terraform (hop 8)'] },
     ],
     roadmapTitle: 'The path, hop by hop',
-    roadmapIntro: 'A progressive path, from the fundamentals to the topics you meet in data centers and large companies.',
+    roadmapEyebrow: (hops: number, chapters: number) => `${hops} hops · ${chapters} chapters`,
+    roadmapIntro: 'A progressive path, from the fundamentals to the topics you meet in data centers and large companies. Each hop shows its level: follow them in order, or jump straight to the one that matters to you.',
+    levelsLabel: 'Levels',
+    methodEyebrow: 'The method',
+    latestEyebrow: "What's new",
     methodTitle: 'Tutorials built for practice',
     method: [
       { title: 'Real configs', text: 'No pseudo-code: configurations as they are actually deployed, on real-world gear.' },
@@ -169,7 +184,6 @@ const stats = ([
   .filter(([, value]) => value > 0)
   .map(([key, value]) => ({ value, label: copy.stats[key][value > 1 ? 1 : 0] }));
 
-const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:text-white';
 ---
 <BaseLayout title={copy.title} lang={lang} alternates={routes.home} jsonLd={[websiteSchema(lang, t(lang, 'site.description')), authorSchema(lang)]}>
 
@@ -229,8 +243,14 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
 
   <!-- Pour qui -->
   <section class="mx-auto max-w-6xl px-4 py-16">
-    <h2 class={h2}>{copy.audienceTitle}</h2>
-    <p class="mt-3 max-w-3xl text-slate-600 dark:text-slate-400">{copy.audienceIntro}</p>
+    <SectionHeader eyebrow={copy.audienceEyebrow} title={copy.audienceTitle}>
+      <p class="text-lg">{copy.audienceIntro}</p>
+      <ul class="mt-4 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
+        {copy.audienceHighlights.map((h) => (
+          <li class="flex gap-2"><span class="text-emerald-500" aria-hidden="true">✓</span><span>{h}</span></li>
+        ))}
+      </ul>
+    </SectionHeader>
     <div class="mt-8 grid gap-6 md:grid-cols-2">
       {copy.audience.map((a) => {
         const steps = stepsFor(a.key as AudienceKey);
@@ -269,8 +289,15 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
   <!-- Parcours -->
   <section class="border-y border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/40">
     <div class="mx-auto max-w-6xl px-4 py-16">
-      <h2 class={h2}>{copy.roadmapTitle}</h2>
-      <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.roadmapIntro}</p>
+      <SectionHeader eyebrow={copy.roadmapEyebrow(roadmap.length, roadmap.reduce((n, step) => n + step.chapters.length, 0))} title={copy.roadmapTitle}>
+        <p>{copy.roadmapIntro}</p>
+        <p class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          <span class="font-mono text-slate-500">{copy.levelsLabel}</span>
+          {(['beginner', 'intermediate', 'advanced'] as const).map((level) => (
+            <span class:list={['rounded-full px-2 py-0.5 font-medium', levelColors[level]]}>{t(lang, `level.${level}`)}</span>
+          ))}
+        </p>
+      </SectionHeader>
 
       <!-- Grille à sous-grilles : les mêmes parties de chaque carte sont alignées sur toute une rangée -->
       <ol class="mt-10 grid gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -329,20 +356,16 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
   <!-- Outils -->
   {tools.length > 0 && (
     <section class="mx-auto max-w-6xl px-4 pt-16">
-      <div class="flex items-end justify-between gap-4">
-        <div>
-          <h2 class={h2}>{copy.toolsTitle}</h2>
-          <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.toolsIntro}</p>
-        </div>
-        <a href={routes.tools[lang]} class="shrink-0 text-sm font-medium text-sky-600 hover:underline dark:text-sky-400">{copy.toolsAll}</a>
-      </div>
+      <SectionHeader eyebrow={copy.toolsEyebrow(tools.length)} title={copy.toolsTitle} link={{ href: routes.tools[lang], label: copy.toolsAll }}>
+        <p>{copy.toolsIntro}</p>
+      </SectionHeader>
       <ToolCarousel lang={lang} />
     </section>
   )}
 
   <!-- Méthode -->
   <section class="mx-auto max-w-6xl px-4 py-16">
-    <h2 class={h2}>{copy.methodTitle}</h2>
+    <SectionHeader eyebrow={copy.methodEyebrow} title={copy.methodTitle} />
     <div class="mt-8 grid gap-x-12 gap-y-8 sm:grid-cols-2">
       {copy.method.map((m) => (
         <div class="flex gap-4">
@@ -359,14 +382,11 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
   <!-- Derniers tutoriels -->
   <section class="border-t border-slate-200 dark:border-slate-800">
     <div class="mx-auto max-w-6xl px-4 py-16">
-      <div class="flex items-end justify-between gap-4">
-        <h2 class={h2}>{copy.latestTitle}</h2>
-        {posts.length > 6 && (
-          <a href={routes.tutorials[lang]} class="text-sm font-medium text-sky-600 hover:underline dark:text-sky-400">
-            {copy.seeAll}
-          </a>
-        )}
-      </div>
+      <SectionHeader
+        eyebrow={copy.latestEyebrow}
+        title={copy.latestTitle}
+        link={posts.length > 6 ? { href: routes.tutorials[lang], label: copy.seeAll } : undefined}
+      />
       {latest.length > 0 ? (
         <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {latest.map((post) => <TutorialCard post={post} lang={lang} />)}
