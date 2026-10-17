@@ -51,7 +51,7 @@ export const communityTools: CommunityTool[] = [
   },
   {
     name: 'Containerlab',
-    url: 'https://github.com',
+    url: 'https://github.com/srl-labs/containerlab',
     docs: 'https://containerlab.dev',
     authors: [
       { name: 'Roman Dodin (@hellt)', url: 'https://github.com/hellt' },
@@ -64,4 +64,24 @@ export const communityTools: CommunityTool[] = [
     tags: ['containerlab', 'go', 'docker', 'networking'],
     tutorial: { fr: '/formations/automation/containerlab', en: '/en/tutorials/containerlab-setup' },
   },
+  {
+    name: 'Boxen',
+    url: 'https://github.com/carlmontanari/boxen',
+    docs: 'https://boxen.containerlab.dev/',
+    authors: [
+      { name: 'Carl Montanari (@carlmontanari)', url: 'https://github.com/carlmontanari'},
+      { 
+        name: 'Roman Dodin (@hellt)', 
+        url: 'https://github.com/hellt',
+        role: { fr: "intégration avec containerlab", en: 'Added in containerlab project' },
+      },
+    ],
+    license: 'MIT license',
+    description: {
+      fr: "boxen est un outil en ligne de commande écrit en Go qui vous permet de regrouper vos systèmes d'exploitation réseau de manière ordonnée dans de petites… « boîtes » (images de conteneurs) afin qu'ils soient facilement transférables et, surtout, que vous puissiez les utiliser avec le formidable ContainerLab.",
+      en: 'boxen is a cli tool written in Go that allows you to package your network operating systems neatly into little... boxes (container images) so they are easily portable, and, most importantly, so you can use them with the wonderful containerlab.'
+    },
+    tags: ['containerlab', 'go', 'docker', 'networking'],
+    tutorial: { fr: '', en: ''},
+  }
 ];
