@@ -25,9 +25,11 @@ export const getStaticPaths = (async () => {
     const { title, description, level, tags, order } = entry.data;
     // La présentation d'une formation (index.mdx) a pour identifiant « fr/fundamentals »
     const landing = courses.find((c) => c.id === `${lang}/${course}` || c.id === `${lang}/${course}/index`);
+    // Numéro affiché = rang parmi les chapitres publiés, comme sur la page du chapitre
+    const rank = courses.filter((c) => c.id.startsWith(`${lang}/${course}/`) && c.data.order > 0 && c.data.order <= order).length;
     const kicker = order === 0
       ? LABELS[lang].course
-      : `${landing?.data.title ?? LABELS[lang].course} · ${LABELS[lang].chapter} ${order}`;
+      : `${landing?.data.title ?? LABELS[lang].course} · ${LABELS[lang].chapter} ${rank}`;
     paths.push({ params: { path: `courses/${entry.id}` }, props: { content: { lang, kicker, title, description, level, tags } } });
   }
 

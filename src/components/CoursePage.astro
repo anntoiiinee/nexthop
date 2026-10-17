@@ -55,7 +55,7 @@ const jsonLd = [
 
     <div class="mt-6 flex items-center gap-3 text-xs font-medium">
       <span class:list={['rounded-full px-2.5 py-1', levelColors[level]]}>{t(lang, `level.${level}`)}</span>
-      <span class="font-mono text-slate-500">{course.chapters.length} {t(lang, 'courses.chapters')}</span>
+      <span class="font-mono text-slate-500">{course.chapters.length} {t(lang, course.chapters.length > 1 ? 'courses.chapters' : 'courses.chapter').toLowerCase()}</span>
     </div>
     <h1 class="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
     <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>

@@ -213,7 +213,9 @@ Mise en route (une seule fois) :
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
 - [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
-- [ ] Contenus à venir : OOB, Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
+- [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
+- [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
+- [ ] Contenus à venir : Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
 ---
 
@@ -223,16 +225,7 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
-**8 Le réseau dans le cloud** (`cloud`). Les sauts 6 à 8 apparaissent déjà sur l'accueil, avec leurs chapitres marqués « bientôt ».
-
-### Saut 7 · Services et observabilité : management et accès hors bande (chapitre `oob`)
-
-- Pourquoi un **réseau de management séparé** (VRF de management, interface Management0) et pourquoi un accès
-  **hors bande** (out-of-band) : garder la main quand le réseau de production est cassé ou en cours de migration.
-- Les briques : serveurs de console (Opengear, Lantronix…), lien 4G/5G de secours, PDU pilotables, réseau OOB dédié.
-- Sécurité : bastion, MFA, segmentation, comptes de secours (renvoi vers le chapitre « Rotation du compte de secours »).
-- Schéma : production, management in-band et OOB côte à côte, avec le chemin d'accès quand le cœur est en panne.
-- Retour terrain : intervention sur un équipement isolé par une erreur de configuration, récupération par la console.
+**8 Le réseau dans le cloud** (`cloud`). Les sauts 6 à 8 apparaissent déjà sur l'accueil, avec leurs chapitres pas encore écrits marqués « bientôt ».
 
 ### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
 

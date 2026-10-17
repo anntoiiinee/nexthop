@@ -1,0 +1,314 @@
+---
+title: "Management et accès hors bande"
+description: "Pourquoi séparer le réseau de management, ce qu'est un vrai accès hors bande (serveur de console, lien 4G, PDU pilotable) et comment le sécuriser, avec une VRF de management sur Arista EOS et un exercice de récupération dans le lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [oob, management, vrf, console, security]
+vendor: [arista]
+order: 2
+---
+
+Une ACL appliquée sur la mauvaise interface, une route par défaut supprimée, une mise à jour qui ne
+redémarre pas : il suffit d'une erreur pour qu'un équipement ne réponde plus. Et c'est précisément à
+ce moment-là qu'on a le plus besoin de s'y connecter. Ce chapitre explique comment **garder la main
+sur le réseau quand il ne fonctionne plus**.
+
+## Trois façons d'atteindre un équipement
+
+| Accès | Par où passe-t-on ? | Fonctionne si le réseau de production est cassé ? |
+|---|---|---|
+| **In-band** | par le réseau de production lui-même : une SVI, une loopback | non : on scie la branche sur laquelle on est assis |
+| **Réseau de management** | par un port dédié (`Management0`) relié à un réseau séparé, dans sa propre <Term id="vrf" /> | en partie : tant que le réseau de management et ses liens tiennent |
+| **Hors bande** (<Term id="oob" />) | par le **port console** de l'équipement, via un serveur de console joignable par un autre chemin (4G, ligne dédiée) | oui : il ne dépend ni du réseau de production ni de la configuration IP de l'équipement |
+
+On confond souvent les deux derniers. Le réseau de management est un **réseau IP** : il a besoin que
+l'équipement soit démarré, que son port `Management0` soit configuré et qu'un chemin existe jusqu'à
+lui. L'accès hors bande, au sens strict, passe par la **console** : on voit l'équipement démarrer, on
+peut corriger une configuration qui l'a isolé, et même récupérer un mot de passe.
+
+<Topology
+  width={680}
+  height={440}
+  groups={[
+    { x: 190, y: 20, w: 470, h: 110, label: 'Réseau de management', tone: 'sky' },
+    { x: 190, y: 150, w: 470, h: 135, label: 'Production', tone: 'slate' },
+    { x: 20, y: 305, w: 640, h: 120, label: 'Hors bande (OOB)', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 90, y: 200, label: 'Ingénieur' },
+    { id: 'bastion', type: 'server', x: 90, y: 60, label: 'Bastion', sub: 'MFA · journal', tone: 'violet' },
+    { id: 'mgmt', type: 'switch', x: 425, y: 65, label: 'mgmt-sw', sub: 'VRF MGMT', tone: 'sky' },
+    { id: 'fw', type: 'firewall', x: 270, y: 210, label: 'fw1' },
+    { id: 'core', type: 'l3switch', x: 425, y: 210, label: 'core1' },
+    { id: 'leaf', type: 'switch', x: 580, y: 210, label: 'leaf1' },
+    { id: 'cons', type: 'server', x: 425, y: 355, label: 'Console', sub: 'serveur de console', tone: 'amber' },
+    { id: 'lte', type: 'cloud', x: 90, y: 365, label: '4G / 5G', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'eng', to: 'bastion', tone: 'violet' },
+    { from: 'bastion', to: 'mgmt', label: 'SSH', tone: 'sky' },
+    { from: 'mgmt', to: 'fw', style: 'dashed', tone: 'sky' },
+    { from: 'mgmt', to: 'core', style: 'dashed', tone: 'sky' },
+    { from: 'mgmt', to: 'leaf', style: 'dashed', tone: 'sky' },
+    { from: 'fw', to: 'core' }, { from: 'core', to: 'leaf' },
+    { from: 'cons', to: 'fw', style: 'dashed', tone: 'amber' },
+    { from: 'cons', to: 'core', style: 'dashed', tone: 'amber' },
+    { from: 'cons', to: 'leaf', style: 'dashed', tone: 'amber' },
+    { from: 'eng', to: 'lte', style: 'dashed', tone: 'amber', label: 'secours' },
+    { from: 'lte', to: 'cons', tone: 'amber' },
+  ]}
+  caption="Trois chemins vers les mêmes équipements : la production, le réseau de management (ports Management0, en bleu) et le hors bande (ports console, en orange), joignable par un lien 4G qui ne dépend de rien d'autre."
+/>
+
+## Le réseau de management
+
+### Un port et une VRF à part
+
+Les switches et routeurs d'entreprise ont un port réservé à l'administration, `Management0` (ou
+`Management1`) chez Arista, `mgmt0` ou `GigabitEthernet0/0` ailleurs. Il ne commute pas le trafic des
+utilisateurs : il sert uniquement à se connecter à l'équipement, et à l'équipement d'atteindre ses
+serveurs d'administration.
+
+On le place dans une **VRF de management** : une table de routage séparée, avec sa propre route par
+défaut. Trois bénéfices :
+
+- **Isolation** : le trafic d'administration ne se mélange pas aux routes de production. Une erreur
+  de routage en production (une route par défaut qui disparaît, un BGP qui tombe) ne coupe pas l'accès
+  d'administration, et inversement.
+- **Pas de fuite** : rien de la production ne peut rejoindre les serveurs d'administration par ce
+  port, et le port ne sert pas de raccourci entre deux zones.
+- **Une configuration homogène** : tous les services d'administration sortent par la même VRF, avec la
+  même adresse source.
+
+```text title="Arista EOS : port de management dans une VRF dédiée"
+vrf instance MGMT
+!
+interface Management0
+   description oob-mgmt
+   vrf MGMT
+   ip address 198.51.100.21/24
+!
+ip route vrf MGMT 0.0.0.0/0 198.51.100.1
+```
+
+### Les services d'administration suivent
+
+Une fois `Management0` dans la VRF, chaque service qui doit l'utiliser doit le savoir. C'est l'oubli le
+plus fréquent : l'équipement répond en SSH, mais ses journaux, son heure et son authentification ne
+fonctionnent plus.
+
+```text title="Arista EOS : services d'administration dans la VRF MGMT"
+! Accès à l'équipement
+management ssh
+   vrf MGMT
+      no shutdown
+!
+management api http-commands
+   no shutdown
+   vrf MGMT
+      no shutdown
+!
+! Services utilisés par l'équipement
+ip name-server vrf MGMT 192.0.2.53
+ntp server vrf MGMT 192.0.2.123
+logging vrf MGMT host 192.0.2.60
+!
+! Authentification TACACS+ (voir « Rotation du compte de secours »)
+ip tacacs vrf MGMT source-interface Management0
+tacacs-server host 192.0.2.50 vrf MGMT key <clé-partagée>
+```
+
+```text title="Vérifier"
+show vrf
+show ip route vrf MGMT
+show management ssh
+ping vrf MGMT 192.0.2.50
+```
+
+<Callout type="warning">
+Déplacer `Management0` dans une VRF **coupe la session SSH** qui passe par ce port. À distance, faites
+la modification dans une session de configuration avec retour arrière automatique :
+`configure session mgmt-vrf`, les commandes, puis `commit timer 00:05:00`. Reconnectez-vous et validez
+avec `configure session mgmt-vrf commit`. Sans validation dans les 5 minutes, l'équipement revient
+tout seul à l'ancienne configuration.
+</Callout>
+
+### Où brancher les ports de management ?
+
+- **En data center** : un petit switch de management (1 Gb/s suffit) par baie ou par rangée, qui
+  reçoit tous les ports `Management0` ainsi que les cartes d'administration des serveurs (iDRAC, iLO).
+  Ces switches remontent vers un cœur de management **qui ne dépend pas de la fabric de production**.
+- **Sur un site** : un switch de management, ou à défaut un VLAN dédié, dont la passerelle est
+  derrière un firewall qui ne laisse entrer que les flux des serveurs d'administration.
+
+Le piège classique : un réseau de management dont les switches remontent… par le cœur de production.
+Le jour où le cœur tombe, le réseau de management tombe avec lui. Il est toujours utile, mais ce
+n'est pas un accès hors bande.
+
+## L'accès hors bande
+
+### Les briques
+
+- **Le serveur de console** (Opengear, Lantronix, Perle, ou un simple Linux avec des adaptateurs
+  USB-série) : un boîtier avec 8 à 48 ports série, reliés aux ports **console** RJ45 des équipements.
+  On se connecte au serveur de console en SSH, puis on choisit le port : on se retrouve exactement
+  comme avec un câble console branché sur l'équipement, à 9600 bauds.
+- **Un lien qui ne dépend de rien** : un modem 4G/5G intégré au serveur de console, ou une ligne
+  Internet séparée. C'est ce lien qui fait la différence avec le réseau de management.
+- **Les PDU pilotables** : des barrettes électriques administrables, prise par prise. Elles permettent
+  d'éteindre et de rallumer un équipement planté, sans envoyer quelqu'un sur place.
+
+### Ce que la console permet et que SSH ne permet pas
+
+- voir l'équipement **démarrer**, et les messages d'erreur avant que le réseau soit monté ;
+- intervenir quand la configuration IP est cassée, ou quand l'équipement n'a **plus de configuration**
+  du tout (remise à zéro, nouveau matériel en attente de <Term id="ztp" />) ;
+- interrompre le démarrage, choisir une autre image, lancer une **récupération de mot de passe** ;
+- lire les messages d'un plantage, que la connexion SSH n'aurait jamais transmis.
+
+<Topology
+  width={760}
+  height={320}
+  groups={[{ x: 430, y: 25, w: 314, h: 280, label: 'Site distant', tone: 'slate' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 80, y: 160, label: 'Ingénieur', sub: 'au siège' },
+    { id: 'wan', type: 'cloud', x: 290, y: 80, label: 'WAN' },
+    { id: 'lte', type: 'cloud', x: 290, y: 245, label: '4G / 5G', tone: 'amber' },
+    { id: 'rtr', type: 'router', x: 530, y: 85, label: 'rtr-site', sub: 'ACL erronée', tone: 'rose' },
+    { id: 'sw', type: 'switch', x: 670, y: 85, label: 'sw-site' },
+    { id: 'cons', type: 'server', x: 590, y: 235, label: 'Console', sub: 'modem 4G intégré', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'eng', to: 'wan' },
+    { from: 'wan', to: 'rtr', style: 'blocked' },
+    { from: 'rtr', to: 'sw' },
+    { from: 'eng', to: 'lte', style: 'dashed', tone: 'amber' },
+    { from: 'lte', to: 'cons', tone: 'amber' },
+    { from: 'cons', to: 'rtr', style: 'dashed', tone: 'amber', label: 'console' },
+    { from: 'cons', to: 'sw', style: 'dashed', tone: 'amber' },
+  ]}
+  flows={[
+    { from: 'eng', to: 'lte', label: 'VPN', tone: 'amber' },
+  ]}
+  caption="Le routeur du site s'est isolé lui-même : plus rien ne passe par le WAN. Le serveur de console, joignable par son propre lien 4G, donne accès au port console du routeur pour corriger l'erreur."
+/>
+
+<Callout type="field">
+Le scénario est un classique : une ACL de durcissement poussée un vendredi soir sur le routeur d'un
+site distant, appliquée sur l'interface WAN au lieu de l'interface utilisateurs. Le routeur coupe
+lui-même la session qui l'a configuré, et le site disparaît de la supervision. Sans accès hors bande,
+il reste deux options : attendre lundi que quelqu'un sur place redémarre l'équipement (et espérer
+que la configuration n'ait pas été enregistrée), ou faire plusieurs heures de route. Avec un serveur
+de console sur un lien 4G, on se connecte au port console, on retire l'ACL, et l'incident dure dix
+minutes. Le serveur de console coûte moins cher qu'un seul déplacement.
+</Callout>
+
+## Sécuriser l'accès d'administration
+
+Le réseau de management et l'accès hors bande donnent **les clés de tout le réseau**. Ils doivent être
+mieux protégés que la production, pas moins :
+
+- **Un point d'entrée unique** : un <Term id="bastion" /> par lequel passent toutes les connexions
+  d'administration, avec une <Term id="mfa" />, un compte nominatif par personne et l'enregistrement
+  des sessions. Personne ne se connecte directement aux équipements depuis son poste.
+- **Filtrer sur l'équipement** : n'accepter SSH et l'API que depuis les adresses du bastion et des
+  serveurs d'automatisation.
+
+  ```text title="Arista EOS : SSH accepté uniquement depuis le bastion"
+  ip access-list standard MGMT-ACCESS
+     10 permit 192.0.2.10/32
+     20 permit 192.0.2.20/32
+  !
+  management ssh
+     ip access-group MGMT-ACCESS vrf MGMT in
+  ```
+
+- **Le serveur de console est un équipement comme les autres** : changer ses identifiants par défaut,
+  le mettre à jour, l'authentifier sur <Term id="tacacs" /> comme le reste. Son lien 4G ne doit jamais
+  exposer d'interface d'administration sur Internet : APN privé de l'opérateur, ou tunnel VPN monté
+  vers le siège.
+- **Prévoir l'authentification sans le réseau** : en console, les serveurs <Term id="aaa" /> sont
+  souvent injoignables. C'est le rôle du **compte local de secours**, unique par équipement et rangé
+  dans un coffre, mis en place dans le chapitre
+  [Rotation du compte de secours](/formations/automation/breakglass-rotation).
+- **Tester régulièrement** : un accès hors bande dont personne ne s'est servi depuis un an ne marche
+  souvent plus (abonnement 4G expiré, câble console débranché pendant un déménagement de baie). Un test
+  par trimestre, inscrit dans le calendrier de l'équipe, évite la mauvaise surprise.
+
+## Dans le lab
+
+Le lab `netops` (formation Automatisation) suffit. ContainerLab y reproduit déjà les deux accès :
+
+- le réseau `172.20.30.0/24` relie les ports `Management0` à votre machine : c'est le **réseau de
+  management** ;
+- `docker exec -it clab-netops-leaf1 Cli` ouvre une session directement dans l'équipement, sans passer
+  par le réseau : c'est l'équivalent du **port console**.
+
+<Lab name="netops" lang="fr" />
+
+**1. Se couper l'accès.** Connectez-vous en SSH à `leaf1`, puis éteignez son port de management :
+
+```text title="ssh admin@172.20.30.12"
+leaf1# configure
+leaf1(config)# interface Management0
+leaf1(config-if-Ma0)# shutdown
+```
+
+La session se fige : vous venez de couper la branche. Plus de SSH, plus d'API, et les scripts du
+lab n'atteignent plus `leaf1`.
+
+**2. Récupérer par la « console ».**
+
+```bash
+docker exec -it clab-netops-leaf1 Cli
+```
+
+```text
+leaf1> enable
+leaf1# configure
+leaf1(config)# interface Management0
+leaf1(config-if-Ma0)# no shutdown
+```
+
+Le SSH répond de nouveau. Dans la réalité, cette étape se fait par le serveur de console.
+
+**3. Passer `Management0` dans une VRF, sans risque.** Depuis une session SSH, avec retour arrière
+automatique :
+
+```text title="ssh admin@172.20.30.12"
+configure session mgmt-vrf
+vrf instance MGMT
+interface Management0
+   vrf MGMT
+   ip address 172.20.30.12/24
+management ssh
+   vrf MGMT
+      no shutdown
+management api http-commands
+   vrf MGMT
+      no shutdown
+commit timer 00:05:00
+```
+
+La session SSH se coupe au moment du `commit`. Reconnectez-vous (le SSH écoute maintenant dans la VRF
+`MGMT`), vérifiez avec `show vrf` et `show management ssh`, puis validez :
+
+```text
+configure session mgmt-vrf commit
+```
+
+Pour voir le filet de sécurité fonctionner, refaites l'exercice en oubliant le bloc `management ssh` :
+vous ne pouvez plus vous reconnecter, et au bout de 5 minutes `leaf1` revient seul à l'ancienne
+configuration.
+
+## À retenir
+
+- **In-band, management, hors bande** : trois chemins différents. Seul le hors bande, par la console
+  et un lien indépendant, fonctionne quand tout le reste est cassé.
+- Le port `Management0` va dans une **VRF de management**, et tous les services d'administration
+  (SSH, API, NTP, DNS, syslog, TACACS+) doivent y être configurés.
+- Un réseau de management qui remonte par le cœur de production n'est **pas** un accès hors bande.
+- Serveur de console, lien 4G/5G et PDU pilotables : un investissement modeste, rentabilisé dès le
+  premier incident sur un site distant.
+- Bastion avec MFA, filtrage sur l'équipement, compte de secours dans un coffre, et un **test régulier**
+  de l'accès hors bande.
