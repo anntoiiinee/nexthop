@@ -170,6 +170,40 @@ EOS behavior changes from one version to the next (commands, defaults, bug fixes
 same result for everyone, and a year from now; a `latest` lab changes the day someone imports a new
 image. It's also what lets you reproduce a production issue on the exact version running there.
 
+### Save time with eos-downloader
+
+Downloading the archive by hand, then importing it, quickly gets repetitive: new version, new laptop,
+new colleague… **eos-downloader** does it all in one command. It's an open-source community project,
+created by **[TiTom73](https://github.com/titom73)** (@titom73), from an original idea by
+**[Mark Rayson](https://github.com/Sparky-python)** (@Sparky-python), and released under the Apache 2.0
+license.
+
+It connects to the Arista portal with an **API token**, which you generate from your profile on
+arista.com, then downloads and imports the image:
+
+```bash
+pipx install eos-downloader                 # or: pip install eos-downloader, in a venv
+export ARISTA_TOKEN='<your-token>'          # never in clear text in a script or a repository
+
+ardl info versions --branch 4.32            # which versions are available?
+ardl get eos --version 4.32.0F --format cEOS --import-docker --docker-name ceos --docker-tag 4.32.0F
+docker tag ceos:4.32.0F ceos:latest         # the alias used by the site's labs
+```
+
+And for a topology whose versions are **pinned**, it reads the file and fetches every cEOS version it
+uses, in a single command:
+
+```bash
+ardl get eos --clab topology.clab.yml --format cEOS
+```
+
+<Callout type="note" title="Thanks to its author">
+eos-downloader is a personal, community project, not an official one: it isn't supported by Arista.
+Options evolve between versions, check its [documentation](https://titom73.github.io/eos-downloader/).
+And if the tool saves you time, a star on its [GitHub repository](https://github.com/titom73/eos-downloader)
+is the best way to thank its author.
+</Callout>
+
 ## What about Cisco?
 
 This is the most frequent question, and the answer is disappointing: **there is no Cisco equivalent of

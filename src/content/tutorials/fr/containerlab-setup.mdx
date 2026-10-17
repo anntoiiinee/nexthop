@@ -174,6 +174,41 @@ Un lab épinglé donne le même résultat chez tout le monde et dans un an ; un 
 jour où quelqu'un importe une nouvelle image. C'est aussi ce qui permet de reproduire un problème
 rencontré en production, sur la version exacte qui y tourne.
 
+### Gagner du temps avec eos-downloader
+
+Télécharger l'archive à la main, puis l'importer, devient vite répétitif : nouvelle version, nouveau
+poste, nouveau collègue… **eos-downloader** fait tout en une commande. C'est un projet open source de
+la communauté, créé par **[TiTom73](https://github.com/titom73)** (@titom73), d'après une idée
+originale de **[Mark Rayson](https://github.com/Sparky-python)** (@Sparky-python), et publié sous
+licence Apache 2.0.
+
+Il se connecte au portail Arista avec un **jeton d'API**, que vous générez depuis votre profil sur
+arista.com, puis télécharge et importe l'image :
+
+```bash
+pipx install eos-downloader                 # ou : pip install eos-downloader, dans un venv
+export ARISTA_TOKEN='<votre-jeton>'         # jamais en clair dans un script ni un dépôt
+
+ardl info versions --branch 4.32            # quelles versions sont disponibles ?
+ardl get eos --version 4.32.0F --format cEOS --import-docker --docker-name ceos --docker-tag 4.32.0F
+docker tag ceos:4.32.0F ceos:latest         # l'alias des labs du site
+```
+
+Et pour une topologie dont les versions sont **épinglées**, il lit le fichier et récupère toutes les
+versions cEOS qu'elle utilise, en une seule commande :
+
+```bash
+ardl get eos --clab topology.clab.yml --format cEOS
+```
+
+<Callout type="note" title="Merci à son auteur">
+eos-downloader est un projet personnel et communautaire, non officiel : il n'est pas supporté par
+Arista. Les options évoluent avec les versions, consultez sa
+[documentation](https://titom73.github.io/eos-downloader/). Et si l'outil vous fait gagner du temps,
+une étoile sur son [dépôt GitHub](https://github.com/titom73/eos-downloader) est la meilleure façon de
+remercier son auteur.
+</Callout>
+
 ## Et Cisco ?
 
 C'est la question qui revient le plus souvent, et la réponse est décevante : **il n'existe pas

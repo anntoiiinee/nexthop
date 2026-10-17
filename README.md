@@ -210,6 +210,7 @@ Mise en route (une seule fois) :
 - [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
+- [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
 - [ ] Contenus à venir : OOB, Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
 ---
