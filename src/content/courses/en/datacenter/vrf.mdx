@@ -1,0 +1,202 @@
+---
+title: "VRFs"
+description: "Several routing tables on one device: what VRFs are for, overlapping addresses, management VRF, VRF-lite or VRFs carried by BGP (RD and RT), and letting two VRFs talk in a controlled way."
+pubDate: 2026-10-17
+level: advanced
+tags: [vrf, routing, segmentation, datacenter]
+vendor: [arista, cisco]
+order: 1
+---
+
+A router normally has **one** routing table. A <Term id="vrf" /> (*Virtual Routing and Forwarding*) gives it
+several: each VRF is a virtual router, with its interfaces, its routing table and its protocols,
+independent from the others. Two interfaces in two different VRFs do not communicate, even on the same
+device, even if their networks overlap.
+
+It is the layer 3 equivalent of what VLANs do at layer 2: splitting one physical device into several sealed
+logical devices.
+
+<Topology
+  width={700}
+  height={300}
+  groups={[
+    { x: 230, y: 30, w: 240, h: 110, label: 'VRF PROD', tone: 'sky' },
+    { x: 230, y: 160, w: 240, h: 110, label: 'VRF DEV', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'p', type: 'server', x: 90, y: 85, label: 'PROD server', sub: '10.10.10.11', tone: 'sky' },
+    { id: 'd', type: 'server', x: 90, y: 215, label: 'DEV server', sub: '10.10.10.11', tone: 'amber' },
+    { id: 'rp', type: 'router', x: 350, y: 85, label: 'PROD table', tone: 'sky' },
+    { id: 'rd', type: 'router', x: 350, y: 215, label: 'DEV table', tone: 'amber' },
+    { id: 'np', type: 'cloud', x: 600, y: 85, label: 'PROD network', tone: 'sky' },
+    { id: 'nd', type: 'cloud', x: 600, y: 215, label: 'DEV network', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'p', to: 'rp', tone: 'sky' }, { from: 'rp', to: 'np', tone: 'sky' },
+    { from: 'd', to: 'rd', tone: 'amber' }, { from: 'rd', to: 'nd', tone: 'amber' },
+  ]}
+  caption="One device, two VRFs: two routing tables that ignore each other. Both servers have the same address without any conflict."
+/>
+
+## What VRFs are for
+
+- **Separating environments**: production, staging, development, or different customers at a hosting
+  provider. Each environment has its VRF; no traffic crosses from one to another by mistake.
+- **Supporting overlapping addresses**: two subsidiaries both using `10.0.0.0/8`, a merger, a customer
+  imposing its addressing plan. In two VRFs, no conflict.
+- **Isolating management**: the `Management0` port in a `MGMT` VRF, so administration never depends on
+  production routes (see [Management and out-of-band access](/en/courses/operations/oob)).
+- **Segmenting**: one VRF per security zone, and a firewall as the only crossing point between them (see
+  [Segmentation](/en/courses/security/segmentation)).
+
+## Configuring a VRF
+
+You create the VRF, place interfaces in it, and enable routing in the VRF. Static routes and routing
+protocols are then configured **per VRF**.
+
+```text title="Arista EOS"
+vrf instance PROD
+!
+interface Vlan10
+   vrf PROD
+   ip address 10.10.10.1/24
+!
+ip routing vrf PROD
+ip route vrf PROD 0.0.0.0/0 10.10.99.254
+```
+
+```text title="Cisco IOS"
+vrf definition PROD
+ address-family ipv4
+ exit-address-family
+!
+interface Vlan10
+ vrf forwarding PROD
+ ip address 10.10.10.1 255.255.255.0
+!
+ip route vrf PROD 0.0.0.0 0.0.0.0 10.10.99.254
+```
+
+<Callout type="warning">
+Moving an interface into a VRF **erases its IP address** on most platforms (Cisco IOS, NX-OS). Always put
+the interface into the VRF **before** giving it its address. On a remote device, do it on another interface
+than the one you are connected through.
+</Callout>
+
+Every verification command takes the VRF as a parameter: without it, you look at the default table, and
+find nothing.
+
+```text title="Verify"
+show vrf
+show ip route vrf PROD
+show ip arp vrf PROD
+ping vrf PROD 10.10.10.11
+traceroute vrf PROD 10.10.20.13
+```
+
+## VRF-lite, or VRFs carried by BGP
+
+A VRF only exists on the device where it is configured. For it to span a whole network, every link
+between two devices must carry **all** the VRFs separately. Two approaches:
+
+| | VRF-lite | VRFs carried by BGP (MPLS L3VPN, EVPN) |
+|---|---|---|
+| **Principle** | A subinterface (or a VLAN) and a routing session **per VRF** on every link | A single BGP session carries the routes of every VRF, tagged to stay separate |
+| **Adding a VRF** | Configure every link on the path | Declare it on the edge devices |
+| **Scale** | A few VRFs, a few devices | Hundreds of VRFs and devices |
+| **Where** | Campus, small sites | Carriers (MPLS), data center fabrics (EVPN) |
+
+When BGP carries routes from several VRFs, it needs two extra pieces of information:
+
+- the <Term id="rd" /> (*Route Distinguisher*): a prefix added in front of each route to make it **unique**.
+  Without it, PROD's `10.10.10.0/24` and DEV's `10.10.10.0/24` would be the same route for BGP. It is
+  often written `router-address:number`, for example `10.255.0.11:50001`;
+- the <Term id="rt" /> (*Route Target*): a tag (extended community) saying **which VRFs** should import the
+  route. Each VRF **exports** its routes with an RT and **imports** those carrying the expected RT.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'BGP route', fields: [
+      { label: 'RD', sub: '10.255.0.11:50001', span: 3, tone: 'violet' },
+      { label: 'Prefix', sub: '10.10.10.0/24', span: 3, tone: 'emerald' },
+      { label: 'Next hop', sub: '10.255.1.11', span: 3, tone: 'slate' },
+      { label: 'RT', sub: '50001:50001', span: 3, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="The RD makes the route unique in BGP; the RT says which VRF to import it into on arrival."
+/>
+
+RD and RT are two different things, often confused because they are given the same value: the RD
+**distinguishes**, the RT **steers**.
+
+## Letting two VRFs talk
+
+Isolation is the goal, but exceptions are sometimes needed: a shared service (DNS, monitoring, directory)
+that every VRF must reach.
+
+- **Through a firewall**: each VRF has a default route to a firewall, which is the only crossing point
+  between them and applies a policy (see the [Security](/en/courses/security) course). It is the
+  recommended method: inter-VRF traffic is filtered and logged.
+- **Through route leaking**: one VRF also imports another's RT, or static routes point from one VRF into
+  another. Quick, but with no filtering at all: keep it for well-identified shared services.
+
+<Callout type="field">
+A "temporary" route leak between production and development, for a data migration, is one of the surest
+ways to ruin segmentation. Two years later, development applications query the production database, and
+nobody remembers why the route exists. Between two environments, go through the firewall, with a rule that
+has an owner and an end date.
+</Callout>
+
+## In the lab
+
+The `dc-fabric` lab has two VRFs on every leaf: `PROD` (VLANs 10 and 20) and `DEV` (VLAN 30). VLAN 10 and VLAN
+30 deliberately use **the same subnet**, `10.10.10.0/24`, and `host1` (PROD) and `host4` (DEV) have the same
+address, `10.10.10.11`.
+
+<Lab name="dc-fabric" lang="en" />
+
+**1. leaf3's VRFs.**
+
+```bash
+docker exec -it clab-dc-fabric-leaf3 Cli
+```
+
+```text
+show vrf
+show ip route vrf PROD
+show ip route vrf DEV
+```
+
+Both VRFs have a connected `10.10.10.0/24` route: the same route, two tables, no conflict. VRF `PROD` also
+holds `10.10.20.0/24`; VRF `DEV` does not.
+
+**2. Same address, two machines.** From `host2` (VRF PROD, on leaf2), reach `10.10.10.11`:
+
+```bash
+docker exec -it clab-dc-fabric-host2 sh
+ping -c 2 10.10.10.11
+ip neigh
+```
+
+It is `host1` that answers (compare the MAC address obtained with `host1`'s, `ip link show eth1`). `host4`
+is never reached: it is in another VRF.
+
+**3. No crossing between VRFs.** From `host4` (DEV), try to reach `host3` (`10.10.20.13`, PROD):
+
+```bash
+docker exec -it clab-dc-fabric-host4 ping -c 2 10.10.20.13
+```
+
+It fails: VRF `DEV` does not know `10.10.20.0/24`. Check it on leaf3 with
+`show ip route vrf DEV 10.10.20.13`.
+
+## Key takeaways
+
+- A **VRF** is a virtual router: its interfaces, its routing table, its protocols. Two VRFs do not talk.
+- Uses: separating environments, accepting **overlapping addresses**, isolating management, segmenting.
+- Every command takes the VRF as a parameter: `show ip route vrf PROD`, `ping vrf PROD`.
+- **VRF-lite**: one session per VRF on every link. At scale, **BGP** carries every VRF, with an **RD** (make
+  unique) and an **RT** (choose the import VRF).
+- Between two VRFs, preferably a **firewall**; route leaking is for shared services.

@@ -143,6 +143,14 @@ export const glossary = {
       en: "BGP session between two different autonomous systems, for example between a company and its ISP.",
     },
   },
+  ecmp: {
+    term: 'ECMP',
+    expansion: 'Equal-Cost Multi-Path',
+    definition: {
+      fr: "Utilisation simultanée de plusieurs chemins de même coût vers une destination : le trafic est réparti par flux entre eux.",
+      en: "Using several equal-cost paths to a destination at once: traffic is spread across them per flow.",
+    },
+  },
   esp: {
     term: 'ESP',
     expansion: 'Encapsulating Security Payload',
@@ -443,6 +451,14 @@ export const glossary = {
       en: "Intermediary that receives a connection in place of the destination and opens a second one to it. It sees, filters and logs what goes through.",
     },
   },
+  rd: {
+    term: 'RD',
+    expansion: 'Route Distinguisher',
+    definition: {
+      fr: "Valeur ajoutée devant un préfixe pour le rendre unique dans BGP, même si deux VRF utilisent les mêmes adresses.",
+      en: "Value prepended to a prefix to make it unique in BGP, even when two VRFs use the same addresses.",
+    },
+  },
   rib: {
     term: 'RIB',
     expansion: 'Routing Information Base',
@@ -457,6 +473,14 @@ export const glossary = {
     definition: {
       fr: "Infrastructure qui permet de vérifier cryptographiquement qu'un AS a le droit d'annoncer un préfixe (via des ROA).",
       en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
+    },
+  },
+  rt: {
+    term: 'RT',
+    expansion: 'Route Target',
+    definition: {
+      fr: "Communauté BGP étendue qui indique dans quelles VRF ou quels VLAN une route doit être importée.",
+      en: "Extended BGP community telling which VRFs or VLANs a route must be imported into.",
     },
   },
   snat: {
@@ -571,6 +595,14 @@ export const glossary = {
       en: 'Virtual local network: splits a switch into several isolated broadcast domains, identified by a number from 1 to 4094.',
     },
   },
+  vni: {
+    term: 'VNI',
+    expansion: 'VXLAN Network Identifier',
+    definition: {
+      fr: "Numéro sur 24 bits (16 millions de valeurs) qui identifie un segment VXLAN, l'équivalent d'un numéro de VLAN à l'échelle de la fabric.",
+      en: "24-bit number (16 million values) identifying a VXLAN segment, the equivalent of a VLAN ID across the fabric.",
+    },
+  },
   vrrp: {
     term: 'VRRP',
     expansion: 'Virtual Router Redundancy Protocol',
@@ -585,6 +617,14 @@ export const glossary = {
     definition: {
       fr: 'Table de routage indépendante sur un même équipement : les interfaces d’une VRF ne voient que les routes de cette VRF, comme un routeur virtuel séparé.',
       en: 'Separate routing table on the same device: interfaces in a VRF only see that VRF’s routes, like a separate virtual router.',
+    },
+  },
+  vtep: {
+    term: 'VTEP',
+    expansion: 'VXLAN Tunnel Endpoint',
+    definition: {
+      fr: "Équipement (en général un leaf) qui encapsule les trames dans VXLAN à l'entrée de la fabric et les décapsule à la sortie.",
+      en: "Device (usually a leaf) that encapsulates frames into VXLAN when entering the fabric and decapsulates them on exit.",
     },
   },
   vti: {

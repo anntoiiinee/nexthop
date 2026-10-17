@@ -88,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -221,7 +221,7 @@ Mise en route (une seule fois) :
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
 - [x] Formation Automatisation en FR (7 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, conventions de nommage et IPAM, NetBox, AVD + lab `netops`)
-- [ ] Formation Data center (VRF, spine/leaf, VXLAN, EVPN) : rédaction par Antoine
+- [x] Saut 3 · Formation Data center en FR et EN : 4 chapitres (VRF, spine/leaf, VXLAN, EVPN), lab `dc-fabric` (2 spines, 3 leafs cEOS, underlay eBGP, EVPN, IRB symétrique, VRF PROD et DEV)
 - [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
@@ -230,7 +230,8 @@ Mise en route (une seule fois) :
 - [x] Formation Automatisation : chapitre « Conventions de nommage et IPAM » (`naming-ipam`, avant NetBox), avec `conventions.yml` et `python/check_conventions.py` dans le lab `netops`
 - [x] Saut 6 · Proxy et load balancing complet en FR et EN : 5 chapitres (proxy sortant, TLS et inspection, reverse proxy, load balancing et F5, WAF), lab `proxy-lb` (Squid, HAProxy, nginx, PKI générée par `pki/make-pki.sh`), composant `<Sequence>`
 - [x] Saut 5 · La sécurité complet en FR et EN : 4 chapitres (bases d'un firewall, politiques de sécurité, VPN IPsec, segmentation), multi-constructeur (FortiGate, Palo Alto, Stormshield), lab `security` (firewalls Linux nftables + strongSwan en VPN par route VTI, routeur cEOS)
-- [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
+- [x] Formation Data center : un passage sur le management de la fabric (chapitre `spine-leaf`), renvoyant vers le chapitre `oob`
+- [ ] Lab `dc-fabric` : valider sur un vrai ContainerLab avec cEOS, puis remplacer les descriptions des sorties par de vraies sorties
 - [ ] Contenus à venir : Jinja2 en détail, Vault, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
 ---
