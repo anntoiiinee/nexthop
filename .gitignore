@@ -22,3 +22,6 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# Labs : certificats et clés générés localement (pki/make-pki.sh)
+public/labs/*/pki/out/

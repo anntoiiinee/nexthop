@@ -1,0 +1,2 @@
+# Domaines interdits (un par ligne). Un point initial couvre aussi les sous-domaines.
+.example.net

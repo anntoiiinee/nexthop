@@ -1,0 +1,271 @@
+---
+title: "Le reverse proxy"
+description: "Publier une application interne derrière un reverse proxy : terminaison TLS, routage par nom d'hôte ou par chemin, en-têtes X-Forwarded-For et X-Forwarded-Proto, cache et pièges courants, avec HAProxy et nginx."
+pubDate: 2026-10-17
+level: intermediate
+tags: [reverse-proxy, haproxy, nginx, tls, http]
+vendor: [multi]
+order: 3
+---
+
+Le proxy sortant du premier chapitre agit **pour le compte des utilisateurs** de l'entreprise. Le
+reverse proxy fait l'inverse : il agit **pour le compte des serveurs**. Placé devant les applications,
+il reçoit les connexions des clients, puis les relaie vers le bon serveur. Les clients ne voient que
+lui ; les serveurs restent à l'abri, dans une zone que personne ne joint directement.
+
+## Proxy et reverse proxy
+
+| | Proxy sortant | Reverse proxy |
+|---|---|---|
+| **Au service de** | Les utilisateurs internes | Les serveurs et les applications |
+| **Qui le configure** | Le poste (PAC, WPAD) ou le réseau (transparent) | Personne côté client : le DNS de l'application pointe vers lui |
+| **Il cache** | Les postes, aux yeux des sites Internet | Les serveurs, aux yeux des clients |
+| **Où** | En sortie du réseau | En DMZ, devant les applications publiées |
+| **Exemples** | Squid, SWG cloud | nginx, HAProxy, Apache, Traefik, F5 BIG-IP, Citrix NetScaler |
+
+Techniquement, c'est le même mécanisme : **deux connexions**. Le reverse proxy termine la connexion du
+client, lit la requête <Term id="http" />, et en ouvre une nouvelle vers le serveur.
+
+<Topology
+  width={720}
+  height={320}
+  groups={[
+    { x: 260, y: 20, w: 180, h: 280, label: 'DMZ', tone: 'sky' },
+    { x: 460, y: 20, w: 240, h: 280, label: 'Zone applications', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'user', type: 'host', x: 60, y: 150, label: 'Client' },
+    { id: 'fw', type: 'firewall', x: 190, y: 150, label: 'Firewall' },
+    { id: 'rp', type: 'server', x: 350, y: 150, label: 'Reverse proxy', sub: 'app.example.com', tone: 'sky' },
+    { id: 'app1', type: 'server', x: 600, y: 80, label: 'Intranet', tone: 'violet' },
+    { id: 'app2', type: 'server', x: 600, y: 210, label: 'API', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'user', to: 'fw' }, { from: 'fw', to: 'rp' },
+    { from: 'rp', to: 'app1' }, { from: 'rp', to: 'app2' },
+  ]}
+  flows={[
+    { from: 'user', to: 'rp', label: 'HTTPS', tone: 'emerald', offset: -30 },
+  ]}
+  notes={[
+    { x: 580, y: 282, text: 'jamais joignables depuis Internet', tone: 'violet' },
+  ]}
+  caption="Le firewall ne laisse entrer que le port 443 vers le reverse proxy. Les serveurs d'applications ne sont joignables que depuis la DMZ."
+/>
+
+## Ce qu'apporte le reverse proxy
+
+- **Un seul point d'entrée.** Une adresse IP publique, un port 443, une règle de firewall, pour des
+  dizaines d'applications. Les serveurs peuvent changer d'adresse ou de nombre sans que les clients le
+  voient.
+- **La terminaison TLS.** Les certificats sont installés et renouvelés à un seul endroit, et les
+  serveurs n'ont plus à chiffrer. La politique TLS (versions, suites, <Term id="hsts" />) est appliquée de
+  façon homogène.
+- **Le routage applicatif.** Selon le nom demandé ou le chemin de l'URL, la requête part vers un groupe
+  de serveurs différent.
+- **La protection.** Les requêtes malformées sont rejetées avant d'atteindre l'application ; on peut
+  restreindre une partie de l'application à certaines adresses, limiter le débit, ou placer un
+  <Term id="waf" /> (dernier chapitre).
+- **Le confort.** Compression, cache des contenus statiques, réécriture d'en-têtes, page de maintenance
+  quand tous les serveurs sont indisponibles.
+
+## La terminaison TLS
+
+Trois façons de traiter TLS sur un reverse proxy :
+
+| Mode | Côté client | Côté serveur | Ce que voit le proxy | Quand l'utiliser |
+|---|---|---|---|---|
+| **Terminaison** (*offload*) | HTTPS | HTTP en clair | Tout | Réseau entre proxy et serveurs maîtrisé, et le plus simple à exploiter |
+| **Rechiffrement** (*bridging*) | HTTPS | HTTPS | Tout | Données sensibles, exigences de conformité, ou serveurs dans une autre zone |
+| **Passthrough** | HTTPS | Le même flux HTTPS | Le SNI seulement | Le serveur doit garder sa clé (TLS mutuel de bout en bout) ; pas de routage par chemin possible |
+
+Le mode **passthrough** fonctionne au niveau TCP : le proxy lit le <Term id="sni" /> du ClientHello pour
+choisir le serveur, puis recopie les octets sans rien déchiffrer. Il ne peut ni ajouter d'en-têtes, ni
+router par chemin, ni filtrer le contenu.
+
+## Router les requêtes
+
+Un même reverse proxy publie souvent plusieurs applications sur la même adresse. Il distingue les
+requêtes par :
+
+- **le nom d'hôte** : l'en-tête `Host` (ou le SNI en HTTPS). `app.example.com` va vers un groupe de
+  serveurs, `admin.example.com` vers un autre. C'est le plus propre : chaque application garde son nom et
+  ses chemins ;
+- **le chemin** : `/api/` vers les serveurs d'API, `/static/` vers un serveur de fichiers, le reste vers
+  l'application. Pratique, mais attention aux applications qui génèrent des liens absolus : une
+  application qui croit être servie à la racine produira des liens `/login` au lieu de `/app/login`.
+
+Dans HAProxy, chaque critère est une `acl`, et `use_backend` choisit le groupe de serveurs :
+
+```text title="haproxy.cfg : routage par nom d'hôte"
+frontend fe_app
+    bind :80
+    acl host_admin hdr(host),field(1,:) -i admin.example.com
+    acl path_api   path_beg /api/
+    use_backend be_admin if host_admin
+    use_backend be_api   if path_api
+    default_backend be_app
+```
+
+Dans nginx, le nom d'hôte correspond aux blocs `server` (`server_name`) et le chemin aux blocs
+`location` :
+
+```nginx title="nginx : la même publication"
+upstream app_servers {
+    server 198.51.100.11:80;
+    server 198.51.100.12:80;
+}
+
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+    ssl_certificate     /etc/ssl/lab/app.example.com.fullchain.crt;
+    ssl_certificate_key /etc/ssl/lab/app.example.com.key;
+
+    location / {
+        proxy_pass http://app_servers;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api/ {
+        proxy_pass http://198.51.100.20:8080;
+    }
+}
+```
+
+## Transmettre l'identité du client
+
+Puisque le serveur reçoit une connexion **ouverte par le proxy**, il voit l'adresse du proxy comme
+adresse source. Ses journaux, ses statistiques et ses règles d'accès par adresse deviennent inutiles. Le
+reverse proxy ajoute donc des en-têtes à la requête :
+
+| En-tête | Contenu | Pourquoi |
+|---|---|---|
+| `X-Forwarded-For` | L'adresse du client (et des proxys traversés, séparés par des virgules) | Journaux, géolocalisation, limitation par client |
+| `X-Forwarded-Proto` | `http` ou `https` : le protocole utilisé **par le client** | L'application génère les bons liens et redirections |
+| `X-Forwarded-Host` | Le nom demandé par le client | Si le proxy réécrit l'en-tête `Host` |
+| `Forwarded` | Les trois à la fois, au format normalisé (RFC 7239) | Moins répandu, mais standard |
+
+Ces en-têtes posent une question de **confiance** : n'importe quel client peut envoyer lui-même un
+en-tête `X-Forwarded-For: 10.0.0.1`. Le reverse proxy ajoute la vraie adresse **à la fin** de la liste ;
+le serveur ne doit donc faire confiance qu'à la valeur ajoutée par ses propres proxys, en partant de la
+droite. Dans nginx, côté serveur :
+
+```nginx title="nginx, sur le serveur d'application : retrouver l'adresse réelle"
+set_real_ip_from  198.51.100.10;     # seul proxy de confiance
+real_ip_header    X-Forwarded-For;
+real_ip_recursive on;
+```
+
+Pour un proxy qui travaille au niveau TCP (passthrough), il n'y a pas d'en-tête HTTP à modifier. On
+utilise alors le **PROXY protocol** : le proxy envoie une courte ligne avec l'adresse du client au début
+de la connexion, avant les données. Le serveur doit être configuré pour l'attendre.
+
+<Callout type="field">
+Un grand classique au moment de passer une application derrière un reverse proxy qui termine TLS : la
+page d'accueil part en **boucle de redirection**. L'application reçoit ses requêtes en HTTP (le proxy a
+déchiffré), conclut que le client n'est pas en HTTPS, et le redirige vers `https://` ; le client revient
+en HTTPS, le proxy relaie en HTTP, et ainsi de suite. La solution : le proxy envoie
+`X-Forwarded-Proto: https`, et l'application est configurée pour lui faire confiance (le réglage
+s'appelle *trusted proxies*, *proxy headers* ou *behind proxy* selon les frameworks).
+</Callout>
+
+## Les autres réglages qui comptent
+
+| Réglage | Le problème | La correction |
+|---|---|---|
+| **Taille des requêtes** | Un envoi de fichier échoue avec `413 Request Entity Too Large` | `client_max_body_size` dans nginx, à adapter à l'application |
+| **Délais d'attente** | Un export long coupe au bout de 60 secondes (`504 Gateway Timeout`) | Allonger le délai pour ce chemin seulement (`proxy_read_timeout`, `timeout server`) |
+| **WebSocket** | Les mises à jour en temps réel ne fonctionnent pas | Transmettre les en-têtes `Upgrade` et `Connection` (automatique dans HAProxy) |
+| **Cache** | Des pages personnelles servies au mauvais utilisateur | Ne cacher que le statique, et respecter `Cache-Control` |
+| **En-têtes de sécurité** | L'application n'envoie pas HSTS ni les protections du navigateur | Les ajouter sur le proxy, pour toutes les applications |
+
+## Dans le lab
+
+HAProxy (`lb`, `198.51.100.10`) publie deux noms : `app.example.com`, réparti entre `web1` et `web2`, et
+`admin.example.com`, servi par `web1` et réservé au LAN. Les serveurs répondent avec ce qu'ils voient de
+la requête.
+
+<CodeFile lab="proxy-lb" file="haproxy/haproxy.cfg" />
+
+<Lab name="proxy-lb" lang="fr" />
+
+**1. Ce que voit le serveur.**
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+curl http://app.example.com/test
+```
+
+```text
+Servi par      : web2
+Host           : app.example.com
+URI            : /test
+IP source vue  : 198.51.100.10
+X-Forwarded-For: 192.0.2.10
+X-Forwarded-Proto: http
+```
+
+Le serveur voit la connexion venir de HAProxy (`198.51.100.10`). L'adresse du poste n'arrive que par
+l'en-tête `X-Forwarded-For`.
+
+**2. Usurper l'en-tête.**
+
+```bash
+curl -H "X-Forwarded-For: 203.0.113.66" http://app.example.com/
+```
+
+Le serveur reçoit `X-Forwarded-For: 203.0.113.66, 192.0.2.10` : la valeur du client est conservée,
+HAProxy ajoute la vraie adresse à la fin. Seule la dernière valeur est fiable.
+
+**3. Le routage par nom.** `admin.example.com` pointe vers la même adresse, mais HAProxy l'envoie
+toujours à `web1`. Depuis le poste, dans le LAN, il répond :
+
+```bash
+curl http://admin.example.com/
+```
+
+Depuis « Internet », il est refusé. Dans un autre terminal, sur votre machine, faites la même requête
+depuis le serveur `site` (`203.0.113.80`) :
+
+```bash
+docker exec clab-proxy-lb-site wget -qO- --header "Host: admin.example.com" http://198.51.100.10/
+```
+
+Réponse : `403 Forbidden`, à cause de la règle `http-request deny if !{ src 192.0.2.0/26 }` du
+backend `be_admin`.
+
+**4. Terminer TLS.** Dans `haproxy/haproxy.cfg`, décommentez la ligne `bind :443 …` et ajoutez deux
+lignes juste en dessous, pour rediriger HTTP vers HTTPS et envoyer HSTS :
+
+```text title="haproxy/haproxy.cfg, dans frontend fe_app"
+    bind :443 ssl crt /etc/ssl/lab/app.example.com.pem
+    http-request redirect scheme https code 301 unless { ssl_fc }
+    http-response set-header Strict-Transport-Security "max-age=31536000"
+```
+
+Rechargez HAProxy sans couper les connexions en cours, puis testez :
+
+```bash
+docker kill -s HUP clab-proxy-lb-lb
+docker exec -it clab-proxy-lb-client bash
+curl -I http://app.example.com/
+curl --cacert /pki/ca.crt https://app.example.com/
+```
+
+Le premier `curl` reçoit `301` vers `https://app.example.com/`. Le second affiche
+`X-Forwarded-Proto: https` : l'application sait que le client est en HTTPS, alors qu'elle-même reçoit
+du HTTP. Vérifiez la chaîne envoyée avec `openssl s_client -connect app.example.com:443 -CAfile
+/pki/ca.crt`. Gardez cette configuration pour le chapitre suivant.
+
+## À retenir
+
+- Le reverse proxy agit pour les **serveurs** : un point d'entrée unique en DMZ, les applications
+  derrière, jamais joignables directement.
+- **Terminaison, rechiffrement ou passthrough** : le choix décide de ce que le proxy peut voir et faire.
+- Router par **nom d'hôte** (le plus propre) ou par **chemin**.
+- Le serveur voit l'adresse du proxy : `X-Forwarded-For` transmet celle du client, et seule la valeur
+  ajoutée par vos propres proxys est fiable. `X-Forwarded-Proto` évite les boucles de redirection.
+- Taille des requêtes, délais, WebSocket, cache : les réglages à vérifier avant d'ouvrir l'application.

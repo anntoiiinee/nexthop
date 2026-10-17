@@ -1,0 +1,391 @@
+---
+title: "TLS, certificats et inspection"
+description: "La poignée de main TLS, ce que contient un certificat, la chaîne de confiance et les erreurs classiques, une autorité de certification interne, puis l'inspection TLS sur proxy ou firewall : fonctionnement, exceptions, épinglage et vie privée."
+pubDate: 2026-10-17
+level: intermediate
+tags: [tls, pki, certificates, proxy, squid]
+vendor: [multi]
+order: 2
+---
+
+Plus de 90 % du trafic web est chiffré. Pour un ingénieur réseau, c'est une bonne nouvelle (les
+utilisateurs sont protégés) et une contrainte : un proxy, un firewall ou un load balancer qui ne voit
+qu'un flux chiffré ne peut presque rien décider. Ce chapitre explique ce que <Term id="tls" /> protège,
+comment un client décide de faire confiance à un serveur, et comment les équipements de sécurité
+déchiffrent ce trafic quand c'est nécessaire.
+
+## Ce que TLS garantit
+
+TLS (le successeur de SSL, dont le nom est resté dans le langage courant) s'intercale entre <Term id="tcp" />
+et l'application. Il apporte trois garanties :
+
+- **Confidentialité** : personne sur le chemin ne peut lire les données ;
+- **Intégrité** : personne ne peut les modifier sans que ce soit détecté ;
+- **Authentification du serveur** : le client a la preuve qu'il parle bien à `www.example.com`, et pas
+  à quelqu'un qui se fait passer pour lui. C'est le rôle du **certificat**.
+
+Le chiffrement seul ne suffit pas : sans authentification, un attaquant placé au milieu pourrait
+négocier une session chiffrée avec le client d'un côté, une autre avec le serveur de l'autre, et lire
+tout ce qui passe. Garder ce scénario en tête aide à comprendre l'inspection TLS, en fin de chapitre :
+c'est exactement ce que fait un proxy d'inspection, mais **avec l'accord** du poste.
+
+## La poignée de main
+
+Avant d'échanger des données, client et serveur négocient la session. Avec TLS 1.3, la version actuelle,
+il suffit d'un aller-retour :
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'c', label: 'Client', sub: 'navigateur' },
+    { id: 's', label: 'Serveur', sub: 'www.example.com', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'ClientHello', sub: 'versions, suites, clé éphémère, SNI, ALPN', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'ServerHello', sub: 'suite choisie, clé éphémère', tone: 'violet' },
+    { note: 'Les deux côtés calculent la même clé de session : la suite est chiffrée', tone: 'violet' },
+    { from: 's', to: 'c', label: 'Certificate, CertificateVerify', sub: 'chaîne de certificats + preuve de possession de la clé', tone: 'violet' },
+    { from: 's', to: 'c', label: 'Finished', tone: 'violet' },
+    { from: 'c', to: 's', label: 'Finished', tone: 'emerald' },
+    { from: 'c', to: 's', label: 'GET / (chiffré)' },
+    { from: 's', to: 'c', label: '200 OK (chiffré)', style: 'dashed' },
+  ]}
+  caption="Poignée de main TLS 1.3. Seul le premier échange est en clair ; le certificat lui-même est chiffré."
+/>
+
+1. Le **ClientHello** annonce les versions et les algorithmes que le client sait utiliser, une clé
+   publique éphémère, et deux extensions importantes pour le réseau : le <Term id="sni" /> (le nom du
+   site demandé) et l'ALPN (le protocole applicatif voulu, `h2` pour HTTP/2 ou `http/1.1`).
+2. Le **ServerHello** choisit la suite et envoie sa propre clé éphémère. Chacun peut maintenant calculer
+   la même clé de session (échange Diffie-Hellman), sans qu'elle ait jamais circulé.
+3. Le serveur envoie son **certificat** et signe l'échange avec sa clé privée (`CertificateVerify`) : il
+   prouve qu'il possède la clé qui correspond au certificat.
+4. Les deux messages **Finished** confirment que personne n'a altéré la négociation.
+
+Ce qu'un équipement réseau voit passer, sans déchiffrer : les adresses, les ports, et le **SNI** du
+ClientHello. Avec TLS 1.2, il voyait aussi le certificat du serveur, envoyé en clair ; avec TLS 1.3, plus
+rien. Et l'extension ECH (*Encrypted Client Hello*), en cours de déploiement chez les navigateurs et les
+grands hébergeurs, chiffre jusqu'au SNI. Le filtrage par nom de domaine sans déchiffrement repose alors
+sur le DNS, ou sur le `CONNECT` d'un proxy explicite.
+
+<Callout type="note">
+Le SNI existe parce qu'un même serveur (une même adresse IP) héberge souvent des dizaines de sites. Sans
+lui, le serveur ne saurait pas quel certificat présenter avant d'avoir reçu la requête HTTP, qui arrive
+**après** la négociation. C'est aussi grâce au SNI qu'un reverse proxy peut router une connexion HTTPS
+sans la déchiffrer.
+</Callout>
+
+## Le certificat
+
+Un certificat X.509 associe une **clé publique** à une **identité** (des noms DNS), pour une **durée**
+limitée, et le tout est **signé** par une autorité de certification (<Term id="ca" />).
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Identité', fields: [
+      { label: 'Subject', sub: 'CN = app.example.com', span: 4, tone: 'sky' },
+      { label: 'Subject Alternative Name', sub: 'app.example.com, admin.example.com', span: 8, tone: 'sky' },
+    ] },
+    { label: 'Émetteur', fields: [
+      { label: 'Issuer', sub: 'Next Hop Lab Issuing CA', span: 6, tone: 'violet' },
+      { label: 'Validité', sub: 'notBefore → notAfter', span: 6 },
+    ] },
+    { label: 'Usage', fields: [
+      { label: 'Clé publique', sub: 'RSA 2048 ou ECDSA P-256', span: 4, tone: 'emerald' },
+      { label: 'Basic Constraints', sub: 'CA:FALSE', span: 4 },
+      { label: 'Key Usage / EKU', sub: 'serverAuth', span: 4 },
+    ] },
+    { label: 'Preuve', fields: [
+      { label: "Signature de l'émetteur", sub: 'sur tout ce qui précède', span: 12, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Les champs d'un certificat serveur qui comptent au quotidien."
+/>
+
+- **Subject Alternative Name** (SAN) : la liste des noms pour lesquels le certificat est valable. C'est
+  **le seul champ** que les navigateurs vérifient ; le `CN` du sujet est ignoré. Un certificat sans SAN
+  est refusé, même si son `CN` est correct. Un nom générique (`*.example.com`) couvre un seul niveau :
+  `app.example.com`, mais pas `test.app.example.com`.
+- **Issuer** : qui a signé. C'est le point de départ de la vérification de la chaîne.
+- **Validité** : les certificats publics ont une durée de plus en plus courte. Depuis mars 2026, une
+  autorité publique ne peut plus émettre pour plus de 200 jours ; ce sera 100 jours en 2027 et 47 jours
+  en 2029. Le renouvellement doit donc être **automatisé** (protocole ACME, celui de Let's Encrypt).
+- **Basic Constraints** : `CA:FALSE` pour un certificat de serveur, `CA:TRUE` pour une autorité. Un
+  certificat de serveur ne peut pas signer d'autres certificats.
+- **Extended Key Usage** : à quoi sert la clé. `serverAuth` pour un serveur TLS, `clientAuth` pour un
+  certificat client (802.1X, TLS mutuel).
+
+L'outil [Décodeur de certificat](/outils/cert-decoder) affiche tous ces champs à partir d'un fichier PEM,
+directement dans le navigateur.
+
+## La chaîne de confiance
+
+Le client ne connaît pas le certificat de `app.example.com`. Il connaît une petite liste d'**autorités
+racines**, installées avec le système ou le navigateur : le *magasin de confiance*. Il doit donc
+remonter, de signature en signature, du certificat du serveur jusqu'à l'une de ces racines.
+
+<Topology
+  width={700}
+  height={230}
+  groups={[
+    { x: 20, y: 20, w: 190, h: 190, label: 'Magasin du client', tone: 'emerald' },
+    { x: 230, y: 20, w: 450, h: 190, label: 'Envoyés par le serveur', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 'root', type: 'server', x: 115, y: 110, label: 'Root CA', sub: '10 à 25 ans', tone: 'emerald' },
+    { id: 'int', type: 'server', x: 350, y: 110, label: 'Issuing CA', sub: 'intermédiaire', tone: 'violet' },
+    { id: 'leaf', type: 'server', x: 570, y: 110, label: 'app.example.com', sub: 'certificat final' },
+  ]}
+  links={[
+    { from: 'root', to: 'int', style: 'dashed' },
+    { from: 'int', to: 'leaf', style: 'dashed' },
+  ]}
+  flows={[
+    { from: 'root', to: 'int', label: 'signe', tone: 'emerald', offset: -30 },
+    { from: 'int', to: 'leaf', label: 'signe', tone: 'violet', offset: -30 },
+  ]}
+  caption="Le serveur envoie son certificat et l'intermédiaire. Le client trouve la racine dans son propre magasin de confiance."
+/>
+
+Pourquoi une autorité intermédiaire ? Parce que la clé de la racine est précieuse : si elle était volée,
+il faudrait retirer la racine de tous les magasins de confiance du monde. On la garde donc **hors ligne**,
+dans un coffre ou un module matériel (HSM), et on ne la sort que pour signer quelques intermédiaires.
+Ce sont eux qui signent les certificats au quotidien, et on peut en révoquer un sans toucher à la racine.
+
+Le serveur doit envoyer **son certificat et les intermédiaires**, dans l'ordre, jamais la racine (le
+client l'a déjà, et une racine envoyée par le serveur ne prouverait rien). Oublier l'intermédiaire est
+l'erreur la plus fréquente :
+
+<Callout type="field">
+Le piège classique après un renouvellement de certificat : le site fonctionne dans le navigateur de
+l'administrateur, mais les applications, les scripts et les API qui l'appellent tombent avec l'erreur
+`unable to get local issuer certificate`. Le nouveau certificat a été installé **sans l'intermédiaire**.
+Le navigateur, lui, s'en sort : il a gardé l'intermédiaire en cache lors d'une visite précédente, ou le
+télécharge tout seul à partir de l'adresse indiquée dans le certificat. `curl`, Java ou Python ne le font
+pas. Vérifiez toujours la chaîne avec `openssl s_client` après un changement, pas seulement avec un
+navigateur.
+</Callout>
+
+### Révocation
+
+Si une clé privée est compromise, l'autorité **révoque** le certificat avant son expiration. Les clients
+peuvent le vérifier par une liste de révocation (CRL), téléchargée régulièrement, ou en interrogeant
+l'autorité en temps réel (OCSP). En pratique, ces vérifications sont souvent imparfaites (que faire si le
+serveur OCSP ne répond pas ?), ce qui explique la tendance aux certificats de **courte durée** : un
+certificat volé n'est utilisable que quelques semaines.
+
+## Une autorité de certification interne
+
+Les autorités publiques ne délivrent des certificats que pour des noms publics, dont le demandeur
+prouve qu'il les contrôle. Pour tout le reste, une entreprise monte sa propre <Term id="pki" /> :
+applications internes, interfaces d'administration des équipements, authentification 802.1X des postes,
+serveurs LDAPS, et l'inspection TLS de la fin de ce chapitre.
+
+| Brique | Rôle | En pratique |
+|---|---|---|
+| **Autorité racine** | Signe les intermédiaires, rien d'autre | Hors ligne, allumée une fois par an ou moins, clé en HSM ou dans un coffre |
+| **Autorités intermédiaires** | Signent les certificats, publient les CRL | Une par usage (serveurs, postes, inspection), pour pouvoir en révoquer une seule |
+| **Distribution de la racine** | La rendre de confiance sur tous les postes | Par GPO sous Windows, par MDM sur les mobiles, dans les images des serveurs Linux |
+| **Émission et renouvellement** | Délivrer les certificats, et surtout ne pas les laisser expirer | Modèles automatiques d'AD CS, ACME interne, agents de renouvellement |
+
+Les solutions courantes : **AD CS** (Active Directory Certificate Services, le plus répandu dans les
+entreprises Windows), EJBCA, le moteur PKI de HashiCorp Vault, ou step-ca, qui parle ACME.
+
+Le script `pki/make-pki.sh` du lab construit une PKI de ce type en quelques commandes `openssl` : une
+racine, deux intermédiaires (l'une pour les serveurs, l'autre pour l'inspection), et deux certificats
+serveur.
+
+<CodeFile lab="proxy-lb" file="pki/make-pki.sh" />
+
+## L'inspection TLS
+
+### Le principe
+
+Pour filtrer des URL précises, analyser les fichiers téléchargés ou détecter une fuite de données, un
+proxy ou un firewall doit voir le contenu. L'inspection TLS (on dit aussi *déchiffrement*, *SSL
+interception* ou *SSL bump*) le fait en se plaçant **volontairement au milieu** :
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'c', label: 'Poste', sub: 'racine installée' },
+    { id: 'p', label: 'Proxy', sub: 'Inspection CA', tone: 'violet' },
+    { id: 's', label: 'Serveur', sub: 'www.example.com' },
+  ]}
+  messages={[
+    { from: 'c', to: 'p', label: 'ClientHello', sub: 'SNI = www.example.com', tone: 'emerald' },
+    { from: 'p', to: 's', label: 'ClientHello', sub: 'nouvelle session TLS', tone: 'violet' },
+    { from: 's', to: 'p', label: 'Certificat du vrai serveur', sub: 'le proxy le vérifie', style: 'dashed' },
+    { note: 'Le proxy fabrique un certificat www.example.com signé par son Inspection CA', tone: 'violet' },
+    { from: 'p', to: 'c', label: 'Certificat généré', sub: 'émetteur : Inspection CA', style: 'dashed', tone: 'violet' },
+    { from: 'c', to: 'p', label: 'GET /compte?id=42', sub: 'déchiffré, filtré, journalisé', tone: 'emerald' },
+    { from: 'p', to: 's', label: 'GET /compte?id=42', sub: 'rechiffré', tone: 'violet' },
+  ]}
+  caption="Deux sessions TLS au lieu d'une. Le poste accepte le certificat généré parce que l'Inspection CA est signée par une racine de son magasin de confiance."
+/>
+
+Le proxy lit le SNI, ouvre sa propre session vers le vrai serveur et **vérifie son certificat** à la
+place du poste. Puis il génère à la volée un certificat pour le même nom, signé par sa propre autorité
+d'inspection, et termine la session du poste avec. Le poste l'accepte uniquement parce que l'entreprise a
+installé sa racine dans le magasin de confiance de ses postes. Sur un poste qui n'est pas géré, la même
+opération déclenche une alerte de sécurité : c'est le comportement attendu.
+
+On trouve cette fonction dans les proxys (Squid l'appelle *SSL bump*), dans les firewalls de nouvelle
+génération (*SSL Forward Proxy* chez Palo Alto, *deep inspection* chez Fortinet) et dans les SWG cloud.
+
+### Les exceptions
+
+On ne déchiffre jamais tout. Les exceptions (*bypass*, *no-decrypt*) sont de trois sortes :
+
+- **Les obligations légales et la vie privée** : banques, santé, sites des administrations. Le contenu
+  de ces sessions relève de la vie privée des salariés, et l'entreprise n'a ni le besoin ni, souvent, le
+  droit de le lire. Ces exceptions se font généralement par **catégorie** d'URL.
+- **Les incompatibilités techniques** : les applications qui pratiquent l'**épinglage de certificat**
+  (*certificate pinning*). Elles n'acceptent qu'un certificat ou une clé précise, codée en dur, et
+  refusent le certificat généré par le proxy, même signé par une racine de confiance. C'est fréquent dans
+  les applications mobiles, les clients lourds et les mécanismes de mise à jour. Même problème pour
+  l'**authentification par certificat client** (TLS mutuel) : le proxy ne possède pas la clé privée du
+  poste et ne peut pas la présenter au serveur.
+- **Les destinations de confiance à fort volume** : mises à jour des systèmes, visioconférence. Les
+  déchiffrer coûte cher en ressources et n'apporte pas grand-chose.
+
+<Callout type="warning">
+Inspecter, c'est aussi **prendre la responsabilité** de la sécurité TLS du poste. Le proxy doit refuser
+un certificat de serveur invalide (expiré, nom incorrect, autorité inconnue), et pas le remplacer
+silencieusement par un certificat valide, ce qui masquerait une vraie attaque à l'utilisateur. La clé de
+l'autorité d'inspection, capable de signer un certificat pour n'importe quel site, doit être protégée
+comme celle de la racine. Et le déchiffrement est coûteux : un équipement dimensionné sans inspection
+peut perdre une grande partie de son débit une fois l'inspection activée.
+</Callout>
+
+### Vie privée et cadre légal
+
+En France, l'inspection TLS est admise pour la sécurité du système d'information, à condition d'être
+**proportionnée** et **transparente** : les salariés en sont informés (charte informatique, information
+des représentants du personnel), les catégories sensibles sont exclues, l'accès aux journaux est limité
+et tracé, et leur durée de conservation est définie. L'ANSSI a publié des recommandations de sécurité
+sur l'analyse des flux HTTPS, et la CNIL des bonnes pratiques sur le même sujet ; le service juridique et
+le DPO doivent valider le projet avant la mise en production.
+
+## Dans le lab
+
+Si ce n'est pas déjà fait, générez la PKI puis déployez le lab, comme au chapitre précédent :
+
+<Lab name="proxy-lb" lang="fr" />
+
+**1. Lire les certificats.** Depuis le dossier du lab, sur votre machine :
+
+```bash
+openssl x509 -in pki/out/app.example.com.crt -noout -subject -issuer -dates -ext subjectAltName,basicConstraints,extendedKeyUsage
+```
+
+```text
+subject=O = Next Hop Lab, CN = app.example.com
+issuer=O = Next Hop Lab, CN = Next Hop Lab Issuing CA
+notBefore=Oct 17 11:52:54 2026 GMT
+notAfter=May  5 11:52:54 2027 GMT
+X509v3 Basic Constraints: critical
+    CA:FALSE
+X509v3 Extended Key Usage:
+    TLS Web Server Authentication
+X509v3 Subject Alternative Name:
+    DNS:app.example.com, DNS:admin.example.com
+```
+
+Faites de même avec `pki/out/issuing-ca.crt` et `pki/out/ca.crt`, et comparez les champs `Basic
+Constraints`.
+
+**2. Vérifier la chaîne.**
+
+```bash
+openssl verify -CAfile pki/out/ca.crt pki/out/app.example.com.crt
+openssl verify -CAfile pki/out/ca.crt -untrusted pki/out/issuing-ca.crt pki/out/app.example.com.crt
+```
+
+La première commande échoue (`unable to get local issuer certificate`) : sans l'intermédiaire, impossible
+de remonter à la racine. La seconde réussit.
+
+**3. Observer une vraie négociation.** Depuis le poste, à travers le proxy :
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+openssl s_client -proxy 192.0.2.20:3128 -connect www.example.com:443 -servername www.example.com -CAfile /pki/ca.crt </dev/null
+```
+
+```text
+Certificate chain
+ 0 s:O=Next Hop Lab, CN=www.example.com
+   i:O=Next Hop Lab, CN=Next Hop Lab Issuing CA
+ 1 s:O=Next Hop Lab, CN=Next Hop Lab Issuing CA
+   i:O=Next Hop Lab, CN=Next Hop Lab Root CA
+…
+New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
+Verify return code: 0 (ok)
+```
+
+Le serveur envoie bien deux certificats (le sien et l'intermédiaire), pas la racine.
+
+**4. Activer l'inspection sur Squid.** Dans `squid/squid.conf`, supprimez la ligne `http_port 3128` et
+décommentez le bloc *Inspection TLS* juste en dessous :
+
+```text title="squid/squid.conf"
+http_port 3128 ssl-bump tls-cert=/etc/ssl/lab/inspection-ca.pem generate-host-certificates=on dynamic_cert_mem_cache_size=4MB
+sslcrtd_program /usr/lib/squid/security_file_certgen -s /var/cache/squid/ssl_db -M 4MB
+tls_outgoing_options cafile=/etc/ssl/lab/ca.crt
+acl step1 at_step SslBump1
+acl no_inspection ssl::server_name .example.org
+ssl_bump peek step1
+ssl_bump splice no_inspection
+ssl_bump bump all
+```
+
+- `peek step1` : lire le ClientHello (et donc le SNI) sans encore rien décider ;
+- `splice no_inspection` : pour les noms en `.example.org`, laisser passer le tunnel sans déchiffrer ;
+- `bump all` : déchiffrer tout le reste ;
+- `tls_outgoing_options cafile=…` : les autorités auxquelles **le proxy** fait confiance pour vérifier
+  les vrais serveurs (ici, la racine du lab, puisque notre « Internet » utilise la même PKI).
+
+Rechargez Squid, puis comparez l'émetteur des certificats reçus par le poste :
+
+```bash
+docker exec clab-proxy-lb-proxy squid -f /etc/squid/lab/squid.conf -k reconfigure
+docker exec -it clab-proxy-lb-client bash
+curl -sv -x http://192.0.2.20:3128 --cacert /pki/ca.crt https://www.example.com/compte?id=42 2>&1 | grep issuer
+curl -sv -x http://192.0.2.20:3128 --cacert /pki/ca.crt https://bank.example.org/ 2>&1 | grep issuer
+```
+
+```text
+*  issuer: O=Next Hop Lab; CN=Next Hop Lab Inspection CA
+*  issuer: O=Next Hop Lab; CN=Next Hop Lab Issuing CA
+```
+
+`www.example.com` est déchiffré : le certificat reçu a été fabriqué par le proxy. `bank.example.org` est
+une exception : le poste reçoit le vrai certificat. Dans le journal de Squid, la requête vers
+`www.example.com` apparaît maintenant avec son URL complète (`GET https://www.example.com/compte?`) : le
+proxy voit le chemin. Squid masque par défaut les paramètres après le `?`, justement pour ne pas
+journaliser de données personnelles.
+
+**5. Un poste qui ne fait pas confiance à la racine.**
+
+```bash
+curl -x http://192.0.2.20:3128 https://www.example.com/
+```
+
+`SSL certificate problem` : c'est ce que voit un poste non géré derrière un proxy d'inspection. Remettez
+ensuite la configuration d'origine de Squid (ligne `http_port 3128` seule) et rechargez.
+
+## À retenir
+
+- TLS apporte confidentialité, intégrité et **authentification du serveur** par son certificat.
+- Sans déchiffrement, le réseau ne voit que les adresses, les ports et le **SNI** ; avec ECH, bientôt
+  plus que l'adresse.
+- Le **SAN** fait foi pour les noms. Le serveur envoie son certificat **et les intermédiaires**, jamais la
+  racine ; un intermédiaire manquant casse les clients non-navigateurs.
+- Une PKI interne : racine hors ligne, intermédiaires par usage, racine distribuée sur tous les postes,
+  renouvellement automatisé.
+- L'inspection TLS est un « homme du milieu » autorisé : le proxy vérifie le vrai serveur et présente un
+  certificat signé par son autorité d'inspection.
+- Toujours des **exceptions** : vie privée (banque, santé), épinglage de certificat, TLS mutuel. Et un
+  cadre clair : information des salariés, proportionnalité, journaux protégés.

@@ -1,0 +1,416 @@
+---
+title: "Load balancing and F5 BIG-IP"
+description: "Spreading load across several servers: VIP, algorithms, health checks, session persistence, SNAT, layer 4 or layer 7. Then the F5 BIG-IP vocabulary (virtual server, pool, monitor, profiles, iRules), high availability and GSLB."
+pubDate: 2026-10-17
+level: intermediate
+tags: [load-balancing, f5, haproxy, high-availability, gslb]
+vendor: [multi]
+order: 4
+---
+
+A reverse proxy that relays to **several** identical servers becomes a **load balancer** (or ADC,
+*Application Delivery Controller*, in vendor vocabulary). It meets three needs: handle more traffic than a
+single server, keep serving when a server fails, and allow maintenance on a server without interrupting
+the service.
+
+## The principle: a VIP, a pool, health checks
+
+<Topology
+  width={720}
+  height={320}
+  groups={[{ x: 470, y: 20, w: 230, h: 280, label: 'Pool pool_app', tone: 'violet' }]}
+  nodes={[
+    { id: 'c1', type: 'host', x: 70, y: 90, label: 'Client A' },
+    { id: 'c2', type: 'host', x: 70, y: 230, label: 'Client B' },
+    { id: 'lb', type: 'server', x: 300, y: 160, label: 'Load balancer', sub: 'VIP 198.51.100.10:443', tone: 'sky' },
+    { id: 'w1', type: 'server', x: 590, y: 75, label: 'web1', sub: '.11:80', tone: 'violet' },
+    { id: 'w2', type: 'server', x: 590, y: 165, label: 'web2', sub: '.12:80', tone: 'violet' },
+    { id: 'w3', type: 'server', x: 590, y: 255, label: 'web3', sub: 'check failed', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'c1', to: 'lb' }, { from: 'c2', to: 'lb' },
+    { from: 'lb', to: 'w1', tone: 'violet' }, { from: 'lb', to: 'w2', tone: 'violet' },
+    { from: 'lb', to: 'w3', style: 'blocked' },
+  ]}
+  caption="Clients connect to the VIP. The load balancer spreads connections across the pool members its health checks report as available."
+/>
+
+- The <Term id="vip" /> (*virtual IP*) is the address published in DNS. Clients only know that one.
+- The **pool** groups the servers delivering the same service: its **members** are address and port
+  pairs.
+- **Health checks** (*monitors*) test each member continuously. A failing member is taken out of
+  rotation, then brought back when it answers again.
+- The **algorithm** picks, for each new connection or request, the member that receives it.
+
+## Algorithms
+
+| Algorithm | Principle | When to use it |
+|---|---|---|
+| **Round robin** | Each in turn | Identical servers, short and uniform requests |
+| **Weighted round robin** | Each in turn, in proportion to a weight | Servers of different sizes, or a new server to ramp up gradually |
+| **Least connections** | The member with the fewest active connections | Variable session lengths: long connections, WebSocket, databases |
+| **Response time** (*fastest*, *least response time*) | The member answering fastest | Heterogeneous members, or members loaded by other services |
+| **Hashing** (source, URL, header) | A computation on a criterion always sends to the same member | Caches (a given URL always on the same server), simple persistence |
+
+Round robin is the default, but it spreads **connections**, not **load**: if a client keeps a connection
+open for an hour, round robin knows nothing about it. As soon as durations vary, *least connections* is
+fairer.
+
+## Health checks
+
+A health check can test several layers:
+
+- **ICMP** (layer 3): the server answers ping. It may answer while the application is stopped: not
+  enough on its own;
+- **TCP** (layer 4): the connection opens on the port. The service listens, but may return errors;
+- **HTTP** (layer 7): a specific request, with an expected status code and possibly content. It is the
+  only one proving that the application answers.
+
+<Sequence
+  width={640}
+  actors={[
+    { id: 'lb', label: 'Load balancer', tone: 'sky' },
+    { id: 'w', label: 'web2', sub: '198.51.100.12:80', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'lb', to: 'w', label: 'GET /health', sub: 'every 2 s', tone: 'sky' },
+    { from: 'w', to: 'lb', label: '200 OK', style: 'dashed', tone: 'emerald' },
+    { note: 'web2 fails', tone: 'rose' },
+    { from: 'lb', to: 'w', label: 'GET /health', sub: 'no answer', style: 'blocked' },
+    { from: 'lb', to: 'w', label: 'GET /health', sub: 'no answer', style: 'blocked' },
+    { from: 'lb', to: 'w', label: 'GET /health', sub: '3 failures: web2 DOWN, out of the pool', style: 'blocked' },
+  ]}
+  caption="An HTTP health check. After a number of consecutive failures (fall), the member is removed; after a number of successes (rise), it is brought back."
+/>
+
+The settings that matter: the **interval** between two checks, the **timeout** for an answer, and the
+number of consecutive failures (*fall*) and successes (*rise*) before changing state. Too sensitive, the
+check removes servers for a passing slowdown; too slow, it leaves clients on a dead server for a minute.
+
+The best check target is a **health page** provided by the application (`/health`), which verifies what it
+needs to work: its database, its disk space. But no more: if every server's health page also tests a
+shared service, an outage of that service removes **all** servers at once, and the site shows an error
+instead of a degraded message.
+
+<Callout type="field">
+A badly written health check can take a site down while every server is fine. The typical case: the check
+requests `GET /` and expects a `200`. A new release of the application now redirects `/` to `/login` with
+a `302`. Every check fails at the same time, every member goes DOWN, and the load balancer answers `503`
+to everyone. A dedicated health page, which does not change with the application, avoids this trap.
+</Callout>
+
+## Session persistence
+
+Some applications keep the user's state (their cart, their session) **in memory on the server**. If the
+next request goes to another member, the user is logged out. **Persistence** (*stickiness*, *affinity*)
+sends a client back to the same member:
+
+| Method | Principle | Limit |
+|---|---|---|
+| **Source address** | Same IP address, same member | All users of a company behind the same NAT land on the same server; a phone that changes network changes server |
+| **Inserted cookie** | The load balancer adds a cookie naming the member | Needs to see HTTP, so TLS termination; the most reliable method |
+| **Application cookie** | The load balancer learns the application's session cookie (`JSESSIONID`…) | Must know the cookie name |
+
+Persistence has a cost: it unbalances load, and a removed server takes its users' sessions with it. The
+best persistence is the one you do not need: an application that stores its sessions in shared storage
+(Redis, a database) can send each request anywhere.
+
+## SNAT and the return path
+
+A load balancer changes the **destination** address (the VIP becomes a member's address). The server's
+reply must therefore **come back through it**, so it can put the VIP back as the source address.
+Otherwise, the client receives a reply from an address it never contacted and drops it.
+
+<Topology
+  width={720}
+  height={320}
+  nodes={[
+    { id: 'c', type: 'host', x: 70, y: 230, label: 'Client', sub: '203.0.113.50' },
+    { id: 'r', type: 'router', x: 230, y: 230, label: 'Router' },
+    { id: 'lb', type: 'server', x: 420, y: 60, label: 'Load balancer', sub: 'VIP .10', tone: 'sky' },
+    { id: 'w', type: 'server', x: 610, y: 230, label: 'web1', sub: 'gateway: router', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'c', to: 'r' }, { from: 'r', to: 'lb' }, { from: 'lb', to: 'w' }, { from: 'r', to: 'w' },
+  ]}
+  flows={[
+    { from: 'r', to: 'lb', label: 'to the VIP', tone: 'emerald', offset: -18 },
+    { from: 'lb', to: 'w', label: 'to web1', tone: 'emerald', offset: -18 },
+    { from: 'w', to: 'r', label: 'direct reply, source web1', tone: 'rose', offset: -18 },
+  ]}
+  caption="Without SNAT, web1 replies straight to the client through its gateway, bypassing the load balancer. The reply does not come from the VIP: the client drops it."
+/>
+
+Three solutions:
+
+- **<Term id="snat" />**: the load balancer also replaces the client's **source** address with its own.
+  The server therefore replies to the load balancer. It is the most common solution (*SNAT automap* at
+  F5), and it works whatever the topology. The trade-off: the server no longer sees the client address;
+  over HTTP, it is passed on through `X-Forwarded-For` (previous chapter).
+- **The load balancer as the servers' gateway** (*routed* mode): replies naturally go through it, the
+  client address is preserved. But all the servers' traffic, including traffic unrelated to load
+  balancing, crosses it.
+- **Direct Server Return** (*DSR*): the server replies straight to the client, with the VIP as source
+  address (configured on a loopback interface). Very efficient for large outbound volumes (video), but
+  limited to layer 4 and tricky to set up.
+
+A reverse proxy such as HAProxy or nginx always does the equivalent of SNAT: it opens a new connection,
+from its own address.
+
+## Layer 4 or layer 7
+
+| | Layer 4 | Layer 7 |
+|---|---|---|
+| **What it reads** | Addresses and ports | The HTTP request: name, path, headers, cookies |
+| **Decision** | Per connection | Per request (several requests on one connection can go to different members) |
+| **TLS** | Passed through without decrypting | Terminated (or re-encrypted) |
+| **Persistence** | Source address | Cookie, header, URL |
+| **Performance** | Very high, few resources | More expensive (TLS, HTTP parsing) |
+| **Uses** | Non-HTTP protocols (databases, LDAP, SMTP), very high throughput | Web applications, APIs |
+
+## F5 BIG-IP
+
+F5 BIG-IP is the reference enterprise load balancer. Its **LTM** module (*Local Traffic Manager*) does
+everything above; other modules add GSLB (**BIG-IP DNS**, formerly GTM), WAF (**Advanced WAF**, formerly
+ASM) and remote access (**APM**). The vocabulary is F5's own, but the concepts are those of the lab:
+
+| F5 BIG-IP | Role | HAProxy equivalent |
+|---|---|---|
+| **Node** | A server (an IP address) | The address in a `server` line |
+| **Pool member** | A node and a port | A `server` line |
+| **Pool** | The group of members, with its algorithm (*load balancing method*) | `backend` and `balance` |
+| **Monitor** | The health check, attached to the pool or to a member | `option httpchk`, `http-check expect` |
+| **Virtual server** | The VIP and its port, the entry point | `frontend` and `bind` |
+| **Profiles** | Reusable settings for a virtual server: `tcp`, `http`, `client-ssl` (client-side TLS), `server-ssl` (server-side), persistence | `frontend` options, `ssl crt`, `cookie` |
+| **iRules** | Scripts (in Tcl) run on events: `HTTP_REQUEST`, `HTTP_RESPONSE`… | `http-request` rules, `use_backend` |
+| **Local Traffic Policies** | Declarative rules, no scripting (routing by name, path) | `acl` and `use_backend` |
+| **SNAT automap** | SNAT with the BIG-IP's address | Default behaviour of a proxy |
+| **Self IP / Floating self IP** | The appliance's addresses on a VLAN; the *floating* one follows the active unit | Interface address |
+
+Configuration is done through the web interface, the REST API (iControl REST, widely used in automation,
+with the `f5networks.f5_modules` Ansible collection or AS3, a declarative JSON format), or on the command
+line with **tmsh**. The lab publication, on a BIG-IP:
+
+```text title="tmsh: publishing app.example.com"
+create ltm node web1 address 198.51.100.11
+create ltm node web2 address 198.51.100.12
+
+create ltm monitor http mon_app_health \
+    send "GET /health HTTP/1.1\r\nHost: app.example.com\r\nConnection: close\r\n\r\n" \
+    recv "OK" interval 5 timeout 16
+
+create ltm pool pool_app monitor mon_app_health \
+    load-balancing-mode least-connections-member \
+    members add { web1:80 web2:80 }
+
+create ltm profile client-ssl clientssl_app \
+    cert-key-chain add { app { cert app.example.com.crt key app.example.com.key chain issuing-ca.crt } }
+
+create ltm virtual vs_app_443 destination 198.51.100.10:443 ip-protocol tcp \
+    profiles add { tcp http clientssl_app { context clientside } } \
+    pool pool_app persist replace-all-with { cookie } \
+    source-address-translation { type automap }
+
+save sys config
+```
+
+By convention, the monitor `timeout` is three intervals plus one second: three missed checks before the
+member is declared DOWN. To pass on the client address, enable the *Insert X-Forwarded-For* option of the
+`http` profile.
+
+An iRule for name-based routing and access restriction on `admin.example.com`:
+
+```tcl title="iRule: admin.example.com restricted to the LAN"
+when HTTP_REQUEST {
+    if { [string tolower [HTTP::host]] equals "admin.example.com" } {
+        if { not [IP::addr [IP::client_addr] equals 192.0.2.0/26] } {
+            HTTP::respond 403 content "Forbidden"
+            return
+        }
+        pool pool_admin
+    }
+}
+```
+
+iRules are powerful, but every line runs for every request, and they quickly become the code nobody dares
+to touch. When a **Local Traffic Policy** is enough (routing by name or path), prefer it: declarative,
+faster, and readable by the whole team.
+
+### Member maintenance
+
+To work on a server without cutting off its users, take it out **gradually**:
+
+- **Disabled**: the member receives no **new** connections, but keeps serving current connections **and
+  persistent clients**. Sessions end naturally;
+- **Forced Offline**: only current connections continue, persistent clients are sent elsewhere.
+
+```text title="tmsh: disable then force web2 offline"
+modify ltm pool pool_app members modify { web2:80 { session user-disabled } }
+modify ltm pool pool_app members modify { web2:80 { session user-disabled state user-down } }
+```
+
+HAProxy offers the same states: `drain` (the equivalent of *Disabled*) and `maint`.
+
+## High availability
+
+A single load balancer becomes the single point of failure of every application it publishes. They are
+therefore deployed **in pairs**:
+
+<Topology
+  width={720}
+  height={320}
+  nodes={[
+    { id: 'sw', type: 'switch', x: 360, y: 60, label: 'Client network' },
+    { id: 'a', type: 'server', x: 220, y: 165, label: 'bigip-a', sub: 'ACTIVE · VIP', tone: 'emerald' },
+    { id: 'b', type: 'server', x: 500, y: 165, label: 'bigip-b', sub: 'STANDBY', tone: 'slate' },
+    { id: 'srv', type: 'switch', x: 360, y: 275, label: 'Server network' },
+  ]}
+  links={[
+    { from: 'sw', to: 'a', tone: 'emerald' }, { from: 'sw', to: 'b', style: 'dashed' },
+    { from: 'a', to: 'b', label: 'HA · config sync', tone: 'violet' },
+    { from: 'a', to: 'srv', tone: 'emerald' }, { from: 'b', to: 'srv', style: 'dashed' },
+  ]}
+  caption="An active / standby pair. Floating addresses (VIPs, the servers' gateway) follow the active unit; on failure, the standby takes them over within seconds."
+/>
+
+- **Active / standby**: one unit handles all traffic, the other waits. Floating addresses (the VIPs, the
+  *floating self IPs* used as the servers' gateway) move to the standby on failure, announced by
+  gratuitous ARP, as with <Term id="vrrp" />. At F5, they are grouped in a *traffic group*.
+- **Synchronisation**: the configuration is replicated from one unit to the other (*config sync*, within
+  a *device group*). A change made on the standby and not synchronised is lost at failover: always check
+  the sync status.
+- **The high-availability link**: a dedicated VLAN for heartbeats (*network failover*) and, optionally,
+  **connection mirroring**, so that current connections survive failover. Costly, it is kept for long
+  connections.
+
+## GSLB: spreading across several sites
+
+A load balancer spreads across the servers of one site. To spread across **several data centers**, or
+fail over from one site to another, you use <Term id="gslb" />. Most often, it relies on **DNS**: the GSLB
+is the authoritative DNS server for `app.example.com`, and it answers with the VIP of the available site,
+or the nearest one, or according to a weight.
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 400, y: 20, w: 300, h: 115, label: 'Paris data center', tone: 'emerald' },
+    { x: 400, y: 160, w: 300, h: 115, label: 'Lyon data center', tone: 'sky' },
+  ]}
+  nodes={[
+    { id: 'c', type: 'host', x: 70, y: 150, label: 'Client' },
+    { id: 'dns', type: 'server', x: 240, y: 150, label: 'GSLB', sub: 'authoritative DNS', tone: 'violet' },
+    { id: 'p', type: 'server', x: 550, y: 75, label: 'Paris VIP', sub: '198.51.100.10', tone: 'emerald' },
+    { id: 'l', type: 'server', x: 550, y: 215, label: 'Lyon VIP', sub: '192.0.2.200', tone: 'sky' },
+  ]}
+  links={[
+    { from: 'c', to: 'dns' },
+    { from: 'dns', to: 'p', style: 'dashed', tone: 'emerald' },
+    { from: 'dns', to: 'l', style: 'dashed', tone: 'sky' },
+  ]}
+  flows={[
+    { from: 'c', to: 'dns', label: 'app.example.com?', tone: 'violet', offset: -30 },
+  ]}
+  caption="The GSLB checks each site's VIPs and answers the DNS query with the address of an available site."
+/>
+
+Its limit is that of DNS: clients and resolvers cache the answer for the record's time to live (TTL). A
+short TTL (30 to 60 seconds) speeds up failover, but never makes it instant, and some clients ignore the
+TTL. At F5, it is the **BIG-IP DNS** module (*wide IP*, pools of VIPs per data center); cloud providers
+offer the equivalent (AWS Route 53, Azure Traffic Manager), and *anycast*, the same address announced in
+<Term id="bgp" /> from several sites, is the other major approach.
+
+## Other solutions
+
+Besides F5: **HAProxy** (open source, and HAProxy Enterprise), **nginx** (and NGINX Plus, now part of F5),
+Citrix NetScaler, A10, Kemp, VMware Avi, and cloud load balancers (AWS ALB for layer 7, NLB for layer 4;
+Azure Application Gateway and Load Balancer). The vocabulary changes, the concepts stay: VIP, pool,
+health checks, algorithm, persistence, SNAT.
+
+## In the lab
+
+We start from the previous chapter's lab, with HTTPS enabled on HAProxy.
+
+<Lab name="proxy-lb" lang="en" />
+
+**1. Watch round robin and SNAT.**
+
+```bash
+docker exec -it clab-proxy-lb-client bash
+for i in 1 2 3 4; do curl -s --cacert /pki/ca.crt https://app.example.com/ | head -1; done
+```
+
+Answers alternate between `web1` and `web2`. Run one request without `| head -1`: the server sees
+`IP source vue : 198.51.100.10`. HAProxy does SNAT, by design.
+
+**2. The dashboard.** HAProxy publishes its statistics on port `8404`, on all its interfaces, including
+the ContainerLab management network. Find `lb`'s address with
+`sudo containerlab inspect -t topology.clab.yml`, then open `http://<address>:8404` in your browser. Each
+member shows up with its state and counters.
+
+**3. Take a server down.** In one terminal, follow HAProxy's log; in another, shut `web2`'s interface:
+
+```bash
+docker logs -f clab-proxy-lb-lb
+```
+
+```bash
+docker exec clab-proxy-lb-web2 ip link set eth1 down
+```
+
+```text
+Server be_app/web2 is DOWN, reason: Layer4 timeout, check duration: 2003ms. 1 active and 0 backup servers left.
+```
+
+All requests now go to `web1`, with no error on the client side. Bring the interface back up
+(`ip link set eth1 up`) and watch it return: `Server be_app/web2 is UP`.
+
+**4. Least connections and persistence.** In `haproxy/haproxy.cfg`, change the `be_app` backend:
+
+```text title="haproxy/haproxy.cfg"
+backend be_app
+    balance leastconn
+    cookie SERVERID insert indirect nocache
+    option httpchk GET /health
+    http-check expect status 200
+    server web1 198.51.100.11:80 check cookie web1
+    server web2 198.51.100.12:80 check cookie web2
+```
+
+Reload (`docker kill -s HUP clab-proxy-lb-lb`), then send several requests keeping the cookies:
+
+```bash
+for i in 1 2 3 4; do curl -s --cacert /pki/ca.crt -b /tmp/jar -c /tmp/jar https://app.example.com/ | head -1; done
+grep SERVERID /tmp/jar
+```
+
+The client stays on the same server: HAProxy inserted a `SERVERID` cookie naming it. Without `-b`, each
+request is a new client.
+
+**5. Maintenance without an outage.** HAProxy's runtime API changes a member's state without reloading the
+configuration:
+
+```bash
+docker exec clab-proxy-lb-lb sh -c 'echo "set server be_app/web2 state drain" | socat stdio /var/run/haproxy.sock'
+docker exec clab-proxy-lb-lb sh -c 'echo "show stat" | socat stdio /var/run/haproxy.sock' | cut -d, -f1,2,18 | grep be_app
+```
+
+```text
+be_app,web1,UP
+be_app,web2,DRAIN
+be_app,BACKEND,UP
+```
+
+`web2` receives no new clients, but keeps those holding its cookie: it is F5's *Disabled* state. Put it
+back in service with `state ready`.
+
+## Key takeaways
+
+- A **VIP** in front of a **pool** of members, tested by **health checks**, and an **algorithm** to choose.
+- Round robin by default, **least connections** as soon as session lengths vary.
+- An HTTP check on a dedicated health page: neither too shallow, nor dependent on a shared service.
+- Cookie **persistence** if the application keeps sessions in memory; better, a stateless application.
+- The reply must come back through the load balancer: **SNAT**, routed mode or DSR. With SNAT, the client
+  address travels in `X-Forwarded-For`.
+- F5 BIG-IP: **node**, **pool**, **monitor**, **virtual server**, **profiles**, **iRules**. An active /
+  standby pair with config sync, and DNS-based **GSLB** to spread across sites.

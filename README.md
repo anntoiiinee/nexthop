@@ -63,12 +63,18 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 ## Commandes
 
 ```bash
+npm ci            # installe les dépendances exactement comme dans package-lock.json
 npm run dev       # http://localhost:4321 (la recherche n'a pas d'index en dev)
 npm run build     # astro build && pagefind --site dist
 npm run preview   # sert dist/ en local, recherche comprise
 ```
 
 Toujours lancer `npm run build` avant de pousser : les erreurs de schéma y sont plus lisibles qu'en dev.
+
+`npm ci` est à lancer après un clone, un `git pull` qui modifie `package-lock.json`, ou quand `node_modules` est
+abîmé : il supprime `node_modules` et réinstalle les versions exactes du `package-lock.json`, sans jamais le modifier.
+C'est la commande reproductible : tout le monde obtient les mêmes versions. `npm install` sert, lui, à ajouter ou
+mettre à jour un paquet : il peut réécrire le `package-lock.json`, qu'il faut alors commiter.
 
 ---
 
@@ -82,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -97,7 +103,7 @@ src/
 │   ├── Search, ThemeToggle                     # header
 │   ├── LogoMarquee, Faq, SupportCard           # accueil, fin d'article
 │   ├── Callout, TutorialCard, Lab, ClabDiagram
-│   ├── diagrams/                   # Topology, PacketFormat, Bits, AddressSpace, OsiModel, tones.ts
+│   ├── diagrams/                   # Topology, Sequence, PacketFormat, Bits, AddressSpace, OsiModel, tones.ts
 ├── data/
 │   ├── tools.ts                   # liste des outils (slug, textes, composant)
 │   ├── glossary.ts                # définitions de <Term>
@@ -137,6 +143,7 @@ src/
   - `<Term id="nat" />` : terme du glossaire avec infobulle ;
   - `<Callout type="note|tip|warning|field">` : encart (à savoir, astuce, attention, retour terrain) ;
   - `<Topology nodes links flows groups notes />` : schéma réseau en SVG (routeurs, switches, hôtes, flux, zones) ;
+  - `<Sequence actors messages />` : diagramme de séquence (poignée de main TLS, échanges entre client, proxy et serveur) ;
   - `<PacketFormat rows cols />` : trame, en-tête ou champ de bits, sur une ou plusieurs lignes alignées ;
   - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
@@ -172,6 +179,8 @@ Mise en route (une seule fois) :
 
 ## Pièges déjà rencontrés
 
+- **`sh: 1: astro: not found`** au lancement de `npm run dev` ou `npm run build` : les dépendances ne sont pas
+  installées (`node_modules` absent, après un clone ou une suppression). Lancer `npm ci`.
 - **Collection vide ou 404 sur un article** : remonter au premier message d'erreur du terminal. Le plus souvent un champ obligatoire manquant (`level`) ou un fichier mal placé.
 - **Fichiers de route disparus** : vérifier que `[...slug].astro`, `[course]/index.astro`, `[course]/[chapter].astro` et `[tool].astro` existent bien (noms avec crochets, à créer entre guillemets simples).
 - **Nouveau dossier de pages ou modif de `content.config.js`** : redémarrer `npm run dev`.
@@ -183,6 +192,9 @@ Mise en route (une seule fois) :
 - **Lien symbolique `node_modules` commité par erreur** : le motif `node_modules/` (avec barre finale) n'ignore que les
   dossiers. Un lien du même nom a été commité, puis a remplacé le vrai dossier au `git pull` et cassé le build Cloudflare.
   Le `.gitignore` utilise désormais `node_modules` ; toujours relire `git status` avant de commiter.
+- **Clés privées dans un lab** : tout ce qui est dans `public/` est publié et listé par `<Lab>` dans la commande
+  `curl`. Les certificats et clés d'un lab sont générés chez le lecteur par un script (`pki/make-pki.sh` du lab
+  `proxy-lb`) dans un dossier ignoré par Git (`pki/out/`) : supprimer ce dossier en local avant un `npm run build`.
 - **Formulaires d'issue GitHub** : ils ne sont actifs qu'une fois `.github/` sur `main`. Les étiquettes `contenu` et `suggestion` doivent exister dans le dépôt.
 
 ---
@@ -216,6 +228,7 @@ Mise en route (une seule fois) :
 - [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
 - [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
 - [x] Formation Automatisation : chapitre « Conventions de nommage et IPAM » (`naming-ipam`, avant NetBox), avec `conventions.yml` et `python/check_conventions.py` dans le lab `netops`
+- [x] Saut 6 · Proxy et load balancing complet en FR et EN : 5 chapitres (proxy sortant, TLS et inspection, reverse proxy, load balancing et F5, WAF), lab `proxy-lb` (Squid, HAProxy, nginx, PKI générée par `pki/make-pki.sh`), composant `<Sequence>`
 - [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
 - [ ] Contenus à venir : Jinja2 en détail, Vault, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
@@ -227,7 +240,7 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
-**8 Le réseau dans le cloud** (`cloud`). Les sauts 6 à 8 apparaissent déjà sur l'accueil, avec leurs chapitres pas encore écrits marqués « bientôt ».
+**8 Le réseau dans le cloud** (`cloud`). Les sauts 7 et 8 apparaissent déjà sur l'accueil, avec leurs chapitres pas encore écrits marqués « bientôt ».
 
 ### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
 
@@ -278,23 +291,6 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - **Grafana** : tableaux de bord, variables, et une **weather map** du réseau (débit des liens en couleur).
 - Lab : ajouter gNMIc, Prometheus et Grafana au lab `netops` (conteneurs dans la même topologie ContainerLab).
 - Retour terrain : weather map temps réel d'une fabric, détection d'un lien saturé avant les utilisateurs.
-
-### Saut 6 · Proxy et load balancing
-
-Cinq chapitres, dans la continuité du saut Sécurité. Lab envisagé : conteneurs Squid, HAProxy ou nginx dans ContainerLab,
-avec un client et deux serveurs web.
-
-- **Le proxy sortant** (`forward-proxy`) : proxy explicite ou transparent, fichiers PAC et WPAD, authentification des
-  utilisateurs, filtrage d'URL et catégories, journalisation ; solutions sur site (Squid…) et dans le cloud (SSE / SWG).
-- **TLS, certificats et inspection** (`tls-pki`) : poignée de main TLS, chaîne de certificats, autorité interne (PKI),
-  déchiffrement TLS sur proxy ou firewall, exceptions (banques, santé), épinglage de certificats, impact sur la vie privée.
-- **Le reverse proxy** (`reverse-proxy`) : publier une application interne, terminaison TLS, routage par nom d'hôte
-  ou par chemin, en-têtes `X-Forwarded-For` / `X-Forwarded-Proto`, cache ; nginx, HAProxy.
-- **Load balancing et F5 BIG-IP** (`load-balancing`) : algorithmes (round robin, moins de connexions…), sondes de santé,
-  persistance de session, SNAT, couche 4 ou couche 7 ; vocabulaire F5 (virtual server, pool, monitor, profils, iRules),
-  haute disponibilité, GSLB.
-- **WAF et protection applicative** (`waf`) : OWASP Top 10, signatures et modèle positif, faux positifs et mode
-  apprentissage, limitation de débit, protection DDoS applicative.
 
 ### Saut 8 · Le réseau dans le cloud
 

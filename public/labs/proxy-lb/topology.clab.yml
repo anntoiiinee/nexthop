@@ -1,0 +1,102 @@
+name: proxy-lb
+
+# Lab de la formation « Proxy et load balancing ».
+# Trois segments reliés par r1 (cEOS, switch L3) :
+#   LAN      192.0.2.0/26     client (poste) et proxy (Squid, proxy sortant)
+#   DMZ      198.51.100.0/24  lb (HAProxy, reverse proxy et load balancer, VIP .10), web1 et web2 (nginx)
+#   Internet 203.0.113.0/24   site (nginx) : www.example.com, games.example.net et bank.example.org
+# Le client n'a pas de route par défaut : pour aller sur Internet, il doit passer par le proxy.
+#
+# Avant le premier déploiement, générer les certificats (chapitre « TLS, certificats et inspection ») :
+#   sh pki/make-pki.sh
+
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:latest
+  nodes:
+    r1:
+      kind: arista_ceos
+      startup-config: configs/r1.cfg
+      labels: { graph-level: 2 }
+
+    client:
+      kind: linux
+      image: nicolaka/netshoot:v0.13
+      labels: { graph-level: 1 }
+      binds:
+        - pki/out:/pki:ro
+      exec:
+        - ip addr add 192.0.2.10/26 dev eth1
+        - ip route del default
+        - ip route add 198.51.100.0/24 via 192.0.2.1
+        - sh -c 'echo "198.51.100.10 app.example.com admin.example.com" >> /etc/hosts'
+        - sh -c 'echo "203.0.113.80 www.example.com games.example.net bank.example.org" >> /etc/hosts'
+
+    proxy:
+      kind: linux
+      image: alpine:3.20
+      labels: { graph-level: 1 }
+      binds:
+        - squid:/etc/squid/lab:ro
+        - pki/out:/etc/ssl/lab:ro
+      exec:
+        # Squid est installé au déploiement (accès Internet par le réseau de management)
+        - apk add --no-cache squid
+        - ip addr add 192.0.2.20/26 dev eth1
+        - ip route replace default via 192.0.2.1
+        - sh -c 'echo "203.0.113.80 www.example.com games.example.net bank.example.org" >> /etc/hosts'
+        # Base des certificats générés à la volée par l'inspection TLS
+        - su squid -s /bin/sh -c '/usr/lib/squid/security_file_certgen -c -s /var/cache/squid/ssl_db -M 4MB'
+        - squid -f /etc/squid/lab/squid.conf
+
+    lb:
+      kind: linux
+      image: haproxy:3.0-alpine
+      user: root
+      labels: { graph-level: 3 }
+      binds:
+        - haproxy:/usr/local/etc/haproxy:ro
+        - pki/out:/etc/ssl/lab:ro
+      exec:
+        - ip addr add 198.51.100.10/24 dev eth1
+        - ip route replace default via 198.51.100.1
+
+    web1:
+      kind: linux
+      image: nginx:1.27-alpine
+      labels: { graph-level: 3 }
+      binds:
+        - web/default.conf:/etc/nginx/conf.d/default.conf:ro
+      exec:
+        - ip addr add 198.51.100.11/24 dev eth1
+        - ip route replace default via 198.51.100.1
+
+    web2:
+      kind: linux
+      image: nginx:1.27-alpine
+      labels: { graph-level: 3 }
+      binds:
+        - web/default.conf:/etc/nginx/conf.d/default.conf:ro
+      exec:
+        - ip addr add 198.51.100.12/24 dev eth1
+        - ip route replace default via 198.51.100.1
+
+    site:
+      kind: linux
+      image: nginx:1.27-alpine
+      labels: { graph-level: 3 }
+      binds:
+        - site/default.conf:/etc/nginx/conf.d/default.conf:ro
+        - pki/out:/etc/ssl/lab:ro
+      exec:
+        - ip addr add 203.0.113.80/24 dev eth1
+        - ip route replace default via 203.0.113.1
+
+  links:
+    - endpoints: ["client:eth1", "r1:eth1"]
+    - endpoints: ["proxy:eth1", "r1:eth2"]
+    - endpoints: ["lb:eth1", "r1:eth3"]
+    - endpoints: ["web1:eth1", "r1:eth4"]
+    - endpoints: ["web2:eth1", "r1:eth5"]
+    - endpoints: ["site:eth1", "r1:eth6"]

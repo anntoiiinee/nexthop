@@ -1,0 +1,75 @@
+---
+title: "Proxy et load balancing"
+description: "Contrôler les flux sortants et publier les applications : proxy sortant, TLS et certificats, inspection, reverse proxy, load balancing avec HAProxy et F5 BIG-IP, WAF. Avec un lab Squid, HAProxy et nginx."
+pubDate: 2026-10-17
+level: intermediate
+tags: [proxy, tls, load-balancing, waf, f5, haproxy, squid]
+vendor: [multi]
+order: 0
+---
+
+Le firewall décide **qui a le droit de parler à qui**, à partir des adresses et des ports. Il ne voit pas
+grand-chose de plus : une connexion vers le port 443 peut être un webmail, une mise à jour ou un
+malware qui exfiltre des données. Ce saut s'intéresse aux équipements qui travaillent **au niveau de
+l'application** : ils terminent la connexion, lisent la requête <Term id="http" /> et décident quoi en faire.
+
+Ils existent dans les deux sens :
+
+- **vers l'extérieur**, le <Term id="proxy">proxy</Term> sortant contrôle la navigation des utilisateurs : qui va où,
+  avec quel compte, et ce qu'il a téléchargé ;
+- **vers l'intérieur**, le reverse proxy et le load balancer publient les applications de l'entreprise :
+  un seul point d'entrée, plusieurs serveurs derrière, et un <Term id="waf" /> pour filtrer les attaques.
+
+Au milieu, <Term id="tls" /> et les certificats : presque tout le trafic est chiffré, et rien de tout cela ne
+fonctionne sans les comprendre.
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **Le proxy sortant** | Choisir entre proxy explicite et transparent, distribuer la configuration (PAC, WPAD), authentifier, filtrer et journaliser |
+| **TLS, certificats et inspection** | Lire une chaîne de certificats, monter une autorité interne, comprendre et encadrer le déchiffrement TLS |
+| **Le reverse proxy** | Publier une application interne, terminer TLS, router par nom ou par chemin, transmettre l'adresse du client |
+| **Load balancing et F5 BIG-IP** | Choisir un algorithme, écrire des sondes de santé, gérer la persistance et le SNAT, parler le vocabulaire F5 |
+| **WAF et protection applicative** | Comprendre le Top 10 OWASP, régler un WAF sans casser l'application, limiter le débit |
+
+Les chapitres se suivent : le reverse proxy réutilise les certificats du chapitre TLS, et le load
+balancing part du reverse proxy.
+
+## Le lab
+
+Un seul lab sert à tous les chapitres. Un poste et un proxy Squid dans le LAN, un HAProxy devant deux
+serveurs web dans la DMZ, et un « Internet » avec trois sites publics, le tout relié par un switch
+Arista cEOS.
+
+<Topology
+  width={720}
+  height={390}
+  groups={[
+    { x: 20, y: 20, w: 200, h: 350, label: 'LAN 192.0.2.0/26', tone: 'emerald' },
+    { x: 400, y: 20, w: 300, h: 245, label: 'DMZ 198.51.100.0/24', tone: 'sky' },
+    { x: 400, y: 280, w: 300, h: 90, label: 'Internet 203.0.113.0/24', tone: 'slate' },
+  ]}
+  nodes={[
+    { id: 'client', type: 'host', x: 120, y: 100, label: 'client', sub: '.10' },
+    { id: 'proxy', type: 'server', x: 120, y: 270, label: 'proxy', sub: 'Squid · .20', tone: 'violet' },
+    { id: 'r1', type: 'l3switch', x: 310, y: 200, label: 'r1', sub: 'cEOS' },
+    { id: 'lb', type: 'server', x: 480, y: 75, label: 'lb', sub: 'HAProxy · .10', tone: 'violet' },
+    { id: 'web1', type: 'server', x: 630, y: 110, label: 'web1', sub: '.11' },
+    { id: 'web2', type: 'server', x: 630, y: 200, label: 'web2', sub: '.12' },
+    { id: 'site', type: 'cloud', x: 580, y: 315, label: 'site', sub: '.80' },
+  ]}
+  links={[
+    { from: 'client', to: 'r1' }, { from: 'proxy', to: 'r1' },
+    { from: 'r1', to: 'lb' }, { from: 'r1', to: 'web1' }, { from: 'r1', to: 'web2' },
+    { from: 'r1', to: 'site' },
+  ]}
+  caption="Le lab proxy-lb. Le poste n'a pas de route vers Internet : il ne sort que par le proxy. Les applications de la DMZ sont publiées par HAProxy."
+/>
+
+## Prérequis
+
+- La formation [Fondamentaux](/formations/fundamentals) : adressage IPv4, routage, <Term id="tcp" /> et
+  <Term id="nat" />.
+- Pour le lab : un poste avec ContainerLab, Docker, `openssl` et l'image Arista cEOS, voir
+  [Monter son lab](/tutoriels/containerlab-setup).
