@@ -28,7 +28,8 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 ## Fonctionnalités
 
 - **Tutoriels et formations** en MDX, bilingues, avec filtres par niveau et par technologie (`/tutoriels?tech=arista`).
-- **Outils interactifs**, 100 % côté navigateur : calculateur de sous-réseau, découpeur VLSM (plan partageable par URL, export CSV), quiz de subnetting.
+- **Outils interactifs**, 100 % côté navigateur : calculateur de sous-réseau, découpeur VLSM (plan partageable par URL, export CSV), quiz de subnetting, décodeur de certificat X.509 / CSR.
+- **Partage** : boutons LinkedIn, X, Bluesky, Reddit, e-mail, copie du lien et partage natif (mobile), sans script tiers.
 - **Glossaire** : `<Term id="nat" />` souligne le terme en pointillés et affiche sa définition au survol.
 - **Labs ContainerLab** : topologies dans `public/labs/`, schéma généré automatiquement, commande `curl` prête à copier.
 - **Recherche** Pagefind (Ctrl/⌘+K), limitée à la langue de la page.
@@ -154,7 +155,7 @@ Déjà en place :
 
 - `sitemap-index.xml` (généré au build) et `robots.txt` qui le déclare. Flux RSS déclarés dans le `<head>` de chaque page.
 - URL canonique avec slash final sur chaque page (les paramètres comme `?tech=` sont ignorés), `hreflang` FR/EN + `x-default`.
-- Open Graph et Twitter Card : `public/og-default.png` par défaut, ou image propre à la page via la prop `image` de `BaseLayout`.
+- Open Graph et Twitter Card : image 1200×630 propre à chaque tutoriel, chapitre, formation et outil, générée au build par `src/pages/og/[...path].png.ts` (Satori + sharp, mise en page dans `src/lib/og.ts`) ; `public/og-default.png` pour les autres pages.
 - Données structurées (JSON-LD) : `WebSite` + `Person` (accueil), `TechArticle` + `BreadcrumbList` (tutoriels, chapitres), `Course` (formations), `WebApplication` (outils), `FAQPage`, `ProfilePage` (whoami).
 - 404 en `noindex`.
 
@@ -201,7 +202,8 @@ Mise en route (une seule fois) :
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
 - [x] Formation Fondamentaux complète en FR (8 chapitres illustrés, dont ARP et LLDP/CDP, + lab `static-routing`)
 - [ ] Composant `<CliOutput>` (sortie CLI annotée) 
-- [ ] Images Open Graph propres à chaque article (générées au build) + option partage direct sur différentes plteforme
+- [x] Images Open Graph propres à chaque article (générées au build) + boutons de partage
+- [x] Outil : décodeur de certificat X.509 / CSR
 - [x] Traduction anglaise des formations Fondamentaux et Routage dynamique
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
@@ -338,7 +340,7 @@ une mise en garde sur les coûts (NAT Gateway, Transit Gateway et VPN sont factu
 Tous fonctionnent dans le navigateur, sans serveur, comme les outils existants. Pour en ajouter un :
 un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 
-**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting.
+**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting, décodeur de certificat X.509 / CSR.
 
 | Priorité | Outil | Ce qu'il fait | Effort |
 |---|---|---|---|
@@ -352,7 +354,7 @@ un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 | Moyenne | Calculateur débit / temps de transfert | « 50 Go sur 100 Mb/s : combien de temps ? », bits et octets | Faible |
 | Spécifique | Décodeur de route EVPN | Expliquer chaque champ d'une route EVPN (type, RD, ESI, MAC, IP) | Moyen à élevé |
 | Spécifique | Générateur de plan VNI / VLAN | Règle de numérotation → tableau et extrait YAML pour AVD | Moyen |
-| Spécifique | Décodeur de certificat X.509 / CSR | CN, SAN, dates, émetteur, taille de clé, sans que rien ne quitte le navigateur | Moyen |
+| Spécifique | ~~Décodeur de certificat X.509 / CSR~~ (fait) | CN, SAN, dates, émetteur, taille de clé, sans que rien ne quitte le navigateur | Moyen |
 | Spécifique | Référence ports et protocoles | Tableau consultable port → protocole, avec lien vers le glossaire | Faible |
 
 ---

@@ -6,6 +6,9 @@ export const SITE = 'https://nexthop.alcpt.network'; // identique à `site` dans
 export const SITE_NAME = 'Next Hop';
 export const DEFAULT_IMAGE = '/og-default.png';
 
+/** Image Open Graph propre à un contenu, générée au build par src/pages/og/[...path].png.ts */
+export const ogImagePath = (collection: 'tutorials' | 'courses' | 'tools', id: string) => `/og/${collection}/${id}.png`;
+
 export const ogLocale: Record<Lang, string> = { fr: 'fr_FR', en: 'en_US' };
 
 /**

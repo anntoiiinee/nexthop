@@ -2,7 +2,8 @@
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { getTool, toolUrl } from '@/data/tools';
-import { absoluteUrl, authorSchema, breadcrumbSchema } from '@/lib/seo';
+import { absoluteUrl, authorSchema, breadcrumbSchema, ogImagePath } from '@/lib/seo';
+import ShareButtons from './ShareButtons.astro';
 
 interface Props { lang: Lang; slug: string; }
 const { lang, slug } = Astro.props;
@@ -34,7 +35,7 @@ const jsonLd = [
   ]),
 ];
 ---
-<BaseLayout title={`${tool.title[lang]} | Next Hop`} description={tool.description[lang]} lang={lang} alternates={alternates} jsonLd={jsonLd}>
+<BaseLayout title={`${tool.title[lang]} | Next Hop`} description={tool.description[lang]} lang={lang} alternates={alternates} jsonLd={jsonLd} image={ogImagePath('tools', `${lang}/${slug}`)}>
   <div class="mx-auto max-w-4xl px-4 py-16">
     <a href={routes.tools[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
       ← {t(lang, 'tools.back')}
@@ -62,5 +63,6 @@ const jsonLd = [
         {t(lang, 'tools.learn')} →
       </a>
     )}
+    <ShareButtons title={tool.title[lang]} url={absoluteUrl(toolUrl(lang, slug))} lang={lang} class="mt-12 border-t border-slate-200 pt-8 dark:border-slate-800" />
   </div>
 </BaseLayout>

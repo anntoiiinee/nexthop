@@ -5,7 +5,8 @@ import BaseLayout from '@/layouts/BaseLayout.astro';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import { chapterUrl, chapterSlugOf, type Course } from '@/lib/courses';
-import { absoluteUrl, authorSchema, breadcrumbSchema } from '@/lib/seo';
+import { absoluteUrl, authorSchema, breadcrumbSchema, ogImagePath } from '@/lib/seo';
+import ShareButtons from './ShareButtons.astro';
 import ContentDates from './ContentDates.astro';
 import { courseDates } from '@/lib/dates';
 
@@ -46,7 +47,7 @@ const jsonLd = [
   ]),
 ];
 ---
-<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates} jsonLd={jsonLd}>
+<BaseLayout title={`${title} | Next Hop`} description={description} lang={lang} alternates={alternates} jsonLd={jsonLd} image={ogImagePath('courses', course.landing.id)}>
   <div class="mx-auto max-w-4xl px-4 py-16">
     <a href={routes.courses[lang]} class="text-sm text-slate-500 transition hover:text-sky-500">
       ← {t(lang, 'courses.title')}
@@ -94,5 +95,6 @@ const jsonLd = [
         </a>
       </>
     )}
+    <ShareButtons title={title} url={absoluteUrl(Astro.url.pathname)} lang={lang} class="mt-12 border-t border-slate-200 pt-8 dark:border-slate-800" />
   </div>
 </BaseLayout>

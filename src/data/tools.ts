@@ -3,6 +3,7 @@ import { chapterUrl } from '@/lib/courses';
 import SubnetCalculator from '@/components/SubnetCalculator.astro';
 import SubnetQuiz from '@/components/SubnetQuiz.astro';
 import VlsmPlanner from '@/components/VlsmPlanner.astro';
+import CertDecoder from '@/components/CertDecoder.astro';
 
 export interface Tool {
   slug: string;                                  // segment d'URL, identique en FR et EN
@@ -106,6 +107,36 @@ export const tools: Tool[] = [
       fr: chapterUrl('fr', 'fundamentals', 'ipv4-subnetting'),
     },
     component: SubnetQuiz,
+  },
+  {
+    slug: 'cert-decoder',
+    badge: 'X.509',
+    title: {
+      fr: 'Décodeur de certificats X.509 et CSR',
+      en: 'X.509 certificate and CSR decoder',
+    },
+    description: {
+      fr: 'Lisez un certificat, une chaîne ou une demande de certificat (CSR) : CN, SAN, dates, émetteur, taille de clé, usages et empreintes, sans que rien ne quitte votre navigateur.',
+      en: 'Read a certificate, a chain or a certificate signing request (CSR): CN, SAN, dates, issuer, key size, usages and fingerprints, without anything leaving your browser.',
+    },
+    howto: {
+      fr: [
+        'Collez un certificat ou une CSR au format PEM (avec les lignes BEGIN et END), ou déposez un fichier .pem, .crt, .cer, .der ou .csr.',
+        'Une chaîne complète est acceptée : chaque certificat est affiché, et l’outil indique quand l’un est émis par le suivant.',
+        'Les alertes signalent ce qui pose problème en production : expiration proche, clé trop faible, signature SHA-1, absence de SAN, durée trop longue pour un certificat public.',
+        'Rien n’est envoyé : le décodage et le calcul des empreintes se font dans votre navigateur. Ne collez tout de même jamais une clé privée dans un outil en ligne.',
+        'Équivalent en ligne de commande : openssl x509 -in cert.pem -noout -text, ou openssl req -in demande.csr -noout -text.',
+      ],
+      en: [
+        'Paste a certificate or a CSR in PEM format (with the BEGIN and END lines), or drop a .pem, .crt, .cer, .der or .csr file.',
+        'A full chain is accepted: every certificate is shown, and the tool tells you when one is issued by the next.',
+        'Warnings flag what causes trouble in production: upcoming expiry, weak key, SHA-1 signature, missing SAN, lifetime too long for a public certificate.',
+        'Nothing is sent: decoding and fingerprint computation happen in your browser. Still, never paste a private key into an online tool.',
+        'Command-line equivalent: openssl x509 -in cert.pem -noout -text, or openssl req -in request.csr -noout -text.',
+      ],
+    },
+    tags: ['tls', 'pki', 'x509', 'security'],
+    component: CertDecoder,
   },
 ];
 
