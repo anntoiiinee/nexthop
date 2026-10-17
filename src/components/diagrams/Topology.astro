@@ -4,7 +4,7 @@
 // <Topology
 //   width={640} height={260}
 //   nodes={[{ id: 'sw1', type: 'switch', x: 320, y: 80, label: 'SW1', sub: 'root' }]}
-//   links={[{ from: 'sw1', to: 'pc1', label: 'Gi0/1', style: 'blocked' }]}
+//   links={[{ from: 'sw1', to: 'pc1', label: 'Gi0/1', style: 'blocked' }]}   (offset : décalage latéral, pour des liens parallèles)
 //   flows={[{ from: 'pc1', to: 'sw1', label: 'broadcast', tone: 'amber' }]}
 //   groups={[{ x: 20, y: 20, w: 200, h: 160, label: 'VLAN 10', tone: 'sky' }]}
 //   notes={[{ x: 320, y: 240, text: 'Table MAC vide', tone: 'slate' }]}
@@ -19,6 +19,7 @@ interface Link {
   label?: string; fromLabel?: string; toLabel?: string;
   style?: 'solid' | 'dashed' | 'blocked' | 'trunk';
   tone?: Tone;
+  offset?: number;
 }
 interface Flow { from: string; to: string; label?: string; tone?: Tone; offset?: number }
 interface Group { x: number; y: number; w: number; h: number; label?: string; tone?: Tone }
@@ -95,7 +96,7 @@ const iconBody = 'fill-white dark:fill-slate-900';
       <!-- Liens -->
       {links.map((l) => {
         const a = get(l.from), b = get(l.to);
-        const s = segment(a, b, 0, R - 4, R - 4);
+        const s = segment(a, b, l.offset ?? 0, R - 4, R - 4);
         const clear = labelClearance(a, b);
         const style = l.style ?? 'solid';
         const t = svgTone[l.tone ?? (style === 'blocked' ? 'rose' : 'slate')];

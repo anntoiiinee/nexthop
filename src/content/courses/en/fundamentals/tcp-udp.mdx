@@ -1,0 +1,367 @@
+---
+title: "TCP and UDP: the transport layer"
+description: "Ports and sockets, the TCP header, the SYN, SYN-ACK, ACK handshake, sequence numbers and acknowledgements, FIN and RST teardown, connection states, then UDP and QUIC, with a capture in the lab."
+pubDate: 2026-10-17
+level: beginner
+tags: [tcp, udp, transport, troubleshooting]
+vendor: [arista, cisco]
+order: 10
+---
+
+The previous chapter carried packets from one machine to another, router after router. But dozens of
+applications run on a machine: a browser, a mail client, a monitoring agent. Which one should each packet
+go to? And what if a packet gets lost on the way? That is the job of the **transport layer** (layer 4 of
+the OSI model), with its two protocols: <Term id="tcp" /> and <Term id="udp" />.
+
+## Ports: which application to talk to
+
+The IP address identifies a **machine**; the **port**, a number from 0 to 65535, identifies an
+**application** on that machine. A web server listens on port 443, an SSH server on port 22. The client
+picks, for each connection, an **ephemeral port**, a free number chosen at random above 32768 (or 49152
+on Windows).
+
+<Topology
+  width={680}
+  height={230}
+  nodes={[
+    { id: 'pc', type: 'host', x: 110, y: 110, label: 'PC', sub: '192.168.10.10' },
+    { id: 'srv', type: 'server', x: 570, y: 110, label: 'Appli', sub: '172.16.20.10', tone: 'violet' },
+  ]}
+  links={[{ from: 'pc', to: 'srv', style: 'dashed' }]}
+  flows={[
+    { from: 'pc', to: 'srv', label: 'port 51234 → port 443 (HTTPS)', tone: 'emerald', offset: -30 },
+    { from: 'pc', to: 'srv', label: 'port 51990 → port 22 (SSH)', tone: 'sky', offset: 30 },
+  ]}
+  caption="Two connections between the same machines, told apart by their ports. The destination port names the service, the source port is chosen by the client."
+/>
+
+A connection is identified by **five elements**: protocol, source address and port, destination address
+and port. This "5-tuple" shows up everywhere: in firewall rules, in port-channel or load balancer
+hashing, in logs. The [Ports and protocols](/en/tools/ports-protocols) tool gives the numbers of common
+services.
+
+## TCP: reliable transport
+
+IP promises nothing: a packet can be lost, duplicated or arrive out of order. TCP builds on top of it a
+**reliable, ordered byte stream**: what the application sends on one side arrives complete and in order
+on the other, or the connection reports an error. To do so, it numbers every byte, waits for
+acknowledgements and retransmits what is missing.
+
+### The TCP header
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'Bytes 0-3', fields: [
+      { label: 'Source port', sub: '16 bits', span: 16, tone: 'emerald' },
+      { label: 'Destination port', sub: '16 bits', span: 16, tone: 'emerald' },
+    ] },
+    { label: 'Bytes 4-7', fields: [
+      { label: 'Sequence number', sub: '32 bits · position of the first byte sent', span: 32, tone: 'violet' },
+    ] },
+    { label: 'Bytes 8-11', fields: [
+      { label: 'Acknowledgement number', sub: '32 bits · next byte expected', span: 32, tone: 'violet' },
+    ] },
+    { label: 'Bytes 12-15', fields: [
+      { label: 'Len.', sub: '4', span: 4 },
+      { label: 'Res.', sub: '4', span: 4 },
+      { label: 'Flags', sub: 'SYN ACK FIN RST PSH…', span: 8, tone: 'amber' },
+      { label: 'Window', sub: '16 bits · bytes accepted', span: 16, tone: 'sky' },
+    ] },
+    { label: 'Bytes 16-19', fields: [
+      { label: 'Checksum', sub: '16 bits', span: 16 },
+      { label: 'Urgent pointer', sub: '16 bits', span: 16 },
+    ] },
+    { label: 'Options', fields: [
+      { label: 'Options (MSS, SACK, Window Scale…)', sub: '0 to 40 bytes', span: 32, dashed: true },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="The TCP header is 20 bytes without options. The flags say what the segment carries: opening, acknowledgement, closing, reset."
+/>
+
+The **flags** to know:
+
+| Flag | Name | Meaning |
+|---|---|---|
+| `SYN` | Synchronize | Connection opening: "here is my initial sequence number" |
+| `ACK` | Acknowledgment | The acknowledgement field is valid: set on every segment after the first |
+| `FIN` | Finish | "I am done sending": clean close, in one direction |
+| `RST` | Reset | "This connection does not exist" or "I give up": abrupt close |
+| `PSH` | Push | Hand the data to the application without waiting |
+
+## The three-way handshake
+
+Before exchanging any data, the two machines **open the connection**. This is the three-way handshake:
+**SYN, SYN-ACK, ACK**.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'c', label: 'PC (client)', sub: '192.168.10.10:46455' },
+    { id: 's', label: 'Appli (server)', sub: '172.16.20.10:8080', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'The server listens on port 8080 (LISTEN state)', tone: 'slate' },
+    { from: 'c', to: 's', label: 'SYN', sub: 'seq = 713573588 · MSS 1460', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'SYN-ACK', sub: 'seq = 2922288714 · ack = 713573589', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', sub: 'ack = 2922288715', tone: 'emerald' },
+    { note: 'Connection established on both sides (ESTABLISHED)', tone: 'emerald' },
+  ]}
+  caption="SYN, SYN-ACK, ACK. Each side announces its initial sequence number, and the other acknowledges it by answering that number + 1."
+/>
+
+1. **SYN**: the client picks an initial sequence number **at random** (here 713573588) and sends it,
+   with its options: the largest segment size it accepts (<Term id="mss" />), support for selective
+   acknowledgements (SACK) and for the window scale factor.
+2. **SYN-ACK**: the server accepts. It sends **its own** initial number (2922288714) and acknowledges the
+   client's: `ack = 713573589`, meaning "I got your SYN, I expect what follows from 713573589". The SYN
+   counts as one byte, hence the **+1**.
+3. **ACK**: the client acknowledges the server's SYN (`ack = 2922288715`). The connection is established,
+   data can flow.
+
+Why three messages and not two? Because **each direction** has its own sequence number, which must be
+announced **and** acknowledged. The SYN-ACK does both at once for the server-to-client direction. Why a
+random number? So that an attacker cannot guess a connection's numbers and inject forged segments into
+it.
+
+### What the handshake tells you when troubleshooting
+
+The handshake is the first end-to-end test: it tells whether the **network path** and the **service**
+work, before the application even speaks.
+
+| What you observe | What it means | Typical message |
+|---|---|---|
+| SYN, SYN-ACK, ACK | Network and service work: look at the application | (the connection opens) |
+| SYN, then **RST** in reply | The machine is reachable, but **nothing listens** on that port (or a firewall actively rejects) | `Connection refused` |
+| SYN, SYN, SYN… **no reply** | The packet does not arrive, or the reply does not come back: missing route, firewall dropping, no return route | `Connection timed out` |
+| SYN-ACK goes out, but the ACK never comes | Often **asymmetric routing**: the forward and return paths do not cross the same firewall | (the server keeps a half-open connection) |
+
+The difference between *refused* and *timed out* saves a lot of time: the first says the network works
+and you should look at the service; the second, that you should look at the network or the firewalls.
+
+## Exchanging data
+
+Once the connection is open, each data segment carries a **sequence number** (the position of its first
+byte in the stream), and the receiver answers with an **acknowledgement**: the number of the next byte it
+expects. If the PC sends 6 bytes starting at position 713573589, the Appli answers `ack = 713573595`.
+
+- **Cumulative acknowledgements**: a single ACK confirms everything before it. No need to acknowledge
+  every segment.
+- **Retransmission**: if the acknowledgement does not arrive in time, the sender resends. If identical
+  ACKs pile up (*duplicate ACKs*), a segment is missing: it is resent without waiting.
+- **Window**: each side announces how many bytes it can still receive. The sender never exceeds that
+  amount without an acknowledgement: this is **flow control**, which avoids drowning a slow receiver.
+- **Congestion control**: on top of that, TCP starts slowly (*slow start*) and lowers its rate as soon
+  as it detects losses, a sign that the network is saturated.
+
+<Callout type="field">
+The segment size (MSS) is negotiated in the SYN from each machine's <Term id="mtu" />: 1460 bytes for a
+1500-byte Ethernet MTU (1500 minus 20 for the IP header and 20 for the TCP header). The classic trap
+comes with a tunnel (IPsec VPN, GRE) whose header reduces the size really available: the handshake works
+(SYNs are small), `ping` too, but large transfers hang, because full-size segments no longer fit. The
+fix: lower the MSS on the tunnel router (`ip tcp adjust-mss 1360` at Cisco, `tcp mss ceiling ipv4 1360`
+on the interface at Arista).
+</Callout>
+
+## Closing the connection
+
+### Cleanly: FIN
+
+Each direction closes **separately**. The side done sending emits a **FIN**, the other acknowledges it;
+then the other side does the same once it is done. In between, the connection is half-closed: one side
+can still send, the other no longer.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'c', label: 'PC', sub: 'client' },
+    { id: 's', label: 'Appli', sub: 'server', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'FIN', sub: 'the client has nothing to send', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'Data + ACK', sub: '"Bonjour depuis appli"', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', tone: 'emerald' },
+    { from: 's', to: 'c', label: 'FIN', sub: 'the server is done too', tone: 'violet' },
+    { from: 'c', to: 's', label: 'ACK', sub: 'the client enters TIME_WAIT', tone: 'emerald' },
+  ]}
+  caption="The teardown captured in the lab: the client closes its direction right away, the server still sends its answer, then closes its own."
+/>
+
+The side that closes first then stays a few tens of seconds in **TIME_WAIT**, to absorb any late segments
+before reusing the same pair of ports.
+
+### Abruptly: RST
+
+An **RST** cuts the connection immediately, without any exchange. A machine sends one when it receives a
+segment for a connection that does not exist: a SYN to a port where nothing listens (*Connection
+refused*), or a segment for a connection it has already forgotten (after a reboot, for instance).
+Firewalls and load balancers send them too, to reject a connection, or to close those left idle for too
+long.
+
+## Connection states
+
+The operating system tracks each connection in a state machine. The main states:
+
+| State | Side | Meaning |
+|---|---|---|
+| `LISTEN` | Server | Waiting for connections on a port |
+| `SYN-SENT` | Client | SYN sent, waiting for the SYN-ACK |
+| `SYN-RECEIVED` | Server | SYN-ACK sent, waiting for the final ACK |
+| `ESTABLISHED` | Both | Connection open, data flowing |
+| `FIN-WAIT` | The one closing | FIN sent, waiting for the other side to finish |
+| `CLOSE-WAIT` | The one receiving the FIN | The other side closed, the application must close in turn |
+| `TIME-WAIT` | The one that closed first | Safety wait before releasing the ports |
+
+On Linux, `ss -tan` lists them all. Many `SYN-SENT`: outgoing connections do not succeed. Thousands of
+`CLOSE-WAIT` piling up: an application forgetting to close its connections. Many `SYN-RECEIVED` on a
+server: maybe an attack.
+
+<Callout type="note">
+A **stateful** firewall follows exactly this state machine: it only allows a SYN-ACK if it saw the
+matching SYN, and lets through the replies of a connection it allowed. It is also the target of the **SYN
+flood**: thousands of SYNs with never the final ACK, to fill the half-open connection table of the server
+or firewall. *SYN cookies* let the server store nothing until the final ACK.
+</Callout>
+
+## UDP: minimal transport
+
+UDP does the bare minimum: ports, a length and a checksum. No connection, no sequence number, no
+acknowledgement, no retransmission. Each datagram stands alone.
+
+<PacketFormat
+  cols={32}
+  rows={[
+    { label: 'Bytes 0-3', fields: [
+      { label: 'Source port', sub: '16 bits', span: 16, tone: 'emerald' },
+      { label: 'Destination port', sub: '16 bits', span: 16, tone: 'emerald' },
+    ] },
+    { label: 'Bytes 4-7', fields: [
+      { label: 'Length', sub: '16 bits', span: 16 },
+      { label: 'Checksum', sub: '16 bits', span: 16 },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="The UDP header: 8 bytes, nothing more."
+/>
+
+That is an advantage when:
+
+- **speed matters more than reliability**: real-time voice and video. A retransmitted voice packet would
+  arrive too late to be useful; better to lose it;
+- **the exchange is one question and one answer**: <Term id="dhcp" />, DNS, NTP, SNMP. Opening a TCP
+  connection would cost more than the exchange itself, and the application resends its question if it
+  gets no answer;
+- **another protocol handles reliability**: <Term id="vxlan" /> carries Ethernet frames in UDP, and QUIC
+  rebuilds everything TCP does, on top of UDP.
+
+| | TCP | UDP |
+|---|---|---|
+| **Connection** | Yes: handshake, teardown | No |
+| **Reliability** | Acknowledgements, retransmission, guaranteed order | None: up to the application |
+| **Flow and congestion control** | Yes | No |
+| **Header** | 20 bytes minimum | 8 bytes |
+| **Examples** | HTTP/1.1 and HTTP/2, SSH, SMTP, BGP, LDAP | DNS, DHCP, NTP, SNMP, syslog, voice, VXLAN, QUIC |
+
+<Callout type="note">
+**QUIC**, the protocol behind HTTP/3, runs over **UDP port 443**. It embeds TLS encryption and opens a
+connection faster than TCP + TLS. For the network, it is something new: a firewall or proxy that only
+allows TCP 443 blocks QUIC, and browsers then fall back to HTTP/2 over TCP. Some companies deliberately
+block UDP 443 to keep their proxy's visibility (see the [Proxy and load balancing](/en/courses/proxy)
+hop).
+</Callout>
+
+Since there is no connection, a closed UDP port does not answer with an RST: the machine sends back an
+<Term id="icmp" /> *port unreachable* message, or nothing at all if a firewall prevents it. That is why
+testing a UDP service is less straightforward than a TCP one: no answer proves nothing.
+
+## In the lab
+
+We reuse the previous chapter's lab, once the static routes are in place: `pc1` and `appli` reach each
+other with `ping`. We will watch a real handshake.
+
+<Lab name="static-routing" lang="en" />
+
+**1. Start a service on `appli`.** A small `nc` (netcat) server that answers a sentence to the first
+connection on port 8080:
+
+```bash
+docker exec -d clab-static-routing-appli sh -c 'echo "Bonjour depuis appli" | nc -l -p 8080'
+```
+
+**2. Capture the traffic.** The lab images do not have `tcpdump`: we run it from a `nicolaka/netshoot`
+container sharing `appli`'s network stack. In a second terminal:
+
+```bash
+docker run --rm -it --net container:clab-static-routing-appli nicolaka/netshoot tcpdump -l -nni eth1 -S tcp
+```
+
+The `-S` option shows absolute sequence numbers, to see the handshake's **+1**.
+
+**3. Connect from `pc1`.**
+
+```bash
+docker exec -it clab-static-routing-pc1 sh
+nc 172.16.20.10 8080 </dev/null
+```
+
+```text
+Bonjour depuis appli
+```
+
+The capture (TCP options removed for readability):
+
+```text
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [S], seq 713573588, win 64240, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [S.], seq 2922288714, ack 713573589, win 65160, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288715, win 502, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [F.], seq 713573589, ack 2922288715, win 502, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [P.], seq 2922288715:2922288736, ack 713573590, win 510, length 21
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288736, win 502, length 0
+IP 172.16.20.10.8080 > 192.168.10.10.46455: Flags [F.], seq 2922288736, ack 713573590, win 510, length 0
+IP 192.168.10.10.46455 > 172.16.20.10.8080: Flags [.], ack 2922288737, win 502, length 0
+```
+
+`tcpdump` abbreviates flags: `S` for SYN, `.` for ACK, `F` for FIN, `P` for PSH, `R` for RST. You can see:
+
+- lines 1 to 3: **SYN, SYN-ACK (`S.`), ACK**;
+- line 4: the client has nothing to send (`</dev/null`), it closes its direction right away (**FIN**);
+- line 5: the server sends its 21 bytes (`seq 2922288715:2922288736`);
+- lines 6 to 8: the client acknowledges, the server closes in turn, the client acknowledges the FIN.
+
+The `nc` server from step 1 only serves one connection: run the step 1 command again to repeat step 3.
+
+**4. A closed port.** Nothing listens on port 9999:
+
+```bash
+nc -w 2 172.16.20.10 9999
+```
+
+```text
+IP 192.168.10.10.37257 > 172.16.20.10.9999: Flags [S], seq 1598422382, win 64240, length 0
+IP 172.16.20.10.9999 > 192.168.10.10.37257: Flags [R.], seq 0, ack 1598422383, win 0, length 0
+```
+
+One SYN, an immediate **RST**: the machine is reachable, but no service listens. That is *Connection
+refused*.
+
+**5. Bonus: a timeout.** On R3, remove the route to the branch (`no ip route 192.168.10.0/26 …`), and
+connect again from `pc1`. The capture now shows the SYN arriving and the SYN-ACK leaving… but it never
+gets back to the client, which resends its SYN several times before giving up. It is the missing **return
+route** of the previous chapter, seen from the TCP side. Put the route back afterwards.
+
+## Key takeaways
+
+- The IP address identifies the machine, the **port** identifies the application. A connection is
+  identified by its **5-tuple**.
+- TCP opens the connection with **SYN, SYN-ACK, ACK**: each side announces a random sequence number, which
+  the other acknowledges with **+1**.
+- Sequence numbers and **acknowledgements** allow retransmitting what is missing; the **window** avoids
+  drowning the receiver.
+- **FIN** closes cleanly, one direction at a time; **RST** cuts abruptly.
+- When troubleshooting: **RST** = *Connection refused* (the network works, the service does not); **no
+  answer** = *timed out* (look at the network, firewalls, the return route).
+- **UDP**: no connection, no reliability, an 8-byte header. DNS, DHCP, voice, VXLAN, and QUIC for HTTP/3.
+
+Well done, you have finished the fundamentals! The logical next step: teaching routers to discover the
+network on their own with [dynamic routing](/en/courses/routing) (OSPF, then BGP).

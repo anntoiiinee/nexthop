@@ -5,7 +5,7 @@ pubDate: 2026-10-17
 level: beginner
 tags: [routing, static, ipv4, arp]
 vendor: [arista, cisco]
-order: 8
+order: 9
 ---
 
 The previous chapters gave us neatly split networks: VLANs, each with its own IP subnet. What's left
@@ -343,5 +343,5 @@ R2, one route to the branch on R3. To enter configuration mode: `enable`, then `
 - Always think about the **return route**.
 - **Administrative distance** decides between route sources; a floating route acts as a backup.
 
-Well done, you have finished the fundamentals! The logical next step: teaching routers to discover the
-network on their own with [dynamic routing](/en/courses/routing) (OSPF, then BGP).
+Packets now know how to travel from one machine to another. One last step: understanding how
+applications use them, with **TCP and UDP**, the transport layer.

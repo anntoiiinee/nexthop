@@ -1,10 +1,10 @@
 ---
 title: "Les fondamentaux du réseau"
-description: "Les bases indispensables : modèle OSI, Ethernet, VLAN, Spanning Tree, LLDP, adressage IPv4, ARP et routage statique, avec schémas et lab."
+description: "Les bases indispensables : modèle OSI, Ethernet, VLAN, Spanning Tree, agrégation de liens, LLDP, adressage IPv4, ARP, routage statique, TCP et UDP, avec schémas et lab."
 pubDate: 2026-10-15
 updatedDate: 2026-10-17
 level: beginner
-tags: [osi, ethernet, vlan, stp, lldp, ipv4, arp, routing]
+tags: [osi, ethernet, vlan, stp, lacp, mlag, lldp, ipv4, arp, routing, tcp, udp]
 vendor: [arista, cisco]
 order: 0
 ---
@@ -58,17 +58,19 @@ chaque paquet qui le traverse.
 | **2. Ethernet et adresses MAC** | Lire une trame, expliquer comment un switch apprend et transmet |
 | **3. Les VLAN** | Segmenter un réseau, configurer ports access et trunks 802.1Q |
 | **4. Spanning Tree** | Comprendre pourquoi une boucle est fatale et comment STP l'évite |
-| **5. LLDP et CDP** | Savoir ce qui est branché sur chaque port, vérifier un câblage |
-| **6. Adressage IPv4 et subnetting** | Calculer réseau, broadcast et plage d'hôtes, faire un plan d'adressage VLSM |
-| **7. ARP** | Expliquer comment une IP devient une MAC, lire un cache ARP, reconnaître une usurpation |
-| **8. Le routage statique** | Lire une table de routage, configurer des routes et dépanner avec ping et traceroute |
+| **5. Agrégation de liens** | Regrouper des liens en port-channel avec LACP, raccorder un serveur à deux switches en MLAG / vPC |
+| **6. LLDP et CDP** | Savoir ce qui est branché sur chaque port, vérifier un câblage |
+| **7. Adressage IPv4 et subnetting** | Calculer réseau, broadcast et plage d'hôtes, faire un plan d'adressage VLSM |
+| **8. ARP** | Expliquer comment une IP devient une MAC, lire un cache ARP, reconnaître une usurpation |
+| **9. Le routage statique** | Lire une table de routage, configurer des routes et dépanner avec ping et traceroute |
+| **10. TCP et UDP** | Lire une poignée de main SYN, SYN-ACK, ACK, distinguer *refused* et *timeout*, choisir entre TCP et UDP |
 
 ## Comment suivre la formation
 
 - **Lisez dans l'ordre** : chaque chapitre réutilise les notions du précédent.
 - **Survolez les termes soulignés en pointillés** (comme <Term id="vlan" />) : leur définition s'affiche.
 - **Pratiquez** avec les [outils](/outils) : calculateur de sous-réseau, découpeur VLSM et quiz.
-- **Refaites le lab** du dernier chapitre : il ne demande qu'un PC, Docker et ContainerLab.
+- **Refaites le lab** du routage statique, puis la capture TCP du dernier chapitre : il ne demande qu'un PC, Docker et ContainerLab.
 
 <Callout type="note">
 Les exemples de configuration sont donnés pour **Arista EOS** et **Cisco IOS** : les deux syntaxes

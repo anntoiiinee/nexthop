@@ -15,7 +15,8 @@ brings, how workstations find it, and what it really sees.
 
 ## Two connections instead of one
 
-Without a proxy, the workstation opens a <Term id="tcp" /> connection straight to the server. With a
+Without a proxy, the workstation opens a <Term id="tcp" /> connection straight to the server (the SYN,
+SYN-ACK, ACK handshake is covered in the [TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter). With a
 proxy, there are **two separate connections**: from the workstation to the proxy, then from the proxy to
 the server. The server never sees the workstation, only the proxy's address.
 

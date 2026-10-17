@@ -1,0 +1,324 @@
+---
+title: "Link aggregation: port-channel, LACP and MLAG"
+description: "Using every link between two devices instead of blocking some: port-channel, per-flow load sharing, LACP, then MLAG and vPC to connect a server to two different switches."
+pubDate: 2026-10-17
+level: beginner
+tags: [lacp, port-channel, mlag, vpc, switching]
+vendor: [arista, cisco]
+order: 5
+---
+
+In the previous chapter, Spanning Tree prevented loops by **blocking** the extra links. It is safe, but
+costly: between SW1 and SW2, two 10 Gb/s cables only give 10 Gb/s of usable capacity, the second one
+waits for a failure. **Link aggregation** does the opposite: it bundles several cables into **a single
+logical link**, which Spanning Tree sees as a single port. Nothing left to block, and every cable carries
+traffic.
+
+## The port-channel
+
+<Topology
+  width={680}
+  height={200}
+  nodes={[
+    { id: 'a1', type: 'switch', x: 90, y: 70, label: 'SW1' },
+    { id: 'b1', type: 'switch', x: 260, y: 70, label: 'SW2' },
+    { id: 'a2', type: 'switch', x: 420, y: 70, label: 'SW1' },
+    { id: 'b2', type: 'switch', x: 590, y: 70, label: 'SW2' },
+  ]}
+  links={[
+    { from: 'a1', to: 'b1', tone: 'emerald', offset: -7 },
+    { from: 'a1', to: 'b1', style: 'blocked', offset: 7 },
+    { from: 'a2', to: 'b2', tone: 'emerald', offset: -7 },
+    { from: 'a2', to: 'b2', tone: 'emerald', offset: 7 },
+  ]}
+  notes={[
+    { x: 175, y: 140, text: 'No aggregation: 2 cables,', tone: 'slate' },
+    { x: 175, y: 160, text: 'STP blocks one → 10 Gb/s', tone: 'rose' },
+    { x: 505, y: 40, text: 'Port-Channel1', tone: 'emerald', mono: true },
+    { x: 505, y: 140, text: 'Port-channel: 2 cables,', tone: 'slate' },
+    { x: 505, y: 160, text: 'one logical link → 20 Gb/s', tone: 'emerald' },
+  ]}
+  caption="The two cables become a single logical port. Spanning Tree has no loop left to break, and losing one cable cuts nothing: the port-channel carries on over the other."
+/>
+
+Names vary between vendors, but it is always the same thing:
+
+| Name | Where you meet it |
+|---|---|
+| **Port-channel** | Arista, Cisco (`interface Port-Channel1`) |
+| **EtherChannel** | Cisco, the historical brand name |
+| **LAG** (*Link Aggregation Group*) | The IEEE standard, Juniper (`ae0`), most documentation |
+| **Bond** / **Teaming** | Linux (`bond0`) / Windows and VMware, on the server side |
+
+The port-channel brings two things:
+
+- **more bandwidth**: 2, 4 or 8 links add up their capacity;
+- **redundancy without waiting**: if a cable fails, traffic moves to the others within milliseconds,
+  without Spanning Tree having to recompute anything.
+
+To work, member links must be **identical**: same speed, same mode (access or trunk), same allowed VLANs,
+same native VLAN. A mismatched member is suspended by the switch.
+
+## How traffic is shared
+
+The port-channel does not deal frames out across the cables like playing cards. It shares by **flow**:
+the switch computes a fingerprint (a *hash*) from fields of the frame, and the result picks the cable to
+use. All packets of the same flow therefore take **the same cable**, which guarantees they arrive in
+order.
+
+<Topology
+  width={680}
+  height={260}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 120, y: 130, label: 'SW1' },
+    { id: 'sw2', type: 'switch', x: 560, y: 130, label: 'SW2' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', style: 'trunk', tone: 'slate', label: 'Po1 · Et1 + Et2' },
+  ]}
+  flows={[
+    { from: 'sw1', to: 'sw2', label: 'flow A: PC → Appli · Et1', tone: 'sky', offset: -40 },
+    { from: 'sw1', to: 'sw2', label: 'flow B: Wi-Fi → Internet · Et2', tone: 'amber', offset: 40 },
+  ]}
+  caption="Each flow is assigned to a member by the hash. A flow never exceeds the speed of a single cable."
+/>
+
+The fields used depend on the configuration: MAC addresses, IP addresses, and often the <Term id="tcp" />
+or <Term id="udp" /> **ports** (see the [TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter). The more
+fields, the finer the distribution. Two consequences to keep in mind:
+
+- **A single flow goes no faster than a single cable.** A file copy between two servers, over a
+  2 × 10 Gb/s port-channel, tops out at 10 Gb/s. The gain shows when there are **many flows**.
+- **The distribution is never perfect.** With few flows, or very uneven flows, one cable can be saturated
+  while the other is almost empty. You see it in the interface counters.
+
+## LACP: negotiate rather than force
+
+You can build a port-channel "statically": each switch simply considers that its ports form a group. It
+is dangerous: if a cable is plugged into the wrong port, or if the other side is not configured, the
+switch sends traffic over a link that is not part of the group on the far end. At best, traffic is lost;
+at worst, you create a loop.
+
+<Term id="lacp" /> (*Link Aggregation Control Protocol*, IEEE 802.1AX, formerly 802.3ad) solves this:
+both devices exchange messages (LACPDUs) on each link, and a link only joins the group if **both ends
+agree**. Each LACPDU carries the system identifier (its priority and MAC address) and a key naming the
+group: a cable plugged into another device, or into another group, is detected and kept out of the
+port-channel.
+
+| Mode | Behaviour | With, on the other end |
+|---|---|---|
+| **active** | Sends LACPDUs and negotiates | `active` or `passive`: the group forms |
+| **passive** | Answers LACPDUs, never sends first | `active`: the group forms. `passive`: **nothing happens** |
+| **on** | No LACP, group forced | `on` only. Avoid |
+
+The simple rule: **`active` on both sides**. LACPDUs go out every 30 seconds by default (*slow*), or every
+second in *fast* mode, which detects faster a link that only transmits in one direction.
+
+## Configuration
+
+A trunk port-channel between SW1 and SW2, with LACP:
+
+```text title="Arista EOS"
+interface Ethernet49-50
+   description to-SW2
+   channel-group 1 mode active
+!
+interface Port-Channel1
+   description to-SW2
+   switchport mode trunk
+   switchport trunk allowed vlan 10,20,30
+```
+
+```text title="Cisco IOS"
+interface range TenGigabitEthernet1/1/1 - 2
+ description to-SW2
+ channel-group 1 mode active
+!
+interface Port-channel1
+ description to-SW2
+ switchport mode trunk
+ switchport trunk allowed vlan 10,20,30
+```
+
+Layer 2 configuration (mode, VLANs) goes on the **Port-Channel** interface: it applies to every member.
+
+## Verifying
+
+```text title="SW1#show etherchannel summary (Cisco, excerpt)"
+Flags:  D - down        P - bundled in port-channel
+        I - stand-alone s - suspended
+        S - Layer2      U - in use
+
+Group  Port-channel  Protocol    Ports
+------+-------------+-----------+-----------------------------------------------
+1      Po1(SU)         LACP      Te1/1/1(P)  Te1/1/2(P)
+```
+
+- `Po1(SU)`: layer 2 port-channel (`S`), in use (`U`);
+- `(P)`: each member is in the group. An `(I)` (*stand-alone*) or `(s)` (*suspended*) flags a member that
+  LACP did not accept: wrong cabling, different configuration, or no LACP on the other end.
+
+On Arista, `show port-channel` and `show lacp neighbor` give the same information.
+
+## On the server side
+
+A server with two network cards can aggregate its links too: a **bond** in `802.3ad` mode on Linux, **NIC
+teaming** in LACP mode on Windows, a *Link Aggregation Group* on a VMware distributed vSwitch. Server and
+switch must agree: an LACP port-channel on the switch facing a server configured for simple failover
+(*active-backup*) leads nowhere good. Decide the mode with the systems team, before cabling.
+
+## MLAG: one port-channel to two switches
+
+The port-channel has a limit: all its members land on **the same switch**. If the branch server is
+connected by two cables to SW2, a failure of SW2 still cuts it off. You would like to plug one cable into
+SW1 and one into SW2… but for LACP, they are two different systems (two MAC addresses), and it refuses to
+make them a single group.
+
+<Term id="mlag" /> (*Multi-Chassis Link Aggregation*) lifts this limit: two switches coordinate to present
+themselves **as one** to the connected devices. They send the same system identifier in their LACPDUs,
+and the server builds an ordinary port-channel, unaware that it is plugged into two switches.
+
+<Topology
+  width={700}
+  height={340}
+  groups={[{ x: 120, y: 20, w: 460, h: 150, label: 'MLAG domain · seen as a single switch', tone: 'emerald' }]}
+  nodes={[
+    { id: 'sw1', type: 'switch', x: 220, y: 95, label: 'SW1', sub: 'MLAG primary' },
+    { id: 'sw2', type: 'switch', x: 480, y: 95, label: 'SW2', sub: 'MLAG secondary' },
+    { id: 'srv', type: 'server', x: 350, y: 270, label: 'Server', sub: 'bond0 · LACP', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'sw1', to: 'sw2', style: 'trunk', label: 'peer-link', tone: 'emerald' },
+    { from: 'sw1', to: 'srv', tone: 'violet', label: 'Po20' },
+    { from: 'sw2', to: 'srv', tone: 'violet', label: 'Po20' },
+  ]}
+  caption="The server sees a single port-channel. If SW1 or SW2 fails, it carries on over the other cable, with no Spanning Tree or failover to wait for."
+/>
+
+An MLAG pair relies on three elements:
+
+- **The peer-link**: a port-channel between the two switches. They synchronise their tables over it (MAC
+  addresses, port states), and it carries traffic when a device is connected to only one of the two (an
+  **orphan port**) or when a link to a server is down.
+- **The peer-keepalive** (or *heartbeat*): a heartbeat between the two switches, over **another path**
+  than the peer-link, often the management network. It tells whether the other switch is really dead, or
+  just unreachable over the peer-link.
+- **The domain**: an identifier shared by both switches, from which the common LACP system identifier is
+  derived.
+
+<Callout type="warning">
+The scenario to avoid is **split-brain**: the peer-link goes down, and each switch believes the other is
+dead. Both declare themselves primary, each sends its own LACPDUs, and the network becomes inconsistent
+(loops, lost traffic). The peer-keepalive exists precisely to avoid it: if the peer-link goes down but the
+heartbeat still gets through, the secondary switch knows the primary is alive and disables its own MLAG
+ports. Hence the rule: the peer-keepalive must **never** go over the peer-link, or it fails along with it.
+</Callout>
+
+Spanning Tree stays enabled, but the MLAG pair appears to it as **a single switch**: there is no loop left
+to break between the two, and no link is blocked.
+
+### MLAG at Arista, vPC at Cisco
+
+The principle is the same everywhere, the names change:
+
+| Vendor | Name | Link between the two switches | Heartbeat |
+|---|---|---|---|
+| **Arista** | MLAG | peer-link | peer-address heartbeat |
+| **Cisco Nexus** | vPC (*virtual Port Channel*) | vPC peer-link | vPC peer-keepalive |
+| **Juniper** | MC-LAG | ICL (*Inter-Chassis Link*) | ICCP |
+| **Aruba** | VSX | ISL (*Inter-Switch Link*) | keepalive |
+
+Do not confuse it with **stacking** technologies (Cisco StackWise and StackWise Virtual, VSS, Juniper
+Virtual Chassis): there, the two switches merge into **a single device**, with a single control plane and
+a single configuration. Simpler to manage, but a software upgrade or bug hits both at once. With MLAG and
+vPC, each switch keeps **its own control plane** and configuration: you can reboot one while the other
+keeps the service running.
+
+### Configuration
+
+Both switches carry a symmetrical configuration. On SW1:
+
+```text title="Arista EOS: MLAG on SW1"
+vlan 4094
+   trunk group mlagpeer
+!
+no spanning-tree vlan-id 4094
+!
+interface Ethernet49-50
+   channel-group 10 mode active
+!
+interface Port-Channel10
+   description peer-link
+   switchport mode trunk
+   switchport trunk group mlagpeer
+!
+interface Vlan4094
+   ip address 10.255.255.1/30
+!
+mlag configuration
+   domain-id branch
+   local-interface Vlan4094
+   peer-address 10.255.255.2
+   peer-address heartbeat 198.51.100.22 vrf MGMT
+   peer-link Port-Channel10
+!
+! The server: same port-channel number and same MLAG number on both switches
+interface Ethernet1
+   channel-group 20 mode active
+!
+interface Port-Channel20
+   description srv-branch
+   switchport access vlan 30
+   mlag 20
+```
+
+VLAN 4094 is only used for communication between the two switches: the *trunk group* restricts it to the
+peer-link, and Spanning Tree is disabled on it. The heartbeat goes over the management network (see the
+[Management and out-of-band access](/en/courses/operations/oob) chapter).
+
+```text title="Cisco Nexus: vPC on the first switch"
+feature lacp
+feature vpc
+!
+vpc domain 10
+  peer-keepalive destination 198.51.100.22 source 198.51.100.21 vrf management
+!
+interface port-channel10
+  description peer-link
+  switchport mode trunk
+  vpc peer-link
+!
+interface Ethernet1/49-50
+  channel-group 10 mode active
+!
+interface port-channel20
+  description srv-branch
+  switchport access vlan 30
+  vpc 20
+!
+interface Ethernet1/1
+  channel-group 20 mode active
+```
+
+To verify: `show mlag` and `show mlag interfaces` on Arista, `show vpc brief` on Cisco. Look for an
+**active** / **peer-link up** / **peer alive** state, and MLAG or vPC ports *active-full* (both members in
+service).
+
+<Callout type="note">
+In modern data centers, MLAG is increasingly replaced by **EVPN multihoming** (ESI): the same result (a
+server connected to two switches), but without a peer-link, thanks to the BGP EVPN control plane. MLAG
+remains very widespread, in data centers as well as in campus cores.
+</Callout>
+
+## Key takeaways
+
+- A **port-channel** (LAG, EtherChannel, bond) bundles several cables into a single logical link: more
+  bandwidth, and redundancy without Spanning Tree.
+- Traffic is shared **per flow** (hash): a flow never exceeds the speed of one cable.
+- **LACP in `active` mode** on both sides; avoid `on` mode.
+- **MLAG** (Arista) or **vPC** (Cisco): two switches present themselves as one, to connect a device to
+  both. Peer-link for synchronisation, **peer-keepalive over another path** against split-brain.
+- Not to be confused with stacking (StackWise, VSS), where the two switches share a single control plane.
+
+Layer 2 is now redundant end to end. Before leaving it, one last everyday tool: **LLDP and CDP**, to know
+what is plugged into each port.
