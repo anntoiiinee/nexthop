@@ -42,7 +42,7 @@ const dates = Object.fromEntries((await getCourses(lang)).map((c) => [c.slug, co
               <span class:list={['rounded-full px-2.5 py-1', levelColors[course.data.level]]}>
                 {t(lang, `level.${course.data.level}`)}
               </span>
-              <span class="font-mono text-slate-500">{chapters} {t(lang, 'courses.chapters')}</span>
+              <span class="font-mono text-slate-500">{chapters} {t(lang, chapters > 1 ? 'courses.chapters' : 'courses.chapter').toLowerCase()}</span>
             </div>
             <h2 class="text-xl font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">
               {course.data.title}

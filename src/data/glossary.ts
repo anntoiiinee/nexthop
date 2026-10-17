@@ -48,6 +48,13 @@ export const glossary = {
       en: "Arista Ansible collection that generates the complete configurations of a fabric (and its documentation) from a YAML data model.",
     },
   },
+  bastion: {
+    term: 'Bastion',
+    definition: {
+      fr: "Serveur d’accès unique (jump host) par lequel passent toutes les connexions d’administration : authentification forte, droits par personne et enregistrement des sessions.",
+      en: 'Single access server (jump host) that every administrative connection goes through: strong authentication, per-person rights and session recording.',
+    },
+  },
   bgp: {
     term: 'BGP',
     expansion: 'Border Gateway Protocol',
@@ -213,6 +220,14 @@ export const glossary = {
       en: "BGP attribute suggesting to a neighbor AS connected over several links which one to use to reach us. Lower is preferred.",
     },
   },
+  mfa: {
+    term: 'MFA',
+    expansion: 'Multi-Factor Authentication',
+    definition: {
+      fr: 'Authentification qui exige au moins deux preuves différentes, par exemple un mot de passe et un code à usage unique sur le téléphone.',
+      en: 'Authentication that requires at least two different proofs, for example a password and a one-time code on a phone.',
+    },
+  },
   mtu: {
     term: 'MTU',
     expansion: 'Maximum Transmission Unit',
@@ -235,6 +250,14 @@ export const glossary = {
     definition: {
       fr: "Protocole de routage à état de liens : chaque routeur connaît la carte complète de sa zone et calcule le plus court chemin (Dijkstra).",
       en: "Link-state routing protocol: each router knows the full map of its area and computes the shortest path (Dijkstra).",
+    },
+  },
+  oob: {
+    term: 'OOB',
+    expansion: 'Out-of-band',
+    definition: {
+      fr: 'Accès hors bande : un chemin vers les équipements indépendant du réseau de production (port console, lien 4G), qui fonctionne même quand ce réseau est en panne.',
+      en: 'Out-of-band access: a path to the devices that does not depend on the production network (console port, 4G link), and still works when that network is down.',
     },
   },
   oui: {
@@ -341,6 +364,14 @@ export const glossary = {
       en: "Redundant gateway protocol: several routers share the same gateway IP address, and one takes over if the other fails.",
     },
   },
+  vrf: {
+    term: 'VRF',
+    expansion: 'Virtual Routing and Forwarding',
+    definition: {
+      fr: 'Table de routage indépendante sur un même équipement : les interfaces d’une VRF ne voient que les routes de cette VRF, comme un routeur virtuel séparé.',
+      en: 'Separate routing table on the same device: interfaces in a VRF only see that VRF’s routes, like a separate virtual router.',
+    },
+  },
   vxlan: {
     term: 'VXLAN',
     expansion: 'Virtual Extensible LAN',
@@ -355,6 +386,14 @@ export const glossary = {
     definition: {
       fr: "Format de fichier texte lisible, à base d'indentation, utilisé pour les inventaires, les variables et les playbooks Ansible.",
       en: "Human-readable, indentation-based text file format used for inventories, variables and Ansible playbooks.",
+    },
+  },
+  ztp: {
+    term: 'ZTP',
+    expansion: 'Zero Touch Provisioning',
+    definition: {
+      fr: 'Mise en service automatique : au premier démarrage, l’équipement récupère son adresse en DHCP puis télécharge sa configuration, sans intervention sur place.',
+      en: 'Automatic provisioning: on first boot, the device gets an address over DHCP then downloads its configuration, with no one on site.',
     },
   },
 } satisfies Record<string, GlossaryEntry>;

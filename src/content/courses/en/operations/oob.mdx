@@ -1,0 +1,307 @@
+---
+title: "Management and out-of-band access"
+description: "Why you separate the management network, what real out-of-band access is (console server, 4G link, switched PDU) and how to secure it, with a management VRF on Arista EOS and a recovery exercise in the lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [oob, management, vrf, console, security]
+vendor: [arista]
+order: 2
+---
+
+An ACL applied to the wrong interface, a deleted default route, an upgrade that does not boot: one
+mistake is enough for a device to stop answering. And that is exactly when you need to connect to it
+the most. This chapter explains how to **keep control of the network when it no longer works**.
+
+## Three ways to reach a device
+
+| Access | Which path? | Works when the production network is broken? |
+|---|---|---|
+| **In-band** | through the production network itself: an SVI, a loopback | no: you are sawing off the branch you are sitting on |
+| **Management network** | through a dedicated port (`Management0`) connected to a separate network, in its own <Term id="vrf" /> | partly: as long as the management network and its uplinks hold |
+| **Out-of-band** (<Term id="oob" />) | through the device's **console port**, via a console server reachable over another path (4G, dedicated line) | yes: it depends neither on the production network nor on the device's IP configuration |
+
+The last two are often confused. The management network is an **IP network**: it needs the device to
+be booted, its `Management0` port to be configured and a path to exist to it. Out-of-band access,
+strictly speaking, goes through the **console**: you watch the device boot, you can fix a
+configuration that cut it off, and even recover a password.
+
+<Topology
+  width={680}
+  height={440}
+  groups={[
+    { x: 190, y: 20, w: 470, h: 110, label: 'Management network', tone: 'sky' },
+    { x: 190, y: 150, w: 470, h: 135, label: 'Production', tone: 'slate' },
+    { x: 20, y: 305, w: 640, h: 120, label: 'Out-of-band (OOB)', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 90, y: 200, label: 'Engineer' },
+    { id: 'bastion', type: 'server', x: 90, y: 60, label: 'Bastion', sub: 'MFA · logging', tone: 'violet' },
+    { id: 'mgmt', type: 'switch', x: 425, y: 65, label: 'mgmt-sw', sub: 'VRF MGMT', tone: 'sky' },
+    { id: 'fw', type: 'firewall', x: 270, y: 210, label: 'fw1' },
+    { id: 'core', type: 'l3switch', x: 425, y: 210, label: 'core1' },
+    { id: 'leaf', type: 'switch', x: 580, y: 210, label: 'leaf1' },
+    { id: 'cons', type: 'server', x: 425, y: 355, label: 'Console', sub: 'console server', tone: 'amber' },
+    { id: 'lte', type: 'cloud', x: 90, y: 365, label: '4G / 5G', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'eng', to: 'bastion', tone: 'violet' },
+    { from: 'bastion', to: 'mgmt', label: 'SSH', tone: 'sky' },
+    { from: 'mgmt', to: 'fw', style: 'dashed', tone: 'sky' },
+    { from: 'mgmt', to: 'core', style: 'dashed', tone: 'sky' },
+    { from: 'mgmt', to: 'leaf', style: 'dashed', tone: 'sky' },
+    { from: 'fw', to: 'core' }, { from: 'core', to: 'leaf' },
+    { from: 'cons', to: 'fw', style: 'dashed', tone: 'amber' },
+    { from: 'cons', to: 'core', style: 'dashed', tone: 'amber' },
+    { from: 'cons', to: 'leaf', style: 'dashed', tone: 'amber' },
+    { from: 'eng', to: 'lte', style: 'dashed', tone: 'amber', label: 'backup' },
+    { from: 'lte', to: 'cons', tone: 'amber' },
+  ]}
+  caption="Three paths to the same devices: production, the management network (Management0 ports, in blue) and out-of-band (console ports, in orange), reachable over a 4G link that depends on nothing else."
+/>
+
+## The management network
+
+### A separate port and VRF
+
+Enterprise switches and routers have a port reserved for administration: `Management0` (or
+`Management1`) on Arista, `mgmt0` or `GigabitEthernet0/0` elsewhere. It does not switch user traffic:
+it is only used to connect to the device, and for the device to reach its management servers.
+
+You put it in a **management VRF**: a separate routing table, with its own default route. Three
+benefits:
+
+- **Isolation**: management traffic does not mix with production routes. A routing mistake in
+  production (a default route that disappears, a BGP session that drops) does not cut administrative
+  access, and vice versa.
+- **No leaks**: nothing from production can reach the management servers through this port, and the
+  port does not become a shortcut between two zones.
+- **Consistent configuration**: every management service leaves through the same VRF, with the same
+  source address.
+
+```text title="Arista EOS: management port in a dedicated VRF"
+vrf instance MGMT
+!
+interface Management0
+   description oob-mgmt
+   vrf MGMT
+   ip address 198.51.100.21/24
+!
+ip route vrf MGMT 0.0.0.0/0 198.51.100.1
+```
+
+### Management services must follow
+
+Once `Management0` is in the VRF, every service that should use it has to be told. It is the most
+common oversight: the device answers SSH, but its logs, its clock and its authentication no longer
+work.
+
+```text title="Arista EOS: management services in the MGMT VRF"
+! Access to the device
+management ssh
+   vrf MGMT
+      no shutdown
+!
+management api http-commands
+   no shutdown
+   vrf MGMT
+      no shutdown
+!
+! Services used by the device
+ip name-server vrf MGMT 192.0.2.53
+ntp server vrf MGMT 192.0.2.123
+logging vrf MGMT host 192.0.2.60
+!
+! TACACS+ authentication (see "Break-glass account rotation")
+ip tacacs vrf MGMT source-interface Management0
+tacacs-server host 192.0.2.50 vrf MGMT key <shared-key>
+```
+
+```text title="Verify"
+show vrf
+show ip route vrf MGMT
+show management ssh
+ping vrf MGMT 192.0.2.50
+```
+
+<Callout type="warning">
+Moving `Management0` into a VRF **drops the SSH session** that uses this port. Remotely, make the
+change in a configuration session with automatic rollback: `configure session mgmt-vrf`, the
+commands, then `commit timer 00:05:00`. Reconnect and confirm with `configure session mgmt-vrf commit`.
+Without confirmation within 5 minutes, the device rolls back to the previous configuration on its own.
+</Callout>
+
+### Where do the management ports connect?
+
+- **In a data center**: a small management switch (1 Gb/s is enough) per rack or per row, which
+  takes every `Management0` port as well as the servers' management cards (iDRAC, iLO). These switches
+  uplink to a management core **that does not depend on the production fabric**.
+- **On a site**: a management switch, or at least a dedicated VLAN, whose gateway sits behind a
+  firewall that only lets in traffic from the management servers.
+
+The classic trap: a management network whose switches uplink… through the production core. The day
+the core fails, the management network fails with it. It is still useful, but it is not out-of-band
+access.
+
+## Out-of-band access
+
+### The building blocks
+
+- **The console server** (Opengear, Lantronix, Perle, or a plain Linux box with USB-serial adapters):
+  an appliance with 8 to 48 serial ports, wired to the devices' RJ45 **console** ports. You SSH to the
+  console server, then pick a port: it is exactly like having a console cable plugged into the device,
+  at 9600 baud.
+- **A link that depends on nothing**: a 4G/5G modem built into the console server, or a separate
+  Internet line. This link is what makes the difference with the management network.
+- **Switched PDUs**: power strips that can be managed outlet by outlet. They let you power-cycle a
+  hung device without sending someone on site.
+
+### What the console can do that SSH cannot
+
+- watch the device **boot**, and see error messages before the network is up;
+- step in when the IP configuration is broken, or when the device has **no configuration** at all
+  (factory reset, new hardware waiting for <Term id="ztp" />);
+- interrupt the boot, pick another image, run a **password recovery**;
+- read crash messages that an SSH session would never have carried.
+
+<Topology
+  width={760}
+  height={320}
+  groups={[{ x: 430, y: 25, w: 314, h: 280, label: 'Remote site', tone: 'slate' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 80, y: 160, label: 'Engineer', sub: 'at HQ' },
+    { id: 'wan', type: 'cloud', x: 290, y: 80, label: 'WAN' },
+    { id: 'lte', type: 'cloud', x: 290, y: 245, label: '4G / 5G', tone: 'amber' },
+    { id: 'rtr', type: 'router', x: 530, y: 85, label: 'rtr-site', sub: 'wrong ACL', tone: 'rose' },
+    { id: 'sw', type: 'switch', x: 670, y: 85, label: 'sw-site' },
+    { id: 'cons', type: 'server', x: 590, y: 235, label: 'Console', sub: 'built-in 4G modem', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'eng', to: 'wan' },
+    { from: 'wan', to: 'rtr', style: 'blocked' },
+    { from: 'rtr', to: 'sw' },
+    { from: 'eng', to: 'lte', style: 'dashed', tone: 'amber' },
+    { from: 'lte', to: 'cons', tone: 'amber' },
+    { from: 'cons', to: 'rtr', style: 'dashed', tone: 'amber', label: 'console' },
+    { from: 'cons', to: 'sw', style: 'dashed', tone: 'amber' },
+  ]}
+  flows={[
+    { from: 'eng', to: 'lte', label: 'VPN', tone: 'amber' },
+  ]}
+  caption="The site router has cut itself off: nothing goes through the WAN anymore. The console server, reachable over its own 4G link, gives access to the router's console port to fix the mistake."
+/>
+
+<Callout type="field">
+A classic scenario: a hardening ACL pushed on a Friday evening to a remote site's router, applied to
+the WAN interface instead of the user interface. The router drops the very session that configured it,
+and the site vanishes from monitoring. Without out-of-band access, there are two options left: wait
+until Monday for someone on site to reboot the device (and hope the configuration was not saved), or
+drive for several hours. With a console server on a 4G link, you connect to the console port, remove
+the ACL, and the incident lasts ten minutes. The console server costs less than a single trip.
+</Callout>
+
+## Securing administrative access
+
+The management network and out-of-band access hold **the keys to the whole network**. They must be
+better protected than production, not less:
+
+- **A single entry point**: a <Term id="bastion" /> that every administrative connection goes
+  through, with <Term id="mfa" />, a named account per person and session recording. Nobody connects
+  to the devices directly from their laptop.
+- **Filter on the device**: only accept SSH and the API from the bastion and automation servers.
+
+  ```text title="Arista EOS: SSH accepted from the bastion only"
+  ip access-list standard MGMT-ACCESS
+     10 permit 192.0.2.10/32
+     20 permit 192.0.2.20/32
+  !
+  management ssh
+     ip access-group MGMT-ACCESS vrf MGMT in
+  ```
+
+- **The console server is a device like any other**: change its default credentials, keep it up to
+  date, authenticate it against <Term id="tacacs" /> like everything else. Its 4G link must never expose
+  a management interface on the Internet: use the carrier's private APN, or a VPN tunnel back to HQ.
+- **Plan for authentication without the network**: on the console, the <Term id="aaa" /> servers are
+  often unreachable. That is the job of the **local break-glass account**, unique per device and kept
+  in a vault, set up in the chapter
+  [Break-glass account rotation](/formations/automation/breakglass-rotation) (in French for now).
+- **Test regularly**: out-of-band access nobody has used for a year often no longer works (expired 4G
+  plan, console cable unplugged during a rack move). A quarterly test, in the team calendar, avoids the
+  bad surprise.
+
+## In the lab
+
+The `netops` lab (Automation course) is all you need. ContainerLab already reproduces both kinds of
+access:
+
+- the `172.20.30.0/24` network connects the `Management0` ports to your machine: that is the
+  **management network**;
+- `docker exec -it clab-netops-leaf1 Cli` opens a session straight into the device, without going
+  through the network: that is the equivalent of the **console port**.
+
+<Lab name="netops" lang="en" />
+
+**1. Lock yourself out.** SSH to `leaf1`, then shut down its management port:
+
+```text title="ssh admin@172.20.30.12"
+leaf1# configure
+leaf1(config)# interface Management0
+leaf1(config-if-Ma0)# shutdown
+```
+
+The session freezes: you have just sawn off the branch. No more SSH, no more API, and the lab scripts
+can no longer reach `leaf1`.
+
+**2. Recover through the "console".**
+
+```bash
+docker exec -it clab-netops-leaf1 Cli
+```
+
+```text
+leaf1> enable
+leaf1# configure
+leaf1(config)# interface Management0
+leaf1(config-if-Ma0)# no shutdown
+```
+
+SSH answers again. In real life, this step goes through the console server.
+
+**3. Move `Management0` into a VRF, safely.** From an SSH session, with automatic rollback:
+
+```text title="ssh admin@172.20.30.12"
+configure session mgmt-vrf
+vrf instance MGMT
+interface Management0
+   vrf MGMT
+   ip address 172.20.30.12/24
+management ssh
+   vrf MGMT
+      no shutdown
+management api http-commands
+   vrf MGMT
+      no shutdown
+commit timer 00:05:00
+```
+
+The SSH session drops at `commit`. Reconnect (SSH now listens in the `MGMT` VRF), check with
+`show vrf` and `show management ssh`, then confirm:
+
+```text
+configure session mgmt-vrf commit
+```
+
+To see the safety net in action, do the exercise again but leave out the `management ssh` block: you
+can no longer reconnect, and after 5 minutes `leaf1` rolls back to the previous configuration on its own.
+
+## Key takeaways
+
+- **In-band, management, out-of-band**: three different paths. Only out-of-band, through the console
+  and an independent link, works when everything else is broken.
+- The `Management0` port goes into a **management VRF**, and every management service (SSH, API, NTP,
+  DNS, syslog, TACACS+) must be configured there.
+- A management network that uplinks through the production core is **not** out-of-band access.
+- Console server, 4G/5G link and switched PDUs: a modest investment that pays for itself at the first
+  incident on a remote site.
+- Bastion with MFA, filtering on the device, break-glass account in a vault, and a **regular test** of
+  out-of-band access.

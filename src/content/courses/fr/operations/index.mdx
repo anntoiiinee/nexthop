@@ -1,0 +1,32 @@
+---
+title: "Services et observabilité"
+description: "Servir, superviser et garder la main sur le réseau : DNS, DHCP et IPAM, management et accès hors bande, SNMP, syslog, NetFlow, télémétrie et tableaux de bord."
+pubDate: 2026-10-17
+level: intermediate
+tags: [operations, oob, management, monitoring, ddi]
+vendor: [arista]
+order: 0
+---
+
+Un réseau qui fonctionne ne suffit pas : il faut aussi pouvoir **l'atteindre** quand il est cassé,
+**savoir** ce qui s'y passe avant que les utilisateurs appellent, et lui fournir les **services** dont
+tout le reste dépend (noms, adresses, heure). Ce saut regroupe ces sujets d'exploitation, ceux qu'on
+découvre souvent le jour d'un incident.
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **DDI : DNS, DHCP et IPAM** *(à venir)* | Comprendre les trois services et pourquoi on les pilote ensemble |
+| **Management et accès hors bande** | Séparer le réseau de management, installer un vrai accès hors bande et le sécuriser |
+| **SNMP, syslog et NetFlow** *(à venir)* | Superviser l'état, centraliser les journaux et savoir qui consomme la bande passante |
+| **Télémétrie avec gNMI et gNMIc** *(à venir)* | Recevoir l'état des équipements en flux continu plutôt qu'en interrogation |
+| **Prometheus et Grafana** *(à venir)* | Stocker ces mesures, construire des tableaux de bord et des alertes |
+
+Les chapitres se lisent dans l'ordre que vous voulez : ils sont indépendants.
+
+## Prérequis
+
+- La formation [Fondamentaux](/formations/fundamentals) : VLAN, adressage IPv4, routage statique.
+- Pour les labs : un poste avec ContainerLab et l'image Arista cEOS, voir
+  [Monter son lab](/tutoriels/containerlab-setup).
