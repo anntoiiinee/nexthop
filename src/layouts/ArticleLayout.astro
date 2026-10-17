@@ -5,10 +5,11 @@ import type { MarkdownHeading } from 'astro';
 import { t, type Lang } from '@/i18n/ui';
 import { levelColors } from '@/lib/levels';
 import SupportCard from '@/components/SupportCard.astro';
+import ShareButtons from '@/components/ShareButtons.astro';
 import ContentDates from '@/components/ContentDates.astro';
 import { updatedDateOf } from '@/lib/dates';
 import { routes } from '@/i18n/ui';
-import { absoluteUrl, authorSchema, breadcrumbSchema, DEFAULT_IMAGE } from '@/lib/seo';
+import { absoluteUrl, authorSchema, breadcrumbSchema, ogImagePath } from '@/lib/seo';
 
 interface Props {
   post: CollectionEntry<'tutorials'> | CollectionEntry<'courses'>;
@@ -24,6 +25,7 @@ const updatedDate = updatedDateOf(post);
 const toc = headings.filter((h) => h.depth === 2 || h.depth === 3);
 
 const path = Astro.url.pathname;
+const image = ogImagePath(post.collection, post.id);
 const trail = breadcrumbs ?? [
   { name: t(lang, 'nav.home'), path: routes.home[lang] },
   { name: t(lang, 'nav.tutorials'), path: routes.tutorials[lang] },
@@ -38,7 +40,7 @@ const jsonLd = [
     inLanguage: lang,
     keywords: tags.join(', '),
     proficiencyLevel: { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Expert' }[level],
-    image: absoluteUrl(DEFAULT_IMAGE),
+    image: absoluteUrl(image),
     mainEntityOfPage: absoluteUrl(path),
     author: authorSchema(lang),
     publisher: { '@id': 'https://nexthop.alcpt.network/#author' },
@@ -47,6 +49,7 @@ const jsonLd = [
 ];
 ---
 <BaseLayout
+  image={image}
   title={`${title} | Next Hop`}
   description={description}
   lang={lang}
@@ -76,6 +79,7 @@ const jsonLd = [
       <div class="prose prose-slate max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-a:text-sky-600 dark:prose-a:text-sky-400">
         <slot />
       </div>
+      <ShareButtons title={title} url={absoluteUrl(path)} lang={lang} class="mt-16 border-t border-slate-200 pt-8 dark:border-slate-800" />
       <SupportCard lang={lang} title={title} />
       <slot name="after" />
     </article>
