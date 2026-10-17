@@ -14,6 +14,8 @@ const base = z.object({
   vendor: z.array(z.enum(['arista', 'cisco', 'fortinet', 'paloalto', 'stormshield', 'infoblox', 'netbox', 'multi'])).default([]),
   prerequisites: z.array(z.string()).default([]),
   draft: z.boolean().default(false),
+  // En cours de rédaction : page visible (avec un bandeau), mais hors index Google, sitemap, flux RSS et accueil
+  wip: z.boolean().default(false),
 });
 
 const tutorials = defineCollection({

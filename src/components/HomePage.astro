@@ -25,7 +25,7 @@ import { startHere, type AudienceKey, type StartStep } from '@/data/startHere';
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
 
-const posts = await getTutorials(lang);
+const posts = (await getTutorials(lang)).filter((p) => !p.data.wip); // les tutoriels en cours ne comptent pas encore
 const latest = posts.slice(0, 6);
 const published = await getPublished(lang);
 const courseList = await getCourses(lang);
@@ -52,7 +52,10 @@ const stepsFor = (key: AudienceKey) => startHere[key].map(resolveStep).filter((s
 // Chiffres du site, calculés au build ; un compteur à 0 n'est pas affiché
 let labCount = 0;
 try {
-  labCount = readdirSync(join(process.cwd(), 'public/labs'), { withFileTypes: true }).filter((d) => d.isDirectory()).length;
+  // Seuls les dossiers avec une topologie ContainerLab comptent (pas les labs Docker Compose des tutoriels)
+  const labsDir = join(process.cwd(), 'public/labs');
+  labCount = readdirSync(labsDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && readdirSync(join(labsDir, d.name)).some((f) => f.endsWith('.clab.yml'))).length;
 } catch {}
 
 const copy = {
@@ -65,7 +68,8 @@ const copy = {
     ctaTutorials: 'Voir les tutoriels',
     ctaCourses: 'Les formations',
     audienceTitle: 'Pour qui ?',
-    audienceIntro: 'Choisissez votre profil : voici par où commencer.',
+    audienceIntro: "Next Hop s'adresse à celles et ceux qui apprennent le réseau sur le terrain plutôt que dans les livres : en formation, en reconversion, ou déjà en poste. Les contenus partent des bases, mais vont jusqu'aux sujets rencontrés dans les grandes entreprises, avec de vraies configurations et des labs gratuits. Choisissez votre profil : voici ce qui vous attend, et par où commencer.",
+    audiencePoints: 'Ce que vous trouverez ici',
     startLabel: 'Par où commencer',
     stats: {
       tutorials: ['tutoriel', 'tutoriels'],
@@ -79,9 +83,14 @@ const copy = {
     toolsAll: 'Tous les outils →',
     faqTitle: 'Questions fréquentes',
     audience: [
-      { key: 'students', icon: '🎓', title: 'Étudiants', text: "BTS SIO, BUT R&T, licence pro ou école : pour aller au-delà du cours et comprendre ce qu'on attend en entreprise." },
-      { key: 'careerChangers', icon: '🔀', title: 'Reconversion', text: "Vous venez d'un autre métier et visez le réseau ? On part des bases, sans jargon inutile, avec un fil conducteur clair." },
-      { key: 'admins', icon: '🛠️', title: 'Admins & techs', text: "Vous faites déjà de l'IT et voulez passer au niveau suivant : BGP, EVPN, automatisation, firewalls." },
+      { key: 'students', icon: '🎓', title: 'Étudiants', text: "BTS SIO, BUT R&T, licence pro, école d'ingénieurs ou alternance : vous avez les cours, il vous manque souvent la pratique et la vision de ce qu'on attend en entreprise.",
+        points: ["Les notions du programme (OSI, VLAN, subnetting, routage) expliquées autrement, avec des schémas", "Des labs gratuits pour pratiquer sur un vrai système réseau, Arista cEOS", "Les configurations et les réflexes attendus en stage et en alternance"] },
+      { key: 'careerChangers', icon: '🔀', title: 'Reconversion', text: "Vous venez d'un autre métier et visez le réseau ou la cybersécurité ? Pas de prérequis : on part des bases, sans jargon inutile, avec un fil conducteur clair.",
+        points: ["Un parcours ordonné en 8 sauts, du câble jusqu'au cloud", "Chaque sigle expliqué au survol, grâce au glossaire", "Des retours terrain pour comprendre le métier au quotidien, pas seulement la théorie"] },
+      { key: 'admins', icon: '🛠️', title: 'Admins & techs', text: "Administrateur système, technicien support ou réseau : vous faites déjà de l'IT et voulez passer au niveau suivant, ou prendre en main un réseau d'entreprise.",
+        points: ["Les sujets d'entreprise : BGP, EVPN-VxLAN, firewalls, proxys et load balancing", "Des exemples multi-constructeurs : Arista, Cisco, Fortinet, Palo Alto, Stormshield, F5", "L'automatisation : Python, Ansible, NetBox et AVD"] },
+      { key: 'developers', icon: '💻', title: 'Devs, DevOps & cloud', text: "Vos applications tournent sur un réseau que vous ne voyez pas. Quand ça ne marche pas, la question tombe toujours : « c'est le réseau ? » Ici, vous apprendrez à y répondre.",
+        points: ["Ce qui se passe sous vos applications : TCP, DNS, TLS, proxys et load balancers", "Les outils de diagnostic pour prouver où est le problème", "Les bases du réseau dans le cloud (saut 8, bientôt)"] },
     ],
     roadmapTitle: 'Le parcours, saut par saut',
     roadmapIntro: "Un chemin progressif, des fondamentaux jusqu'aux sujets rencontrés dans les data centers et les grandes entreprises.",
@@ -108,7 +117,8 @@ const copy = {
     ctaTutorials: 'Browse tutorials',
     ctaCourses: 'Courses',
     audienceTitle: 'Who is it for?',
-    audienceIntro: 'Pick your profile: here is where to start.',
+    audienceIntro: 'Next Hop is for people learning networking hands-on rather than from books: in training, changing careers, or already on the job. Content starts from the basics but goes all the way to the topics met in large companies, with real configurations and free labs. Pick your profile: here is what awaits you, and where to start.',
+    audiencePoints: 'What you will find here',
     startLabel: 'Where to start',
     stats: {
       tutorials: ['tutorial', 'tutorials'],
@@ -122,9 +132,14 @@ const copy = {
     toolsAll: 'All tools →',
     faqTitle: 'Frequently asked questions',
     audience: [
-      { key: 'students', icon: '🎓', title: 'Students', text: 'Networking students who want to go beyond the classroom and understand what companies actually expect.' },
-      { key: 'careerChangers', icon: '🔀', title: 'Career changers', text: 'Coming from another field and aiming for networking? We start from the basics, without unnecessary jargon.' },
-      { key: 'admins', icon: '🛠️', title: 'Sysadmins & techs', text: 'Already in IT and ready for the next level: BGP, EVPN, automation, firewalls.' },
+      { key: 'students', icon: '🎓', title: 'Students', text: 'Networking degree, engineering school or apprenticeship: you have the lectures, but often lack hands-on practice and a sense of what companies actually expect.',
+        points: ['Curriculum topics (OSI, VLANs, subnetting, routing) explained differently, with diagrams', 'Free labs to practise on a real network OS, Arista cEOS', 'The configurations and reflexes expected in internships and apprenticeships'] },
+      { key: 'careerChangers', icon: '🔀', title: 'Career changers', text: 'Coming from another field and aiming for networking or cybersecurity? No prerequisites: we start from the basics, without unnecessary jargon, with a clear common thread.',
+        points: ['An ordered path in 8 hops, from the cable to the cloud', 'Every acronym explained on hover, thanks to the glossary', 'Field stories to understand the day-to-day job, not just the theory'] },
+      { key: 'admins', icon: '🛠️', title: 'Sysadmins & techs', text: 'Systems administrator, support or network technician: you already work in IT and want to reach the next level, or take charge of a corporate network.',
+        points: ['Enterprise topics: BGP, EVPN-VxLAN, firewalls, proxies and load balancing', 'Multi-vendor examples: Arista, Cisco, Fortinet, Palo Alto, Stormshield, F5', 'Automation: Python, Ansible, NetBox and AVD'] },
+      { key: 'developers', icon: '💻', title: 'Devs, DevOps & cloud', text: 'Your applications run on a network you do not see. When something breaks, the question always comes: "is it the network?" Here, you will learn to answer it.',
+        points: ['What happens under your applications: TCP, DNS, TLS, proxies and load balancers', 'The troubleshooting tools to prove where the problem is', 'Cloud networking basics (hop 8, coming soon)'] },
     ],
     roadmapTitle: 'The path, hop by hop',
     roadmapIntro: 'A progressive path, from the fundamentals to the topics you meet in data centers and large companies.',
@@ -215,15 +230,21 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
   <!-- Pour qui -->
   <section class="mx-auto max-w-6xl px-4 py-16">
     <h2 class={h2}>{copy.audienceTitle}</h2>
-    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.audienceIntro}</p>
-    <div class="mt-8 grid gap-6 md:grid-cols-3">
+    <p class="mt-3 max-w-3xl text-slate-600 dark:text-slate-400">{copy.audienceIntro}</p>
+    <div class="mt-8 grid gap-6 md:grid-cols-2">
       {copy.audience.map((a) => {
         const steps = stepsFor(a.key as AudienceKey);
         return (
           <div class="flex flex-col rounded-xl border border-slate-200 p-6 dark:border-slate-800">
             <p class="text-3xl">{a.icon}</p>
             <h3 class="mt-4 font-semibold text-slate-900 dark:text-white">{a.title}</h3>
-            <p class="mt-2 flex-1 text-sm text-slate-600 dark:text-slate-400">{a.text}</p>
+            <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{a.text}</p>
+            <p class="mt-5 font-mono text-xs text-slate-500">{copy.audiencePoints}</p>
+            <ul class="mt-2 flex-1 space-y-1.5 text-sm text-slate-700 dark:text-slate-300">
+              {a.points.map((point) => (
+                <li class="flex gap-2"><span class="text-emerald-500">✓</span><span>{point}</span></li>
+              ))}
+            </ul>
             {steps.length > 0 && (
               <div class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
                 <p class="font-mono text-xs text-slate-500">{copy.startLabel}</p>

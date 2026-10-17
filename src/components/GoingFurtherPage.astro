@@ -1,0 +1,179 @@
+---
+// Page « Aller plus loin » : événements, podcasts, communautés, blogs, livres, labs et formations.
+// Données dans src/data/resources.ts (en partie issues d'awesome-network-automation, CC BY 4.0).
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, type Lang } from '@/i18n/ui';
+import {
+  events, podcasts, communities, blogs, books, labs, awesomeNetworkAutomation as awesome,
+  type EventItem, type EventFormat, type ResourceItem,
+} from '@/data/resources';
+
+interface Props { lang: Lang; }
+const { lang } = Astro.props;
+
+const copy = {
+  fr: {
+    title: 'Aller plus loin',
+    description: "Événements réseau sur place et en ligne, podcasts, communautés, blogs, livres et labs pour continuer à apprendre après Next Hop.",
+    intro: "Next Hop n'est qu'une étape. Voici les rendez-vous, les voix et les ressources qui aident à progresser en réseau, en sécurité et en automatisation, sélectionnés pour leur qualité et leur gratuité quand c'est possible.",
+    credit: 'Une partie de cette sélection provient de la liste',
+    creditBy: 'de',
+    creditLicense: 'publiée sous licence',
+    creditChanges: ' : entrées traduites, triées et complétées par des ressources francophones.',
+    upcoming: 'Événements à venir',
+    upcomingIntro: 'Les prochaines dates confirmées, sur place ou en ligne.',
+    recurring: 'Rendez-vous réguliers',
+    recurringIntro: 'Pas encore de date annoncée : leur rythme habituel, et où suivre les annonces.',
+    attending: "J'y serai !",
+    formats: { onsite: 'Sur place', online: 'En ligne', hybrid: 'Hybride' } as Record<EventFormat, string>,
+    sections: [
+      { key: 'podcasts', title: 'Podcasts à écouter', intro: 'Pour apprendre dans les transports, chaque semaine.' },
+      { key: 'communities', title: 'Communautés', intro: 'Pour poser des questions et suivre ce qui se passe.' },
+      { key: 'blogs', title: 'Blogs à suivre', intro: 'Des ingénieurs qui écrivent sur leur métier, depuis des années.' },
+      { key: 'books', title: 'Livres', intro: 'Les références à avoir lues.' },
+      { key: 'labs', title: 'Labs et formations', intro: 'Pour pratiquer, souvent gratuitement.' },
+    ],
+    french: 'FR',
+    frenchTitle: 'Ressource en français',
+  },
+  en: {
+    title: 'Going further',
+    description: 'Onsite and online networking events, podcasts, communities, blogs, books and labs to keep learning after Next Hop.',
+    intro: 'Next Hop is only one step. Here are the events, voices and resources that help you grow in networking, security and automation, picked for their quality and, where possible, for being free.',
+    credit: 'Part of this selection comes from the',
+    creditBy: 'list by',
+    creditLicense: 'published under the',
+    creditChanges: ' licence: entries translated, sorted and complemented with French-language resources.',
+    upcoming: 'Upcoming events',
+    upcomingIntro: 'The next confirmed dates, onsite or online.',
+    recurring: 'Regular events',
+    recurringIntro: 'No date announced yet: their usual rhythm, and where to follow announcements.',
+    attending: "I'll be there!",
+    formats: { onsite: 'Onsite', online: 'Online', hybrid: 'Hybrid' } as Record<EventFormat, string>,
+    sections: [
+      { key: 'podcasts', title: 'Podcasts to listen to', intro: 'To learn on the commute, every week.' },
+      { key: 'communities', title: 'Communities', intro: 'To ask questions and follow what is happening.' },
+      { key: 'blogs', title: 'Blogs to follow', intro: 'Engineers writing about their craft, for years.' },
+      { key: 'books', title: 'Books', intro: 'The references worth reading.' },
+      { key: 'labs', title: 'Labs and training', intro: 'To practise, often for free.' },
+    ],
+    french: 'FR',
+    frenchTitle: 'French-language resource',
+  },
+}[lang];
+
+const lists: Record<string, ResourceItem[]> = { podcasts, communities, blogs, books, labs };
+
+// Un événement est « à venir » tant que sa date de fin (ou de début) n'est pas passée, à la date du build
+const today = new Date().toISOString().slice(0, 10);
+const isUpcoming = (e: EventItem) => Boolean(e.start) && (e.end ?? e.start)! >= today;
+const upcoming = events.filter(isUpcoming).sort((a, b) => a.start!.localeCompare(b.start!));
+const regular = events.filter((e) => !isUpcoming(e));
+
+const locale = lang === 'fr' ? 'fr-FR' : 'en-GB';
+const fmt = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+  new Date(`${iso}T12:00:00Z`).toLocaleDateString(locale, { timeZone: 'UTC', ...opts });
+function dateRange(e: EventItem) {
+  const start = e.start!, end = e.end ?? e.start!;
+  if (start === end) return fmt(start, { day: 'numeric', month: 'long', year: 'numeric' });
+  if (start.slice(0, 7) === end.slice(0, 7)) {
+    return `${fmt(start, { day: 'numeric' })}–${fmt(end, { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  }
+  return `${fmt(start, { day: 'numeric', month: 'long' })} – ${fmt(end, { day: 'numeric', month: 'long', year: 'numeric' })}`;
+}
+
+const formatColors: Record<EventFormat, string> = {
+  onsite: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+  online: 'bg-sky-100 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300',
+  hybrid: 'bg-violet-100 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300',
+};
+
+const h2 = 'text-2xl font-bold tracking-tight text-slate-900 dark:text-white';
+const frBadge = 'rounded border border-slate-300 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-500 dark:border-slate-600 dark:text-slate-400';
+---
+<BaseLayout title={`${copy.title} | Next Hop`} description={copy.description} lang={lang} alternates={routes.further}>
+  <div class="mx-auto max-w-6xl px-4 py-16">
+    <h1 class="text-4xl font-bold tracking-tight text-slate-900 dark:text-white">{copy.title}</h1>
+    <p class="mt-4 max-w-3xl text-lg text-slate-600 dark:text-slate-400">{copy.intro}</p>
+    <p class="mt-4 max-w-3xl text-sm text-slate-500">
+      {copy.credit} <a href={awesome.url} target="_blank" rel="noopener" class="font-medium text-sky-600 hover:underline dark:text-sky-400">{awesome.name}</a>
+      {' '}{copy.creditBy} {awesome.author}, {copy.creditLicense} <a href={awesome.licenseUrl} target="_blank" rel="noopener" class="text-sky-600 hover:underline dark:text-sky-400">{awesome.license}</a>{copy.creditChanges}
+    </p>
+
+    <!-- Événements à venir -->
+    {upcoming.length > 0 && (
+      <section class="mt-14">
+        <h2 class={h2}>{copy.upcoming}</h2>
+        <p class="mt-2 text-slate-600 dark:text-slate-400">{copy.upcomingIntro}</p>
+        <div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {upcoming.map((e) => (
+            <a
+              href={e.url} target="_blank" rel="noopener"
+              class:list={[
+                'group flex flex-col rounded-xl border bg-white p-5 transition hover:-translate-y-0.5 hover:shadow-lg dark:bg-slate-900/50',
+                e.attending ? 'border-sky-400 ring-1 ring-sky-400/40 dark:border-sky-500' : 'border-slate-200 hover:border-sky-400 dark:border-slate-800',
+              ]}
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-sm font-semibold text-sky-600 dark:text-sky-400">{dateRange(e)}</span>
+                {e.attending && (
+                  <span class="ml-auto rounded-full bg-sky-500 px-2.5 py-0.5 text-xs font-semibold text-white">👋 {copy.attending}</span>
+                )}
+              </div>
+              <h3 class="mt-2 text-lg font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{e.name} ↗</h3>
+              <p class="text-sm text-slate-500">{e.location[lang]}</p>
+              <p class="mt-3 flex-1 text-sm text-slate-600 dark:text-slate-400">{e.description[lang]}</p>
+              <div class="mt-4 flex items-center gap-2">
+                <span class:list={['rounded-full px-2.5 py-0.5 text-xs font-medium', formatColors[e.format]]}>{copy.formats[e.format]}</span>
+                {e.french && <span class={frBadge} title={copy.frenchTitle}>{copy.french}</span>}
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+    )}
+
+    <!-- Rendez-vous réguliers -->
+    {regular.length > 0 && (
+      <section class="mt-14">
+        <h2 class={h2}>{copy.recurring}</h2>
+        <p class="mt-2 text-slate-600 dark:text-slate-400">{copy.recurringIntro}</p>
+        <div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {regular.map((e) => (
+            <a href={e.url} target="_blank" rel="noopener" class="group flex flex-col rounded-xl border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-sky-400 hover:shadow-lg dark:border-slate-800 dark:bg-slate-900/50">
+              <p class="text-sm font-medium text-slate-500">{e.recurring[lang]}</p>
+              <h3 class="mt-2 text-lg font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{e.name} ↗</h3>
+              <p class="mt-3 flex-1 text-sm text-slate-600 dark:text-slate-400">{e.description[lang]}</p>
+              <div class="mt-4 flex items-center gap-2">
+                <span class:list={['rounded-full px-2.5 py-0.5 text-xs font-medium', formatColors[e.format]]}>{copy.formats[e.format]}</span>
+                {e.french && <span class={frBadge} title={copy.frenchTitle}>{copy.french}</span>}
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
+    )}
+
+    <!-- Podcasts, communautés, blogs, livres, labs -->
+    {copy.sections.map((section) => (
+      <section class="mt-14">
+        <h2 class={h2}>{section.title}</h2>
+        <p class="mt-2 text-slate-600 dark:text-slate-400">{section.intro}</p>
+        <ul class="mt-6 grid gap-3 md:grid-cols-2">
+          {lists[section.key].map((item) => (
+            <li>
+              <a href={item.url} target="_blank" rel="noopener" class="group flex h-full flex-col rounded-lg border border-slate-200 p-4 transition hover:border-sky-400 dark:border-slate-800">
+                <span class="flex items-center gap-2">
+                  <span class="font-semibold text-slate-900 transition group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{item.name} ↗</span>
+                  {item.french && <span class={frBadge} title={copy.frenchTitle}>{copy.french}</span>}
+                </span>
+                {item.author && <span class="text-xs text-slate-500">{item.author}</span>}
+                <span class="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{item.description[lang]}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </div>
+</BaseLayout>

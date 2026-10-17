@@ -88,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible, supervision : rsyslog, SNMP, gNMIc, Prometheus, Grafana), ddi (Kea, BIND), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible, supervision : rsyslog, SNMP, gNMIc, Prometheus, Grafana), ddi (Kea, BIND), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan), dc-fabric (2 spines, 3 leafs, EVPN), loki-syslog (Docker Compose : Loki, Alloy, Grafana)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -138,6 +138,7 @@ src/
 - **Une traduction = même nom de fichier** dans `fr/` et `en/`. Le sélecteur de langue pointe vers la traduction si elle existe, sinon vers l'accueil de l'autre langue.
 - **Pattern de page** : un composant bilingue `XxxPage.astro` qui reçoit `lang`, et des fichiers de route minimes dans `src/pages/` et `src/pages/en/`.
 - **Textes d'interface** dans `src/i18n/ui.ts` (TypeScript signale une clé manquante dans une langue). **URLs** dans `routes` du même fichier.
+- **Tutoriel en cours de rédaction** : `wip: true` dans le frontmatter. La page reste visible, avec un bandeau et un badge dans la liste, mais elle est en `noindex` et exclue du sitemap, du flux RSS et de l'accueil. À la publication, retirer `wip` et mettre `pubDate` à jour (sinon le tutoriel apparaît trop bas dans le flux RSS). `draft: true` masque complètement la page.
 - **Frontmatter obligatoire** : `title`, `description`, `pubDate`, `level` (`beginner` | `intermediate` | `advanced`). Les formations ajoutent `order`. Renseigner `vendor` et `tags` : ils alimentent le filtre par technologie et le carrousel.
 - **Composants dans le MDX** : classe `not-prose` sur le conteneur racine. Disponibles sans import (voir `src/lib/mdx.ts`) :
   - `<Term id="nat" />` : terme du glossaire avec infobulle ;
@@ -235,7 +236,11 @@ Mise en route (une seule fois) :
 - [x] Saut 7 · Services et observabilité complet en FR et EN : DDI (lab `ddi` Kea + BIND + DDNS, section Infoblox / EfficientIP), SNMP / syslog / NetFlow (pannes réseau silencieuses, démonstration `tc netem`), télémétrie gNMI / gNMIc, Prometheus / Grafana (alertes sur pannes grises, weather map) ; supervision ajoutée au lab `netops`
 - [ ] Labs `ddi` (relais cEOS) et supervision de `netops` (gNMI, SNMP, syslog depuis cEOS) : valider sur un vrai ContainerLab
 - [x] Tutoriels en FR et EN : CVP, Internet à l'échelle mondiale, LAN / WAN / PAN, MPLS, plugins NetBox (procédure netbox-docker testée avec NetBox 4.7.3 et netbox-bgp 0.20.2)
-- [ ] Tutoriels à écrire, en brouillon (`draft: true`) en attendant : `ldaps-arista`, `loki-logs`, `sdwan` ; `bgp-evpn-route-types` à étoffer
+- [x] Tutoriels Loki (lab Docker Compose `loki-syslog`, testé avec Loki 3.7, Alloy 1.20, Grafana 11.2) et SD-WAN, en FR et EN
+- [x] Page « Aller plus loin » (`/aller-plus-loin`, données dans `src/data/resources.ts`) : événements (dates vérifiées, badge « J'y serai ! »), podcasts, communautés, blogs, livres, labs ; en partie issue d'awesome-network-automation (CC BY 4.0, crédité)
+- [x] Accueil : section « Pour qui ? » enrichie (4 profils, « ce que vous trouverez ici »)
+- [ ] Tutoriel `ldaps-arista` : rédaction par Antoine (visible en « en cours de rédaction », `wip: true`) ; `bgp-evpn-route-types` à étoffer
+- [ ] Page « Aller plus loin » : mettre à jour les événements (une date passée bascule seule vers le rythme habituel, mais il faut ajouter les nouvelles éditions)
 - [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
 
 ---

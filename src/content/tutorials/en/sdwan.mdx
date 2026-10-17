@@ -1,0 +1,208 @@
+---
+title: "SD-WAN explained"
+description: "What SD-WAN changes compared to the classic MPLS WAN: tunnels over every transport, central control, application-aware routing based on link quality, local Internet breakout, SASE, the market solutions and the pitfalls of a project."
+pubDate: 2026-10-17
+level: intermediate
+tags: [sdwan, wan, ipsec, sase, routing]
+vendor: [multi]
+---
+
+For twenty years, a company's wide area network looked like this: an **MPLS** VPN bought from a carrier, connecting
+every branch to headquarters, and a single Internet exit, at headquarters or the data center, behind the firewalls
+and the proxy. Applications lived in the data center; all traffic went there, which suited everyone.
+
+Today, email, video conferencing, CRM and storage live in the cloud. A branch's traffic to Microsoft 365 travels to
+headquarters over the MPLS link, exits to the Internet there, then comes back: slow, expensive, and the MPLS link
+saturates. **SD-WAN** (*Software-Defined WAN*) is the answer to that change.
+
+## What changes
+
+<Topology
+  width={720}
+  height={320}
+  groups={[{ x: 20, y: 20, w: 220, h: 280, label: 'Branch', tone: 'emerald' }]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 160, label: 'Users' },
+    { id: 'edge', type: 'router', x: 180, y: 160, label: 'SD-WAN edge', tone: 'emerald' },
+    { id: 'mpls', type: 'cloud', x: 370, y: 70, label: 'MPLS', tone: 'violet' },
+    { id: 'inet', type: 'cloud', x: 370, y: 170, label: 'Internet' },
+    { id: 'lte', type: 'cloud', x: 370, y: 265, label: '4G / 5G', tone: 'amber' },
+    { id: 'hq', type: 'server', x: 590, y: 90, label: 'HQ / data center', tone: 'violet' },
+    { id: 'saas', type: 'cloud', x: 590, y: 230, label: 'SaaS, cloud', tone: 'sky' },
+    { id: 'ctl', type: 'server', x: 590, y: 160, label: 'Orchestrator', sub: 'policies', tone: 'slate' },
+  ]}
+  links={[
+    { from: 'pc', to: 'edge' },
+    { from: 'edge', to: 'mpls', tone: 'violet' }, { from: 'edge', to: 'inet' }, { from: 'edge', to: 'lte', tone: 'amber', style: 'dashed' },
+    { from: 'mpls', to: 'hq', tone: 'violet' }, { from: 'inet', to: 'hq', style: 'dashed', label: 'IPsec tunnel' },
+    { from: 'inet', to: 'saas', tone: 'sky', label: 'direct access' },
+  ]}
+  caption="The branch SD-WAN edge uses all its links at once, builds encrypted tunnels to headquarters over each of them, and sends SaaS traffic straight to the Internet."
+/>
+
+| | Classic WAN | SD-WAN |
+|---|---|---|
+| **Transports** | One MPLS link, sometimes a backup | All at once: MPLS, Internet fibre, DSL, 4G/5G |
+| **Path selection** | Routing: one path, the other as backup | **Per application**, based on each link's measured quality |
+| **Cloud access** | Through headquarters | **Directly** from the branch (*local breakout*) |
+| **Configuration** | Router by router, in CLI | Centralised, through policies, from an orchestrator |
+| **Branch rollout** | A technician on site, weeks | Device shipped on site, plugged in, configured remotely (*zero touch*) |
+
+## The building blocks
+
+### Tunnels over every transport
+
+Each SD-WAN edge builds **encrypted tunnels** (most often <Term id="ipsec" />, see [IPsec VPN](/en/courses/security/ipsec-vpn))
+to the other sites, over **each** of its links. The company network becomes an **overlay** that no longer depends on
+the transport: a branch can have just two Internet accesses from two different providers, with no MPLS at all, and
+stay on the same private network as the others.
+
+### Central control
+
+Devices are no longer configured one by one. An **orchestrator** (or management console) holds the policies: "voice
+uses the best link, backups never use 4G, SaaS breaks out locally". A **controller** distributes routes and
+encryption keys between sites. The edges apply.
+
+### Application-aware routing
+
+This is the heart of SD-WAN. The edge:
+
+1. **identifies** each flow by its application (Teams, Salesforce, backup), like an <Term id="ngfw" />;
+2. **continuously measures** each link's quality, with probes: latency, jitter, loss;
+3. **chooses**, for each application, the link that meets its service level (*SLA*), and fails over as soon as quality
+   degrades.
+
+| Application | Requirement | Preferred link | If degraded |
+|---|---|---|---|
+| Voice and video | Latency < 150 ms, jitter < 30 ms, loss < 1% | The best link at the moment | Immediate failover to another link |
+| Business application in the data center | Loss < 2% | MPLS | Internet tunnel |
+| Microsoft 365, SaaS | Bandwidth | Internet, direct | Other Internet access |
+| Backups, updates | None | Internet | Never 4G/5G |
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'e', label: 'SD-WAN edge', tone: 'emerald' },
+    { id: 'm', label: 'MPLS link', tone: 'violet' },
+    { id: 'i', label: 'Internet link' },
+  ]}
+  messages={[
+    { from: 'e', to: 'm', label: 'probes: 18 ms, 0% loss', tone: 'violet' },
+    { from: 'e', to: 'i', label: 'probes: 25 ms, 0% loss' },
+    { note: 'Video goes over MPLS, the best link', tone: 'slate' },
+    { from: 'e', to: 'm', label: 'probes: 3% loss', sub: 'voice SLA not met', style: 'blocked' },
+    { note: 'Video fails over to the Internet in under a second', tone: 'emerald' },
+    { from: 'e', to: 'i', label: 'video flow', tone: 'emerald' },
+  ]}
+  caption="Probes measure each link continuously. When MPLS degrades (without going down), video fails over to the Internet: the user notices nothing."
+/>
+
+This is exactly the answer to the **gray failures** discussed in the [SNMP, syslog and NetFlow](/en/courses/operations/monitoring)
+chapter: a link losing 3% of its packets is not down, and classic routing keeps using it. SD-WAN measures it and
+avoids it.
+
+Some solutions go further for real-time applications: **duplicating** packets over two links at once, or **forward
+error correction** (FEC) to rebuild lost packets.
+
+### Local Internet breakout, and SASE
+
+Sending SaaS traffic straight to the Internet from the branch raises a question: where does security happen? Two
+answers:
+
+- the SD-WAN edge is itself a next-generation **firewall** (as with Fortinet or Palo Alto);
+- Internet traffic goes to a **cloud** security service (proxy, filtering, inspection: see
+  [Forward proxy](/en/courses/proxy/forward-proxy)).
+
+Combining SD-WAN with these cloud security services is called **SASE** (*Secure Access Service Edge*): networking
+and security delivered together, as close as possible to the user, at the office or at home.
+
+## An example policy
+
+Configurations vary widely between vendors, but the logic is the same: **members** (the links), **probes** with
+thresholds, and **rules** per application. An excerpt from Fortinet:
+
+```text title="FortiGate (excerpt): voice follows the link that meets the SLA"
+config system sdwan
+    set status enable
+    config members
+        edit 1
+            set interface "wan1"
+        next
+        edit 2
+            set interface "wan2"
+        next
+    end
+    config health-check
+        edit "sla-voice"
+            set server "198.51.100.10"
+            set protocol ping
+            set members 1 2
+            config sla
+                edit 1
+                    set latency-threshold 150
+                    set jitter-threshold 30
+                    set packetloss-threshold 1
+                next
+            end
+        next
+    end
+    config service
+        edit 1
+            set name "voice"
+            set mode sla
+            set dst "SRV-VOICE"
+            config sla
+                edit "sla-voice"
+                    set id 1
+                next
+            end
+            set priority-members 1 2
+        next
+    end
+end
+```
+
+The `sla-voice` probe measures both links towards a reference server; the `voice` rule sends traffic to `SRV-VOICE`
+over the first link meeting the thresholds, in preference order `1` then `2`.
+
+## Market solutions
+
+| Solution | Origin |
+|---|---|
+| **Cisco Catalyst SD-WAN** | From the Viptela acquisition |
+| **Fortinet Secure SD-WAN** | Built into FortiGate firewalls |
+| **Palo Alto Prisma SD-WAN** | From the CloudGenix acquisition, integrated with Prisma Access (SASE) |
+| **HPE Aruba EdgeConnect** | From the Silver Peak acquisition |
+| **Arista VeloCloud SD-WAN** | Formerly VMware VeloCloud, taken over by Arista |
+| **Versa Networks**, **Juniper Session Smart Routing** | Specialised players |
+
+Carriers also offer "managed" SD-WAN, built on one of these solutions.
+
+## The pitfalls of an SD-WAN project
+
+- **Two links, two physical paths.** Two Internet accesses from two providers running through the same duct or the
+  same street cabinet will fail together. Ask for the physical paths, and keep 4G/5G as a last resort.
+- **The Internet has no guarantee.** Without MPLS, quality depends on the providers and the time of day. Probes and
+  SLAs are there to compensate, but links must be sized accordingly.
+- **Tunnel MTU.** IPsec encapsulation reduces the usable packet size: tune it (MSS), or large transfers will hang (see
+  [TCP and UDP](/en/courses/fundamentals/tcp-udp)).
+- **Know your applications.** Application-aware routing assumes you know which applications matter, and what they
+  need. Flow inventory is the first step of the project, not the last.
+- **Vendor lock-in.** The overlay, the orchestrator and the edges come from the same vendor: changing later means
+  redoing the whole WAN.
+
+<Callout type="field">
+The classic incident at a "redundant" branch: one fibre access from one provider, one fibre access from another, and
+a nice SD-WAN policy using both. A digger cuts a duct a hundred metres from the site, and both links go down at once:
+both providers rented the same last-mile infrastructure. Only the 4G backup link, which nobody had thought of testing
+since installation, could have saved the day. Ask providers for their physical paths, and test the backup regularly.
+</Callout>
+
+## Key takeaways
+
+- SD-WAN builds an **overlay of encrypted tunnels** over every transport: MPLS, Internet, 4G/5G.
+- An **orchestrator** holds the policies; edges apply them, and are deployed without a technician on site.
+- **Application-aware routing** continuously measures each link and picks the one meeting each application's SLA: it
+  avoids the gray failures classic routing does not see.
+- **Local breakout** sends SaaS straight to the Internet, secured by the edge or by a cloud service: that is **SASE**.
+- Two links must have **two physical paths**, and the backup must be **tested**.
