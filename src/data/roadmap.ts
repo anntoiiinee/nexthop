@@ -60,6 +60,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'ansible', title: { fr: 'Ansible pour le réseau', en: 'Ansible for networking' } },
       { slug: 'config-backup', title: { fr: 'Sauvegardes GitOps', en: 'GitOps backups' } },
       { slug: 'breakglass-rotation', title: { fr: 'Rotation du compte de secours', en: 'Break-glass account rotation' } },
+      { slug: 'naming-ipam', title: { fr: 'Conventions de nommage et IPAM', en: 'Naming conventions and IPAM' } },
       { slug: 'netbox', title: { fr: 'NetBox, source de vérité', en: 'NetBox as source of truth' } },
       { slug: 'avd', title: { fr: 'Arista AVD', en: 'Arista AVD' } },
     ],

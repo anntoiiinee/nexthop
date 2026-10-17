@@ -5,13 +5,14 @@ pubDate: 2026-10-18
 level: intermediate
 tags: [netbox, source-of-truth, ipam, automation, python, ansible]
 vendor: [netbox]
-order: 5
+order: 6
 ---
 
 Jusqu'ici, nos scripts lisaient un petit `inventory.yml` écrit à la main. Sur un vrai réseau, les
 informations sont éparpillées : un tableur pour les adresses IP, un autre pour les VLAN, un schéma
 Visio pour le câblage, et la configuration des équipements comme seule référence fiable. **NetBox**
-rassemble tout cela dans une seule base : la <Term id="sot" />, la source de vérité.
+rassemble tout cela dans une seule base : la <Term id="sot" />, la source de vérité. Les conventions et le plan
+d'adressage du chapitre précédent y deviennent des données.
 
 ## Le principe de la source de vérité
 
@@ -163,8 +164,8 @@ corriger dans un sens ou dans l'autre.
 ## Bonnes pratiques
 
 - **NetBox d'abord** : tout changement commence dans NetBox, jamais directement sur l'équipement.
-- **Des données propres** : rôles, plateformes et conventions de nommage définis dès le départ ; un
-  modèle bancal produit des configurations bancales.
+- **Des données propres** : rôles, plateformes et [conventions de nommage](/formations/automation/naming-ipam)
+  définis dès le départ ; un modèle bancal produit des configurations bancales.
 - **Des droits par équipe** et un historique des modifications (NetBox journalise chaque changement).
 - **Des automatisations déclenchées par NetBox** : les *event rules* et *webhooks* peuvent lancer un
   pipeline dès qu'un objet change (générer, vérifier, déployer).

@@ -208,16 +208,16 @@ Mise en route (une seule fois) :
 - [x] Traduction anglaise des formations Fondamentaux et Routage dynamique
 - [ ] Remplacer les sorties CLI d'exemple par de vraies sorties de lab (`evpn-basic`, Fondamentaux : `show mac address-table`, `show vlan`, `show spanning-tree`, `show ip route`)
 - [x] Formation Routage dynamique en FR (5 chapitres : principes, OSPF, BGP bases / attributs / politiques + labs `ospf-basic` et `bgp-basic`)
-- [x] Formation Automatisation en FR (6 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, NetBox, AVD + lab `netops`)
+- [x] Formation Automatisation en FR (7 chapitres : Python, Ansible, sauvegardes GitOps, rotation du compte de secours, conventions de nommage et IPAM, NetBox, AVD + lab `netops`)
 - [ ] Formation Data center (VRF, spine/leaf, VXLAN, EVPN) : rédaction par Antoine
 - [ ] Traduction anglaise de la formation Automatisation
 - [ ] Supprimer `src/components/LangSwitcher.astro` (inutilisé)
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
 - [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
 - [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
-- [x] Outil : référence ports et protocoles (`src/data/ports.ts`), et carrousel des outils sur l'accueil
+- [x] Formation Automatisation : chapitre « Conventions de nommage et IPAM » (`naming-ipam`, avant NetBox), avec `conventions.yml` et `python/check_conventions.py` dans le lab `netops`
 - [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
-- [ ] Contenus à venir : Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
+- [ ] Contenus à venir : Jinja2 en détail, Vault, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
 ---
 
@@ -247,17 +247,6 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
 - Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
   le fichier produit commence bien par `$ANSIBLE_VAULT`.
-
-### Formation Automatisation : conventions de nommage et IPAM (nouveau chapitre, avant NetBox)
-
-- Pourquoi les conventions conditionnent l'automatisation : un nom ou une adresse qui ne suit pas la règle casse les scripts.
-- Nommage des équipements (site, rôle, numéro : `tls-dc1-leaf-01`), des interfaces et descriptions (format parsable :
-  `vers:<voisin>:<port>`), des VLAN, VRF, route-maps et prefix-lists (`RM-<VOISIN>-IN`, `PL-…`).
-- Plan d'adressage et IPAM : blocs par site et par usage, loopbacks, liens /31, management, réservations ; numérotation
-  des AS privés ; tout documenté dans NetBox.
-- Les conventions à **écrire et faire valider** avant de commencer : un document court, versionné, contrôlé par la CI
-  (lint des noms, vérification dans NetBox).
-- Lien avec le découpeur VLSM et la formation Fondamentaux.
 
 ### Saut 7 · Services et observabilité : l'infrastructure DDI (chapitre `ddi`)
 

@@ -173,6 +173,14 @@ export const glossary = {
       en: "Routing protocol used inside an autonomous system, such as OSPF or IS-IS.",
     },
   },
+  ipam: {
+    term: 'IPAM',
+    expansion: 'IP Address Management',
+    definition: {
+      fr: "Registre des préfixes, adresses IP et VLAN d'un réseau, qui sait ce qui est libre et refuse les doublons, comme NetBox ou Infoblox.",
+      en: 'Registry of the prefixes, IP addresses and VLANs of a network, which knows what is free and rejects duplicates, such as NetBox or Infoblox.',
+    },
+  },
   jinja: {
     term: 'Jinja2',
     definition: {

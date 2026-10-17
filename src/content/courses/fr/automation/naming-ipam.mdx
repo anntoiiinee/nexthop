@@ -1,0 +1,317 @@
+---
+title: "Conventions de nommage et IPAM"
+description: "Nommer équipements, interfaces, VLAN et route-maps, construire un plan d'adressage déductible et le documenter dans un IPAM : les règles d'architecture à écrire avant d'automatiser, et un script qui les vérifie dans la CI."
+pubDate: 2026-10-17
+level: intermediate
+tags: [architecture, naming, ipam, automation, python, gitlab-ci]
+vendor: [arista, netbox]
+order: 5
+---
+
+Un script ne devine rien. S'il cherche les leafs avec `*-leaf-*` et que l'un d'eux s'appelle
+`LEAF3-tls`, il l'oublie. S'il lit le voisin dans la description d'une interface et qu'elle contient
+« vers spine 1 port 3 », il échoue. Avant d'automatiser, il faut donc des **règles** : comment on
+nomme, comment on adresse, et où c'est écrit. C'est un travail d'**architecture**, qui se fait une
+fois, au début, et dont dépendent tous les chapitres suivants : NetBox modélise ces règles, AVD les
+applique.
+
+## Pourquoi les conventions conditionnent l'automatisation
+
+Une convention transforme une information implicite en donnée exploitable :
+
+| Quand la règle est respectée | Ce qu'un script peut en faire |
+|---|---|
+| Le nom contient le site et le rôle : `tls-dc1-leaf-01` | Grouper l'inventaire par site et par rôle, filtrer un tableau de bord, choisir le bon gabarit |
+| La description suit `vers:<voisin>:<port>` | Dessiner la topologie, comparer au voisin <Term id="lldp" />, détecter une erreur de câblage |
+| Les loopbacks sont dans un bloc dédié, un /32 par équipement | Générer les filtres BGP, vérifier qu'aucune adresse ne déborde |
+| Une route-map s'appelle `RM-<VOISIN>-IN` | Savoir à quoi elle sert sans lire son contenu, retrouver celles d'un voisin supprimé |
+
+L'inverse est vrai aussi : **chaque exception coûte du code**. Un équipement nommé hors règle, c'est
+un `if` de plus dans chaque script, pour toujours. D'où l'intérêt de fixer les règles **avant** le
+premier équipement, ou avant la migration qui renouvelle tout.
+
+## Nommer les équipements
+
+La forme recommandée va **du plus large au plus précis**, avec des champs de longueur fixe :
+
+```text
+tls-dc1-leaf-01
+│   │   │    └── numéro sur deux chiffres : 01 à 99
+│   │   └─────── rôle : spine, leaf, border, core, fw, oob…
+│   └─────────── bâtiment ou salle : dc1, dc2, b02…
+└─────────────── site, code de trois lettres (ici Toulouse)
+```
+
+Les choix derrière ce format :
+
+- **minuscules et tirets** : le nom finit dans le DNS, qui ignore la casse et interdit le tiret bas
+  (`_`) dans un nom d'hôte ;
+- **du large au précis** : trier les noms par ordre alphabétique les regroupe par site, puis par salle,
+  puis par rôle ;
+- **numéros sur deux chiffres** : sinon `leaf-10` se range entre `leaf-1` et `leaf-2` ;
+- **rien qui puisse changer** : ni constructeur, ni modèle, ni adresse IP dans le nom. Le jour où un
+  switch Cisco est remplacé par un Arista, un nom `tls-dc1-cisco-01` devient faux ;
+- **une parité qui a du sens** : dans une paire de leafs (MLAG), le numéro impair est le membre A,
+  le pair le membre B. `leaf-01` et `leaf-02` vont ensemble, `leaf-02` et `leaf-03` jamais.
+
+<Topology
+  width={820}
+  height={410}
+  nodes={[
+    { id: 's1', type: 'switch', x: 300, y: 90, tone: 'sky' },
+    { id: 's2', type: 'switch', x: 520, y: 90, tone: 'sky' },
+    { id: 'l1', type: 'switch', x: 100, y: 310, label: 'tls-dc1-leaf-01', sub: 'Lo0 10.0.0.11' },
+    { id: 'l2', type: 'switch', x: 290, y: 310, label: 'tls-dc1-leaf-02', sub: 'Lo0 10.0.0.12' },
+    { id: 'l3', type: 'switch', x: 530, y: 310, label: 'tls-dc1-leaf-03', sub: 'Lo0 10.0.0.13' },
+    { id: 'l4', type: 'switch', x: 720, y: 310, label: 'tls-dc1-leaf-04', sub: 'Lo0 10.0.0.14' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', label: '10.0.1.0/31' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'l3' }, { from: 's1', to: 'l4' },
+    { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'l3' }, { from: 's2', to: 'l4', label: '10.0.1.70/31' },
+  ]}
+  notes={[
+    { x: 300, y: 30, text: 'tls-dc1-spine-01', tone: 'slate' },
+    { x: 300, y: 48, text: 'Lo0 10.0.0.1 · AS 65100', tone: 'slate', mono: true },
+    { x: 520, y: 30, text: 'tls-dc1-spine-02', tone: 'slate' },
+    { x: 520, y: 48, text: 'Lo0 10.0.0.2 · AS 65100', tone: 'slate', mono: true },
+    { x: 195, y: 395, text: 'paire MLAG · AS 65101', tone: 'emerald' },
+    { x: 625, y: 395, text: 'paire MLAG · AS 65102', tone: 'emerald' },
+  ]}
+  caption="Une salle nommée et adressée par règles : le nom donne le rôle et la paire, la loopback et l'AS se déduisent du numéro, l'adresse de chaque lien se calcule."
+/>
+
+## Nommer les interfaces, VLAN, VRF et politiques
+
+Les équipements ne sont qu'une partie du problème : tout ce qui porte un nom dans une configuration
+mérite une règle.
+
+| Objet | Règle | Exemples |
+|---|---|---|
+| Description d'interface vers un équipement | `vers:<voisin>:<interface du voisin>` | `vers:tls-dc1-spine-01:Ethernet3` |
+| Description vers un serveur ou un opérateur | même format, avec le nom connu de l'autre côté | `vers:srv-web-01:eth0` |
+| VLAN | majuscules, l'usage plutôt que le service | `USERS`, `GUEST-WIFI`, `SERVERS` |
+| VRF | majuscules, courtes | `PROD`, `MGMT`, `GUEST` |
+| Route-map | `RM-<VOISIN>-IN` ou `-OUT` | `RM-TRANSIT-A-IN`, `RM-SPINES-OUT` |
+| Prefix-list | `PL-<contenu>` | `PL-LOOPBACKS`, `PL-DEFAULT` |
+| ACL | majuscules, l'usage | `MGMT-ACCESS` |
+
+Le format des descriptions est le plus important : il est **parsable**. Un séparateur unique (`:`),
+des champs dans un ordre fixe, et l'interface du voisin écrite comme le voisin l'écrit lui-même
+(`Ethernet3`, pas `Eth3` ni `e3`). Un script peut alors vérifier que les deux côtés d'un lien se
+désignent mutuellement, et comparer avec ce que LLDP voit réellement
+(voir le chapitre [LLDP et CDP](/formations/fundamentals/lldp-cdp)).
+
+<Callout type="tip">
+Le préfixe exact importe peu : `vers:`, `to:` ou `P2P_`. Ce qui compte, c'est qu'il soit **unique**
+(il ne doit jamais apparaître dans une description libre) et que **tout le monde l'utilise**. Beaucoup
+d'équipes écrivent leurs conventions en anglais, pour les partager avec des collègues ou des
+prestataires étrangers : décidez-le une fois, et tenez-vous-y.
+</Callout>
+
+## Le plan d'adressage
+
+Le chapitre [Adressage IPv4 et sous-réseaux](/formations/fundamentals/ipv4-subnetting) montre comment
+découper un bloc. Ici, on change d'échelle : il s'agit de répartir **tout** l'espace de l'entreprise,
+de façon que chaque adresse se **déduise** d'une règle plutôt que d'être choisie au cas par cas.
+
+### Des blocs par site, puis par usage
+
+| Bloc | Usage |
+|---|---|
+| `10.0.0.0/16` | DC1 (Toulouse) |
+| `10.1.0.0/16` | DC2 |
+| `10.16.0.0/12` | Agences, un /20 par agence (256 agences possibles) |
+| `172.20.0.0/16` | Réseaux de management, un /24 par site (DC1 : `172.20.30.0/24`) |
+
+Dans chaque site, un petit bloc est réservé à l'**infrastructure** : les adresses des équipements
+réseau eux-mêmes. Pour DC1, un /22 découpé en quatre :
+
+<AddressSpace
+  base="10.0.0.0/22"
+  subnets={[
+    { cidr: '10.0.0.0/24', label: 'Loopback0 · un /32 par équipement' },
+    { cidr: '10.0.1.0/24', label: 'Liens spine-leaf · un /31 par lien' },
+    { cidr: '10.0.2.0/24', label: 'Loopback1 · VTEP VXLAN' },
+  ]}
+  caption="Le bloc d'infrastructure de DC1. Le dernier /24 reste libre : on réserve toujours de la place pour ce qu'on n'a pas encore prévu."
+/>
+
+Les serveurs et les VLAN de production prennent le reste du /16, par blocs plus grands.
+
+### Des adresses qui se calculent
+
+Avec des noms réguliers, l'adresse de chaque équipement devient une **formule** :
+
+| Objet | Règle | Exemple |
+|---|---|---|
+| Loopback0 d'un spine | `10.0.0.<numéro>` | spine-02 → `10.0.0.2/32` |
+| Loopback0 d'un leaf | `10.0.0.<10 + numéro>` | leaf-03 → `10.0.0.13/32` |
+| Loopback1 (VTEP) | partagée par la paire, celle du leaf impair | leaf-03 et leaf-04 → `10.0.2.13/32` |
+| Lien spine S vers leaf L | `10.0.1.<2 × ((S − 1) × 32 + (L − 1))>/31`, le spine prend l'adresse paire | spine-01 vers leaf-01 → `10.0.1.0/31` ; spine-02 vers leaf-04 → `10.0.1.70/31` |
+
+Une formule a deux vertus : n'importe qui retrouve l'adresse d'un équipement sans chercher, et un
+script peut **vérifier** qu'une adresse configurée est bien celle qu'elle devrait être. C'est
+exactement ce que fait AVD (dernier chapitre) à partir d'un bloc et d'un identifiant par équipement.
+
+<Callout type="warning">
+Une formule a aussi des limites, à écrire noir sur blanc : celle des liens ci-dessus tient dans un /24
+tant qu'on reste à **4 spines et 32 leafs** au plus. Mieux vaut le savoir au moment du dessin que le
+découvrir le jour où l'on commande le 33e leaf.
+</Callout>
+
+### Les réservations dans un sous-réseau
+
+Même règle à l'intérieur d'un VLAN : les mêmes plages pour les mêmes usages, partout.
+
+| Adresses (dans un /24) | Usage |
+|---|---|
+| `.1` | Passerelle (adresse virtuelle VRRP ou passerelle anycast) |
+| `.2` à `.9` | Équipements réseau (adresses physiques des routeurs, réserve) |
+| `.10` à `.49` | Adresses fixes : serveurs, imprimantes, bornes |
+| `.50` à `.250` | Pool <Term id="dhcp" /> |
+| `.251` à `.254` | Réserve |
+
+### Les numéros d'AS
+
+En BGP interne au data center, on utilise des **AS privés** : de 64512 à 65534 sur deux octets, et de
+4200000000 à 4294967294 sur quatre octets (RFC 6996). Là encore, une règle :
+
+- un AS par salle pour tous les spines : `65100` pour DC1, `65200` pour DC2 ;
+- un AS par paire de leafs, à la suite : `65101` pour leaf-01 et leaf-02, `65102` pour leaf-03 et 04.
+
+Deux octets suffisent pour quelques salles ; au-delà, les AS sur quatre octets permettent d'encoder
+le site et l'équipement dans le numéro.
+
+## L'IPAM : un seul endroit qui fait foi
+
+Un plan d'adressage dans un tableur finit toujours par mentir : une adresse prise « temporairement »,
+une ligne oubliée, deux versions du fichier. Un <Term id="ipam" /> (*IP Address Management*) tient le
+registre à jour et **refuse les doublons**. Dans NetBox (chapitre suivant), le plan se traduit ainsi :
+
+| Dans le plan | Dans NetBox |
+|---|---|
+| Blocs par site (`10.0.0.0/16`) | Préfixes au statut *Container*, rattachés au site |
+| Bloc d'infrastructure, liens, loopbacks | Préfixes avec un **rôle** (`loopbacks`, `p2p`, `management`) |
+| Adresses des équipements | Adresses IP rattachées à l'interface qui les porte |
+| Pool DHCP, plages réservées | *IP Ranges* |
+| VLAN, VRF | Objets VLAN (dans un groupe de VLAN par site) et VRF |
+| Numéros d'AS | Objets ASN, rattachés aux sites |
+
+Le rôle d'un préfixe est ce qui permet ensuite de demander à NetBox « le prochain /31 libre parmi les
+liens de DC1 », avec `available_prefixes`, comme on le verra au chapitre suivant.
+
+Pour préparer un découpage avant de le saisir, le [découpeur VLSM](/outils/vlsm-planner) calcule
+les sous-réseaux à partir des besoins en hôtes, et le plan obtenu se partage par lien.
+
+## Écrire les règles, et les faire respecter
+
+Une convention qui n'existe que dans la tête de l'architecte n'est pas une convention. Trois étapes :
+
+1. **L'écrire** : un document court (deux pages suffisent), avec les règles, des exemples et les
+   limites connues. Pas un roman : s'il est trop long, personne ne le lit.
+2. **La faire valider** par ceux qui vont la vivre : l'architecture, l'exploitation, la supervision,
+   l'équipe sécurité. C'est le moment de découvrir que l'outil de supervision tronque les noms à 20
+   caractères, pas après le déploiement.
+3. **La contrôler automatiquement** : la version lisible par les scripts est un fichier YAML,
+   **versionné dans Git** à côté du code. On ne la modifie que par une *merge request* relue, comme du
+   code, et un job de CI vérifie chaque configuration.
+
+Le fichier du lab `netops` :
+
+<CodeFile lab="netops" file="conventions.yml" />
+
+La section `exceptions` est essentielle. Un réseau existant ne se renomme pas en une nuit : renommer
+un équipement touche le DNS, la supervision, TACACS+, les certificats, les tickets en cours. Chaque
+dérogation est donc **listée, justifiée et datée**, ce qui permet de la faire disparaître un jour,
+plutôt que de la laisser se fondre dans le bruit.
+
+### Le contrôle des configurations
+
+Le script lit des configurations sauvegardées, sans se connecter aux équipements, et vérifie :
+
+- les noms d'équipements, de VLAN, de VRF, de route-maps et de prefix-lists ;
+- que chaque port actif a une description au bon format, et que **le voisin pointe en retour** ;
+- que chaque adresse est dans le bon bloc, avec la bonne longueur de préfixe, et que les deux côtés
+  d'un lien sont dans le même /31.
+
+<CodeFile lab="netops" file="python/check_conventions.py" />
+
+Sur les sauvegardes du chapitre 3, il tourne dans la CI à chaque nouveau commit : un écart fait
+échouer le pipeline, et apparaît dans la *merge request* avant d'arriver en production.
+
+```yaml title=".gitlab-ci.yml (job de contrôle, à ajouter)"
+# Ajouter « check » à la liste des étapes : stages: [backup, security, check]
+conventions:
+  stage: check
+  image: python:3.12-slim
+  rules:
+    # À chaque commit de sauvegarde (poussé par le job backup) et à chaque merge request
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: [backups/*.cfg, conventions.yml]
+  before_script:
+    - pip install -q PyYAML
+  script:
+    - python3 python/check_conventions.py backups/
+```
+
+### Le contrôle dans NetBox
+
+La configuration n'est qu'un côté : il faut aussi empêcher la saisie d'un nom hors règle dans la
+source de vérité. NetBox propose des **validateurs personnalisés**, déclarés dans sa configuration :
+
+```python title="configuration.py (NetBox)"
+CUSTOM_VALIDATORS = {
+    "dcim.device": [
+        {"name": {"regex": r"^[a-z]{3}-[a-z0-9]{2,4}-(spine|leaf|border|core|fw|oob)-[0-9]{2}$"}},
+    ],
+}
+```
+
+Un équipement dont le nom ne suit pas la règle est alors refusé à la création ou à la modification,
+dans l'interface comme par l'API. Les objets déjà présents ne sont vérifiés que lorsqu'on les modifie :
+pour un état des lieux complet, une boucle pynetbox sur `nb.dcim.devices.all()` qui applique la même
+expression régulière suffit.
+
+## Dans le lab
+
+Le lab `netops` respecte le plan d'adressage, mais pas encore la convention des descriptions : c'est
+l'exercice. Les noms courts (`spine1`, `leaf1`) sont gardés pour la lisibilité des chapitres, et
+déclarés comme dérogations.
+
+1. Déployez le lab, puis contrôlez les configurations de démarrage :
+   `python3 python/check_conventions.py configs/`. Le script trouve quatre écarts :
+
+   ```text
+   leaf1            Ethernet1 : description « spine1 » non conforme (attendu : vers:<voisin>:<interface>)
+   leaf2            Ethernet1 : description « spine1 » non conforme (attendu : vers:<voisin>:<interface>)
+   spine1           Ethernet1 : description « leaf1 » non conforme (attendu : vers:<voisin>:<interface>)
+   spine1           Ethernet2 : description « leaf2 » non conforme (attendu : vers:<voisin>:<interface>)
+   4 écart(s) sur 3 équipement(s) contrôlé(s) dans configs/
+   ```
+
+2. Corrigez les descriptions sur les équipements, par exemple sur `spine1` :
+   `configure`, `interface Ethernet1`, `description vers:leaf1:Ethernet1`. Faites de même pour les
+   trois autres interfaces (d'après `topology.clab.yml`, `leaf2:eth1` est relié à `spine1:eth2`).
+3. Sauvegardez (`python3 python/backup_configs.py`), puis contrôlez les sauvegardes :
+   `python3 python/check_conventions.py`. Résultat attendu : `0 écart(s)`.
+4. Cassez la symétrie : sur `spine1`, mettez `description vers:leaf2:Ethernet2` sur Ethernet2.
+   Sauvegardez et relancez : le script signale que `leaf2` n'a pas d'interface Ethernet2.
+5. Bonus : retirez `leaf2` des dérogations dans `conventions.yml` et relancez, puis ajoutez le job
+   `conventions` à votre pipeline.
+
+<Lab name="netops" lang="fr" />
+
+## À retenir
+
+- Une convention transforme une information implicite en **donnée exploitable** ; chaque exception
+  coûte du code dans chaque script.
+- Les noms vont **du large au précis** (`tls-dc1-leaf-01`), en minuscules, avec des numéros sur deux
+  chiffres, et ne contiennent rien qui puisse changer.
+- Les descriptions sont **parsables** (`vers:<voisin>:<port>`) : un script vérifie les deux côtés du
+  lien, et peut les comparer à LLDP.
+- Le plan d'adressage répartit l'espace **par site puis par usage**, et les adresses des équipements
+  se **calculent** à partir de leur numéro, dans des limites écrites.
+- Les conventions sont **écrites, validées et versionnées** ; la CI vérifie les configurations,
+  NetBox refuse les saisies hors règle, et les dérogations sont listées et datées.
+
+Prochain chapitre : **NetBox**, où ce plan devient une base de données que les scripts interrogent.
