@@ -10,5 +10,6 @@ import Bits from '@/components/diagrams/Bits.astro';
 import AddressSpace from '@/components/diagrams/AddressSpace.astro';
 import OsiModel from '@/components/diagrams/OsiModel.astro';
 import Sequence from '@/components/diagrams/Sequence.astro';
+import GitGraph from '@/components/diagrams/GitGraph.astro';
 
-export const mdxComponents = { Term, Callout, CliOutput, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel, Sequence };
+export const mdxComponents = { Term, Callout, CliOutput, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel, Sequence, GitGraph };

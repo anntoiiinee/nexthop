@@ -2,3 +2,5 @@
 ansible-core>=2.16
 netmiko>=4.3
 PyYAML>=6.0
+Jinja2>=3.1
+requests>=2.31

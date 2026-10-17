@@ -1,0 +1,347 @@
+---
+title: "Jinja2 and configuration rendering in NetBox"
+description: "Writing Jinja2 templates to generate network configurations (variables, loops, conditions, filters, macros, whitespace control), testing them off-device, then handing them to NetBox with config contexts and config templates to produce Arista AVD's structured config."
+pubDate: 2026-10-17
+level: intermediate
+tags: [jinja, netbox, automation, avd, ansible, python]
+vendor: [netbox, arista]
+---
+
+{/* Outputs declared in JavaScript: MDX strips leading whitespace inside tags */}
+export const withoutTrim = `!
+
+vlan 10
+
+vlan 20
+
+!`;
+export const withTrim = `!
+vlan 10
+vlan 20
+!`;
+
+In an automated network, you no longer write configurations: you write **templates**, and fill them with **data**.
+The most widespread templating language is <Term id="jinja" />, used by Ansible, NetBox, Arista AVD and countless
+Python scripts. This tutorial starts from the language basics, shows how to test a template on your machine, then
+hands the rendering over to NetBox, which can then directly produce a device's **structured configuration**, the
+one AVD turns into EOS configuration.
+
+## The principle: data + template = configuration
+
+<Topology
+  width={760}
+  height={220}
+  nodes={[
+    { id: 'data', type: 'server', x: 90, y: 100, label: 'Data', sub: 'YAML, NetBox', tone: 'amber' },
+    { id: 'tpl', type: 'server', x: 290, y: 100, label: 'Template', sub: 'Jinja2', tone: 'violet' },
+    { id: 'render', type: 'router', x: 480, y: 100, label: 'Rendering', sub: 'Python, Ansible, NetBox', tone: 'emerald' },
+    { id: 'cfg', type: 'switch', x: 670, y: 100, label: 'Configuration', sub: 'leaf1.cfg' },
+  ]}
+  links={[{ from: 'data', to: 'render' }, { from: 'tpl', to: 'render' }, { from: 'render', to: 'cfg' }]}
+  caption="The template describes a configuration's shape; the data says what changes from one device to the next. One template produces the configurations of a hundred leaves."
+/>
+
+The benefit is twofold: every configuration has **exactly the same shape**, and a change of standard (one more NTP
+server, a new description rule) is made **once**, in the template.
+
+## Language basics
+
+Jinja2 only has three delimiters:
+
+| Delimiter | Role | Example |
+|---|---|---|
+| `{{ ... }}` | Print a value | `hostname {{ hostname }}` |
+| `{% ... %}` | A statement: loop, condition, macro | `{% for vlan in vlans %}` |
+| `{# ... #}` | A comment, absent from the output | `{# Base configuration #}` |
+
+### Variables, loops and conditions
+
+```jinja
+hostname {{ hostname }}
+{% for vlan in vlans %}
+vlan {{ vlan.id }}
+   name {{ vlan.name }}
+{% endfor %}
+{% if itf.ip is defined %}
+   no switchport
+   ip address {{ itf.ip }}
+{% elif itf.access_vlan is defined %}
+   switchport access vlan {{ itf.access_vlan }}
+{% endif %}
+```
+
+Dictionary fields are accessed with a dot (`vlan.id`). Inside a loop, the special `loop` variable gives the
+position: `loop.index` (from 1), `loop.first`, `loop.last`.
+
+### Filters and tests
+
+A **filter** transforms a value, with a vertical bar. A **test** checks a property, with `is`.
+
+| Syntax | Result |
+|---|---|
+| `{{ vlan.name \| upper }}` | uppercase |
+| `{{ itf.mtu \| default(1500) }}` | default value if the variable is missing |
+| `{{ vlans \| sort(attribute='id') }}` | sorts a list of dictionaries |
+| `{{ ports \| join(',') }}` | joins a list: `Ethernet1,Ethernet2` |
+| `{{ vlans \| length }}` | number of items |
+| `{% if itf.peer is defined %}` | does the variable exist? |
+
+<Callout type="tip">
+Ansible adds its own filters, very handy for networking, in the `ansible.utils` collection: `ipaddr` to extract
+a prefix's address, network or mask, `ipmath` to compute a neighboring address. They don't exist in plain Jinja2: a
+template using them only renders with Ansible.
+</Callout>
+
+### Macros
+
+A **macro** is a function: write it once, call it everywhere. Example: applying the
+[description convention](/en/courses/automation/naming-ipam) `vers:<neighbor>:<port>` to every interface.
+
+```jinja
+{% macro description(itf) -%}
+  {%- if itf.peer is defined -%}
+    vers:{{ itf.peer }}:{{ itf.peer_port }}
+  {%- else -%}
+    libre
+  {%- endif -%}
+{%- endmacro %}
+
+interface {{ itf.name }}
+   description {{ description(itf) }}
+```
+
+For longer templates, `{% include 'ntp.j2' %}` inserts another file: one template per feature (interfaces, BGP,
+SNMP, NTP) stays readable and reusable.
+
+## The whitespace and line break trap
+
+It is everyone's first difficulty. By default, Jinja2 keeps **everything** around statements, including the line
+break after each `{% ... %}`. This template:
+
+```jinja
+!
+{% for vlan in vlans %}
+vlan {{ vlan }}
+{% endfor %}
+!
+```
+
+produces, with `vlans = [10, 20]`, stray empty lines, one per statement:
+
+<CliOutput title="Default rendering" output={withoutTrim} />
+
+Two environment options fix it for the whole template:
+
+- `trim_blocks` removes the line break after a statement;
+- `lstrip_blocks` removes the whitespace before a statement, so you can indent `{% if %}` for readability.
+
+<CliOutput title="Rendering with trim_blocks and lstrip_blocks" output={withTrim} />
+
+For case-by-case control, a dash glues the statement to its neighbor: `{%-` strips whitespace **before**, `-%}`
+strips it **after**. That is what the macro above uses to produce `vers:spine1:Ethernet1` on a single line.
+
+<Callout type="warning">
+An EOS configuration tolerates empty lines, but a YAML file depends on its indentation: one extra space and the
+structure changes. For a template that produces YAML, always enable `trim_blocks` and `lstrip_blocks`, and validate
+the result with a YAML parser.
+</Callout>
+
+## Testing a template on your machine
+
+A template is tested **without any device**: render it with sample data, and read the result. The `netops` lab
+contains a base template for a leaf, leaf1's data and a small rendering script (the lab files' comments are in
+French).
+
+<CodeFile lab="netops" file="templates/data/leaf1.yml" />
+
+<CodeFile lab="netops" file="templates/eos_base.j2" />
+
+<CodeFile lab="netops" file="templates/render.py" />
+
+```text title="python3 templates/render.py templates/eos_base.j2 templates/data/leaf1.yml"
+hostname leaf1
+!
+ntp server 192.0.2.123 prefer
+ntp server 198.51.100.123
+!
+vlan 10
+   name USERS
+!
+vlan 20
+   name GUEST-WIFI
+!
+vlan 30
+   name SERVERS
+!
+interface Ethernet1
+   description vers:spine1:Ethernet1
+   no switchport
+   ip address 10.0.1.1/31
+!
+interface Ethernet2
+   description vers:spine1:Ethernet2
+   no switchport
+   ip address 10.0.1.3/31
+!
+interface Ethernet3
+   description libre
+   switchport access vlan 10
+!
+interface Ethernet4
+   description libre
+   shutdown
+!
+interface Management1
+   ip address 172.20.30.12/24
+```
+
+The detail that matters: `StrictUndefined`. By default, a missing variable becomes an empty string, and the template
+happily produces `ip address` with no address. With `StrictUndefined`, rendering **fails** and names the missing
+variable. An error at rendering time beats a wrong configuration pushed to production.
+
+<Callout type="field">
+In a pipeline, render every template with all the data on each merge request, and publish the **diff of the
+generated configurations**. The reviewer sees the change's real effect on each device, not just the line changed in
+the template. It is exactly what the GitOps workflow of the [Arista AVD](/en/courses/automation/avd) chapter does.
+</Callout>
+
+## Handing the rendering to NetBox
+
+So far, data came from a YAML file. In a company, it lives in [NetBox, the source of truth](/en/courses/automation/netbox):
+devices, interfaces, IP addresses. NetBox can render Jinja2 templates itself with that data, through two objects in
+the **Provisioning** menu.
+
+| NetBox object | Role | Example |
+|---|---|---|
+| **Config context** | Free-form JSON data, applied by criteria (site, role, platform, tag…) and merged by weight | `{"ntp_servers": ["192.0.2.123"], "vlans": [...]}` for all leaves of a site |
+| **Config template** | A Jinja2 template, assigned to a device, a role or a platform | the leaf template, assigned to the `leaf` role |
+
+At rendering time, NetBox gives the template:
+
+- the device itself, in the **`device`** variable, with all its related objects: `device.name`, `device.site`,
+  `device.interfaces.all()`, and for each interface `itf.ip_addresses.all()`;
+- its merged **config context** data, as top-level variables: `ntp_servers`, `vlans`.
+
+<Topology
+  width={760}
+  height={260}
+  nodes={[
+    { id: 'dcim', type: 'server', x: 100, y: 70, label: 'DCIM / IPAM', sub: 'device, interfaces, IP', tone: 'amber' },
+    { id: 'ctx', type: 'server', x: 100, y: 190, label: 'Config context', sub: 'ntp_servers, vlans', tone: 'amber' },
+    { id: 'tpl', type: 'server', x: 360, y: 130, label: 'Config template', sub: 'Jinja2', tone: 'violet' },
+    { id: 'out', type: 'server', x: 620, y: 130, label: 'Render config', sub: 'UI or API', tone: 'emerald' },
+  ]}
+  links={[{ from: 'dcim', to: 'tpl', label: 'device' }, { from: 'ctx', to: 'tpl', label: 'variables' }, { from: 'tpl', to: 'out' }]}
+  caption="NetBox renders the template with the device and its config context. The result shows in the device's Render Config tab, or is fetched through the API."
+/>
+
+The template can be assigned at three levels: directly to the device, to its **role**, or to its **platform**. The
+most specific wins. Assigning the template to the `leaf` role is enough for every leaf to inherit it.
+
+<Callout type="note">
+NetBox doesn't enable `trim_blocks` by default. In the config template, the **Environment parameters** field accepts
+Jinja2 environment options, as JSON: `{"trim_blocks": true, "lstrip_blocks": true}`.
+</Callout>
+
+### Templates in Git
+
+Rather than pasting the template into NetBox's interface, store it in a Git repository, reviewed through merge
+requests like the rest of the code (see [Git and branches](/en/tutorials/git-branches)). NetBox syncs with that
+repository through a **Data Source** (*Operations* menu): the config template then points to a file in the
+repository, and updates at each sync. The template has a single reference version, the one in Git.
+
+## AVD's structured config, produced by NetBox
+
+The [Arista AVD](/en/courses/automation/avd) chapter shows AVD's chain: a high-level model, `eos_designs` computing a
+**structured configuration** per device, then `eos_cli_config_gen` turning it into EOS configuration and
+documentation.
+
+You can bypass the first step: **NetBox** produces the structured configuration, from what it knows about the
+device. The config template then generates not CLI, but **YAML in AVD's format**:
+
+<CodeFile lab="netops" file="templates/netbox/structured_config.j2" />
+
+For a leaf with two links to the spines, a loopback, a server port and an unused port, and a config context
+defining two VLANs and an NTP server, this template produces:
+
+```yaml title="Rendering for leaf1"
+hostname: leaf1
+ntp:
+  servers:
+    - name: 192.0.2.123
+vlans:
+  - id: 10
+    name: USERS
+  - id: 20
+    name: GUEST-WIFI
+loopback_interfaces:
+  - name: Loopback0
+    description: ROUTER-ID
+    ip_address: 10.255.0.11/32
+ethernet_interfaces:
+  - name: Ethernet1
+    description: vers:spine1:Ethernet1
+    shutdown: false
+    mtu: 9214
+    ip_address: 10.0.1.1/31
+  - name: Ethernet2
+    description: vers:spine2:Ethernet1
+    shutdown: false
+    mtu: 9214
+    ip_address: 10.0.2.1/31
+  - name: Ethernet3
+    description: vers:srv-web-01:eth0
+    shutdown: false
+  - name: Ethernet4
+    description: libre
+    shutdown: true
+```
+
+The following script asks NetBox for this rendering for each device (`POST /api/dcim/devices/<id>/render-config/`)
+and saves it in `intended/structured_configs/`, the folder where AVD keeps its structured configurations:
+
+<CodeFile lab="netops" file="templates/netbox/fetch_structured_configs.py" />
+
+All that is left is running the `arista.avd.eos_cli_config_gen` role, without `eos_designs`: it reads these files and
+produces the EOS configurations and documentation, exactly as in the AVD chapter.
+
+<Callout type="warning">
+AVD's data model changes from one major version to the next: the example's keys (`vlans`, `loopback_interfaces`,
+`ethernet_interfaces`, `ntp.servers`) are stable, but others, such as how to declare a routed port or an access
+port, vary by version. Start from the `eos_cli_config_gen` documentation of the installed version, and test the
+rendering before deploying.
+</Callout>
+
+### Which approach when?
+
+| Approach | Source of truth | Suited to |
+|---|---|---|
+| Jinja2 template → CLI, rendered by Ansible or Python | data files and templates | small networks, simple configurations, multi-vendor |
+| NetBox config template → CLI | NetBox | when NetBox is already the reference, without AVD |
+| NetBox config template → structured config → AVD | NetBox for data, AVD for generation | Arista fabrics: keep AVD's proven generation, with NetBox as the source |
+| Full AVD model (`eos_designs`) | AVD's YAML files | standard EVPN-VXLAN fabrics, where AVD computes everything (addresses, ASNs, sessions) |
+
+## Your turn
+
+1. In the `netops` lab, install the dependencies (`pip install -r requirements.txt`) and render the template:
+   `python3 templates/render.py templates/eos_base.j2 templates/data/leaf1.yml`.
+2. Add an NTP server to the data and run again: the loop follows. Remove the `mgmt_ip` line: rendering fails and
+   names the variable, thanks to `StrictUndefined`.
+3. In `render.py`, set `trim_blocks` and `lstrip_blocks` to `False`, and compare the result.
+4. Add a macro to the template that produces the `mtu 9214` line for routed interfaces only.
+5. With a NetBox instance (the public demo `demo.netbox.dev` or a local `netbox-docker`): create a config context
+   with `ntp_servers` and `vlans`, a config template with `structured_config.j2` and the environment parameters
+   `{"trim_blocks": true, "lstrip_blocks": true}`, assign it to a role, and open the **Render Config** tab of a device
+   with that role.
+
+## Key takeaways
+
+- A **template** describes the shape, the **data** what changes: one source for a hundred devices.
+- `{{ }}` prints, `{% %}` runs, `{# #}` comments; filters (`upper`, `default`, `sort`, `join`), tests (`is defined`)
+  and **macros** cover most needs.
+- Enable **`trim_blocks`** and **`lstrip_blocks`**, and **`StrictUndefined`** so missing data is an error.
+- Test templates **off-device**, and publish the diff of generated configurations in the merge request.
+- NetBox renders templates itself: **config context** for data, **config template** for the template, `device` and
+  the `render-config` API for the result.
+- A config template can produce **AVD's structured config**: NetBox provides the data, AVD generates the
+  configuration.

@@ -1,0 +1,250 @@
+---
+title: "Git and branches, for network engineers"
+description: "Understanding Git from what a network engineer versions: commits, history, branches, merging, conflicts, merge requests, rolling back and never committing a secret. With an exercise on the netops lab files."
+pubDate: 2026-10-17
+level: beginner
+tags: [git, gitops, automation, gitlab]
+vendor: []
+---
+
+Saved configurations, Ansible playbooks, Python scripts, AVD models, Terraform code: as soon as you automate a
+network, everything becomes text, and that text lives in **Git**. You don't need to be a developer to use it, but
+you need to understand its logic, especially **branches**, which are scary at first and quickly become
+indispensable. This tutorial starts from a network engineer's needs: editing a VLAN list, proposing a change,
+getting it reviewed, rolling back.
+
+## What Git brings
+
+| Need | Without Git | With Git |
+|---|---|---|
+| Know what changed | compare two files by hand | `git diff`, line by line |
+| Know who and why | ask around | every change has an author, a date and a message |
+| Roll back | find the right copy of `config-OLD-v2-final.txt` | go back to any version, at any time |
+| Work together | email files around, overwrite each other's work | everyone on their own **branch**, controlled merging |
+| Review before applying | an email with an attachment | a **merge request**, with the exact diff and comments |
+
+It is the foundation of the whole [Automation](/en/courses/automation) hop:
+[GitOps backups](/en/courses/automation/config-backup), pipelines, the [source of truth](/en/courses/automation/netbox).
+
+## The basics
+
+- A **repository** is a folder tracked by Git. The whole history is stored in a hidden subfolder, `.git`.
+- A **commit** is a **snapshot** of every tracked file at a given moment, with an author, a date, a message and a
+  link to the previous commit (its **parent**). Each commit has a unique identifier, a hash like `3f2a1c9`.
+- The **staging area** is where you put the changes that will be part of the next commit. You choose what to
+  commit, file by file, even line by line.
+- A **remote**, often on GitLab or GitHub, is the team's meeting point.
+
+The work cycle fits in four commands:
+
+```bash
+git status                 # what changed?
+git diff                   # the details, line by line
+git add ansible/vars/vlans.yml
+git commit -m "Add VLAN 40 MANAGEMENT"
+```
+
+Once per machine, set your identity, which will appear in every commit:
+
+```bash
+git config --global user.name "First Last"
+git config --global user.email "first.last@example.com"
+git config --global init.defaultBranch main
+```
+
+## Branches
+
+A **branch** is simply a **label pointing to a commit**, which moves forward with each new commit. The main branch
+is usually called `main`. Creating a branch copies no file: it is instant and free. You create one for each change,
+work on it quietly, and `main` stays untouched until the change is approved.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'VLANs 10-30' },
+    { id: 'b', branch: 0, label: 'MTU 9214' },
+    { id: 'c', branch: 1, label: 'VLAN 40', parents: ['b'] },
+    { id: 'd', branch: 1, label: 'description', tag: 'HEAD' },
+  ]}
+  caption="The vlan-40 branch starts from main's last commit. Its two commits only exist on it: main hasn't moved."
+/>
+
+```bash
+git switch -c vlan-40      # creates the branch and switches to it
+git branch                 # lists branches; the star marks the current one
+git switch main            # back to main: files return to main's state
+```
+
+**HEAD** is where you are: the current branch, and therefore the commit your files are a copy of. Switching branches
+changes the files' content on disk. It is confusing the first time, and that is precisely the point.
+
+<Callout type="tip">
+Name branches after the change, not after the person: `vlan-40`, `fix/mtu-leaf3`, `feature/backup-ansible`. A
+branch lives for the duration of a change, from a few hours to a few days, then is deleted once merged.
+</Callout>
+
+## Merging
+
+When the change is ready, you **merge** it into `main`. Two cases arise.
+
+**Fast-forward**: if `main` hasn't moved since the branch was created, Git simply moves the `main` label up to the
+branch's last commit. No new commit.
+
+**Merge commit**: if `main` received other commits in the meantime, Git creates a commit with **two parents** that
+joins both histories.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'VLANs 10-30' },
+    { id: 'b', branch: 0, label: 'MTU 9214' },
+    { id: 'c', branch: 1, label: 'VLAN 40', parents: ['b'] },
+    { id: 'e', branch: 0, label: 'NTP', parents: ['b'] },
+    { id: 'd', branch: 1, label: 'description', parents: ['c'] },
+    { id: 'm', branch: 0, label: 'merge', parents: ['e', 'd'], tag: 'main' },
+  ]}
+  caption="While vlan-40 was in progress, someone added the NTP configuration to main. The merge creates a commit with two parents."
+/>
+
+```bash
+git switch main
+git merge vlan-40
+git branch -d vlan-40      # deletes the label; the commits stay in the history
+```
+
+### Conflicts
+
+If both branches changed **the same lines** of the same file, Git can't choose for you: that is a **conflict**. It
+writes it directly into the file, between markers:
+
+```yaml title="ansible/vars/vlans.yml during a conflict"
+vlans:
+  - vlan_id: 10
+<<<<<<< HEAD
+    name: USERS-PARIS
+=======
+    name: USERS-LYON
+>>>>>>> rename-lyon
+```
+
+The top part is the current branch's version (`HEAD`), the bottom part the version of the branch being merged. To
+resolve: edit the file to keep the right version (or a mix of both), remove the markers, then `git add` and
+`git commit`. A conflict is not an error: it is Git asking a question.
+
+<Callout type="warning">
+A conflict in a network configuration file always deserves a human who understands the network. Keeping "the most
+recent version" by reflex can cancel a colleague's change, for example an ACL they just tightened. When in doubt,
+ask the other branch's author.
+</Callout>
+
+## Working as a team: the merge request
+
+With a remote, the workflow becomes:
+
+1. `git pull` on `main` to start from the latest version;
+2. `git switch -c vlan-40`, then edit and commit;
+3. `git push -u origin vlan-40` to send the branch to GitLab;
+4. open a **merge request** (GitLab) or a **pull request** (GitHub): the request to merge the branch into `main`;
+5. the CI pipeline checks the change (syntax, [conventions](/en/courses/automation/naming-ipam),
+   `ansible-playbook --check --diff`), and a colleague reviews the diff;
+6. once approved, the merge happens in the interface, and the branch is deleted.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'fix/ntp', tone: 'amber' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'v1' },
+    { id: 'c', branch: 1, label: 'NTP', parents: ['a'] },
+    { id: 'e', branch: 0, label: 'MR !11', parents: ['a', 'c'] },
+    { id: 'b', branch: 2, label: 'VLAN 40', parents: ['e'] },
+    { id: 'd', branch: 2, label: 'review', parents: ['b'] },
+    { id: 'f', branch: 0, label: 'MR !12', parents: ['e', 'd'], tag: 'main' },
+  ]}
+  caption="Each change lives on its own branch, and only enters main through a reviewed merge request."
+/>
+
+<Callout type="field">
+On a production repository, protect `main`: nobody pushes to it directly, everything goes through a reviewed merge
+request and a green pipeline. It is the same principle as a change window: the change is prepared, reviewed and
+traced before being applied. The repository then keeps track of who approved what.
+</Callout>
+
+### Rebase, in a nutshell
+
+`git rebase main`, run from a branch, **replays** its commits on top of the latest `main`, as if the branch had just
+been created. History becomes linear, with no merge commit. It is handy to update your own branch before a merge
+request. The rule: **never rebase a branch others are using**, because rebase rewrites commits and desynchronizes
+their copies.
+
+## Rolling back
+
+| Situation | Command | Effect |
+|---|---|---|
+| Discard an uncommitted change to a file | `git restore <file>` | the file goes back to the last commit's version (the change is lost) |
+| Remove a file from the staging area | `git restore --staged <file>` | the change stays, but won't be part of the commit |
+| Fix the message or a forgotten file in the last commit | `git commit --amend` | replaces the last commit (only if not pushed yet) |
+| Undo a commit already shared | `git revert <commit>` | creates a **new** commit doing the opposite; history stays intact |
+| Put work in progress aside | `git stash`, then `git stash pop` | stores the changes, and brings them back later |
+
+<Callout type="warning">
+On a shared branch, use `git revert`, never `git reset --hard` followed by `push --force`: rewriting history that
+others have already fetched causes lost work. `revert` is the equivalent of a documented rollback: the history
+shows the change was applied, then undone.
+</Callout>
+
+## Never commit a secret
+
+A password, a TACACS+ key or an API token committed to Git stays there **forever**, even if you delete it in the
+next commit: you just have to go back in history. Three reflexes:
+
+- a **`.gitignore`** file at the root, listing what Git must ignore (password files, `.env`, Terraform states,
+  Python environments);
+- secrets in a vault (Ansible Vault, HashiCorp Vault) or in the pipeline's masked variables;
+- if a secret was committed: **consider it compromised and change it**. Cleaning the history isn't enough, it may
+  have been cloned in the meantime.
+
+```text title=".gitignore (example for a network repository)"
+.env
+.vault_pass
+*.tfstate
+*.tfstate.backup
+.terraform/
+.venv/
+__pycache__/
+```
+
+## Writing a good commit message
+
+The message is for whoever reads the history in six months, maybe you, during an incident. A short first line
+saying **what the commit does**, in the imperative, then if needed a paragraph saying **why**:
+
+```text title="A useful message"
+Set spine-leaf link MTU to 9214
+
+VXLAN adds 50 bytes: with a 1500 MTU on the underlay,
+the servers' 1500-byte frames were fragmented or lost.
+Ticket: CHG-4521
+```
+
+"Changes", "fix" or "wip" say nothing. A good message is worth a line of documentation.
+
+## Your turn
+
+In the [`netops`](/en/courses/automation/python) lab folder:
+
+1. `git init`, then `git add .` and `git commit -m "Initial lab version"`. Look at `git log --oneline`.
+2. Create a `vlan-40` branch and add a VLAN 40 `MANAGEMENT` to `ansible/vars/vlans.yml`. Compare with `git diff`,
+   then commit.
+3. Go back to `main` (`git switch main`) and open the file: VLAN 40 isn't there. Go back to `vlan-40`: it reappears.
+4. From `main`, create a `rename` branch and rename VLAN 10 to `USERS-PARIS`. Commit. On `vlan-40`, rename VLAN 10
+   too, to `USERS-LYON`, and commit.
+5. Merge `vlan-40` into `main`, then `rename` into `main`: a conflict appears on VLAN 10's name. Resolve it, commit,
+   and look at the graph with `git log --oneline --graph --all`.
+6. Bonus: undo the VLAN 40 commit with `git revert`, and look at the new commit created.
+
+## Key takeaways
+
+- A **commit** is a snapshot of every file, with an author, a message and a parent.
+- A **branch** is a label moving from commit to commit: creating one is instant. One branch per change.
+- **Merging** is a fast-forward, or a commit with two parents; a **conflict** is a question a human must answer.
+- As a team: branch, push, **merge request**, pipeline, review, merge. `main` is protected.
+- To undo a shared commit: **`git revert`**. And **never a secret** in Git: if one is there, change it.

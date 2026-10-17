@@ -1,0 +1,35 @@
+{# Configuration de base d'un leaf Arista EOS, à partir des données de data/<équipement>.yml #}
+{% macro description(itf) -%}
+  {%- if itf.peer is defined -%}
+    vers:{{ itf.peer }}:{{ itf.peer_port }}
+  {%- else -%}
+    libre
+  {%- endif -%}
+{%- endmacro %}
+hostname {{ hostname }}
+!
+{% for server in ntp_servers %}
+ntp server {{ server }}{{ ' prefer' if loop.first else '' }}
+{% endfor %}
+!
+{% for vlan in vlans | sort(attribute='id') %}
+vlan {{ vlan.id }}
+   name {{ vlan.name | upper }}
+!
+{% endfor %}
+{% for itf in interfaces %}
+interface {{ itf.name }}
+   description {{ description(itf) }}
+{% if itf.ip is defined %}
+   no switchport
+   ip address {{ itf.ip }}
+{% elif itf.access_vlan is defined %}
+   switchport access vlan {{ itf.access_vlan }}
+{% endif %}
+{% if not itf.enabled | default(true) %}
+   shutdown
+{% endif %}
+!
+{% endfor %}
+interface Management1
+   ip address {{ mgmt_ip }}
