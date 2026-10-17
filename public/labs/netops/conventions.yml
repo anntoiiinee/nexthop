@@ -1,0 +1,32 @@
+# Conventions de nommage et d'adressage du réseau (chapitre « Conventions de nommage et IPAM »).
+# Ce fichier est la version lisible par les scripts du document de conventions : toute modification
+# passe par une merge request, relue et validée comme du code. python/check_conventions.py le lit.
+
+naming:
+  # <site>-<salle>-<rôle>-<numéro sur deux chiffres> : tls-dc1-leaf-01
+  hostname: '^[a-z]{3}-[a-z0-9]{2,4}-(spine|leaf|border|core|fw|oob)-[0-9]{2}$'
+  # vers:<voisin>:<interface du voisin> : vers:tls-dc1-spine-01:Ethernet3
+  interface_description: '^vers:(?P<peer>[a-z0-9-]+):(?P<port>[A-Za-z-]+[0-9/.]+)$'
+  vlan: '^[A-Z0-9]+(-[A-Z0-9]+)*$'                 # USERS, GUEST-WIFI
+  vrf: '^[A-Z0-9]+(-[A-Z0-9]+)*$'                  # PROD, MGMT
+  route_map: '^RM-[A-Z0-9-]+-(IN|OUT)$'            # RM-TRANSIT-A-IN
+  prefix_list: '^PL-[A-Z0-9-]+$'                   # PL-LOOPBACKS
+
+addressing:
+  management: 172.20.30.0/24                       # Management0, dans la VRF MGMT en production
+  loopbacks: 10.0.0.0/24                           # Loopback0, un /32 par équipement
+  vteps: 10.0.2.0/24                               # Loopback1 (VTEP VXLAN), un /32 par leaf
+  p2p: 10.0.1.0/24                                 # liens entre équipements, un /31 par lien
+
+# Dérogations : chaque exception est nommée, justifiée et datée, pour pouvoir la faire disparaître un jour.
+exceptions:
+  hostname:
+    - name: spine1
+      reason: lab, noms courts conservés pour la lisibilité des chapitres
+      since: 2026-10-18
+    - name: leaf1
+      reason: lab, noms courts conservés pour la lisibilité des chapitres
+      since: 2026-10-18
+    - name: leaf2
+      reason: lab, noms courts conservés pour la lisibilité des chapitres
+      since: 2026-10-18
