@@ -181,7 +181,8 @@ export const ui = {
 export type UiKey = keyof (typeof ui)['fr'];
 export const t = (lang: Lang, key: UiKey) => ui[lang][key];
 
+// Fuseau fixe : le build Cloudflare tourne en UTC, un commit fait à 0 h 30 à Paris tomberait la veille
 export const formatDate = (d: Date, lang: Lang) =>
   d.toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-US', {
-    day: 'numeric', month: 'long', year: 'numeric',
+    day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Paris',
   });
