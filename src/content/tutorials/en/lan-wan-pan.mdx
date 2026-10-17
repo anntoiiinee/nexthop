@@ -1,0 +1,125 @@
+---
+title: "LAN, WAN, PAN: types of networks"
+description: "Personal, local, campus, metropolitan or wide area network: what sets them apart (distance, bandwidth, owner, cost), the technologies tied to each, and the other acronyms you meet (WLAN, SAN, VLAN)."
+pubDate: 2026-10-17
+level: beginner
+tags: [lan, wan, pan, fundamentals]
+vendor: []
+---
+
+PAN, LAN, MAN, WAN: these acronyms show up in every job ad, every course and every piece of documentation. They
+classify networks by **geographic reach**, and behind the distance lie very concrete differences: who owns the
+cables, which technologies are used, what bandwidth you get, and how much it costs.
+
+## From smallest to largest
+
+<Topology
+  width={720}
+  height={360}
+  groups={[
+    { x: 20, y: 20, w: 680, h: 320, label: 'WAN · countries, continents', tone: 'violet' },
+    { x: 40, y: 60, w: 410, h: 260, label: 'MAN · a city', tone: 'sky' },
+    { x: 60, y: 100, w: 220, h: 200, label: 'LAN · a building', tone: 'emerald' },
+    { x: 80, y: 205, w: 120, h: 80, label: 'PAN', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'phone', type: 'host', x: 140, y: 255, label: 'Laptop', tone: 'amber' },
+    { id: 'sw', type: 'switch', x: 230, y: 150, label: 'Switch' },
+    { id: 'site2', type: 'router', x: 370, y: 150, label: 'Other site', sub: 'same city', tone: 'sky' },
+    { id: 'hq', type: 'router', x: 600, y: 150, label: 'Headquarters', sub: 'other country', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'phone', to: 'sw', style: 'dashed', tone: 'amber', label: 'Wi-Fi' },
+    { from: 'sw', to: 'site2', tone: 'sky', label: 'fibre' },
+    { from: 'site2', to: 'hq', tone: 'violet', label: 'carrier' },
+  ]}
+  caption="Networks nest: a PAN around a person, a LAN in a building, a MAN between the sites of a city, a WAN between cities and countries."
+/>
+
+| Type | Reach | Typical technologies | Common bandwidth | Who owns the links |
+|---|---|---|---|---|
+| **PAN** (*Personal Area Network*) | A few metres, around a person | Bluetooth, USB, NFC | A few kb/s to a few Mb/s | You |
+| **LAN** (*Local Area Network*) | A building, a floor | Ethernet, Wi-Fi | 1 to 100 Gb/s | The company |
+| **CAN** (*Campus Area Network*) | Several nearby buildings | Fibre between buildings | 10 to 100 Gb/s | The company |
+| **MAN** (*Metropolitan Area Network*) | A city, a metropolitan area | Dark fibre, metro Ethernet | 1 to 100 Gb/s | A carrier, or a local authority |
+| **WAN** (*Wide Area Network*) | Cities, countries, continents | MPLS, Internet + VPN, SD-WAN | A few Mb/s to 10 Gb/s | One or more carriers |
+
+## The PAN: around you
+
+The personal area network connects one person's devices: Bluetooth headphones to the phone, a smartwatch, a
+wireless keyboard. Short range, low power, little bandwidth. For a network engineer, the PAN matters mostly for
+**security**: a badly configured Bluetooth device is a way into a workstation.
+
+## The LAN: the network you manage
+
+The local area network is that of a building or a site: workstations, printers, Wi-Fi access points, local
+servers, connected by **switches** over **Ethernet** (see [Ethernet and MAC addresses](/en/courses/fundamentals/ethernet)).
+It is a network administrator's core business:
+
+- **the company owns everything**: cables, switches, access points. It can change them whenever it wants;
+- **bandwidth is plentiful and cheap**: 1 Gb/s per workstation, 10 to 100 Gb/s between switches;
+- **latency is very low**: under a millisecond;
+- it is split into **VLANs** to separate uses (see [VLANs](/en/courses/fundamentals/vlan)).
+
+The **WLAN** (*Wireless LAN*) is simply the wireless part of the LAN: Wi-Fi.
+
+## The CAN and the MAN: between buildings
+
+When a company occupies several buildings, on a university campus, an industrial site or a hospital, the LANs
+are linked by **optical fibre** laid between the buildings: a campus network (CAN), still owned by the company.
+
+At city scale, you can no longer lay your own cables under the streets. So you rent:
+
+- **dark fibre**: a bare fibre, with no equipment, that you "light" with your own devices;
+- a **metro Ethernet** service: the carrier provides an Ethernet link between two sites, like a very long cable.
+
+That is the metropolitan area network (MAN). Local authorities also build them to connect their schools, town
+halls and hospitals.
+
+## The WAN: between cities and countries
+
+The wide area network connects distant sites: headquarters in Paris, a branch in Lyon, a plant in Poland. Here,
+the company **owns nothing**: it buys services from carriers. Everything changes:
+
+- **bandwidth is expensive**: a few hundred Mb/s cost far more than 10 Gb/s in a LAN;
+- **latency grows with distance**: light travels about 1,000 km in 5 ms in fibre, and a Paris to New York round
+  trip takes about 75 ms;
+- **you depend on a third party**: its service quality, its intervention times, its outages.
+
+WAN technologies:
+
+| Technology | Principle | For whom |
+|---|---|---|
+| **Leased line** | A dedicated point-to-point link between two sites | Historical, still used for critical needs |
+| **MPLS** | A private network built by the carrier, connecting all the company's sites (see [MPLS](/en/tutorials/mpls)) | Large companies, for twenty years |
+| **Internet + VPN** | Each site has Internet access, and an encrypted tunnel connects the sites (see [IPsec VPN](/en/courses/security/ipsec-vpn)) | Small organisations, and as a backup |
+| **SD-WAN** | Central control that combines several links (MPLS, Internet, 4G/5G) and picks the best one for each application | The current trend |
+
+**The Internet** itself is the largest WAN: a network of networks, connecting tens of thousands of operators (see
+[How the Internet works on a global scale](/en/tutorials/internet-wan)).
+
+<Callout type="field">
+In a new-site project, it is almost always the **WAN** that sets the schedule. The LAN can be ordered and
+configured in a few weeks; a carrier link often takes two to three months, sometimes more if civil works are
+needed to bring the fibre in. Order the WAN link (and a backup link from another carrier) as soon as the site's
+address is known, and plan temporary 4G/5G access.
+</Callout>
+
+## Other acronyms
+
+Some "AN" acronyms are not about reach:
+
+- **WLAN**: the wireless LAN (Wi-Fi);
+- **VLAN** (*Virtual LAN*): a **logical** LAN, carved out of a physical LAN, unrelated to distance;
+- **SAN** (*Storage Area Network*): the network dedicated to storage in a data center (Fibre Channel, iSCSI),
+  separate from the server network;
+- **SD-WAN** and **SD-LAN**: WANs or LANs driven by a central controller (*Software-Defined*).
+
+## Key takeaways
+
+- Network types are classified by **reach**: **PAN** (a person), **LAN** (a building), **CAN** (a campus), **MAN**
+  (a city), **WAN** (countries).
+- The wider the network, the less the company owns the links: **the LAN is yours, the WAN is rented** from carriers.
+- LAN: plentiful bandwidth, minimal latency. WAN: expensive bandwidth, distance-bound latency, carrier dependency.
+- WAN technologies: leased line, **MPLS**, **Internet + VPN**, **SD-WAN**.
+- WLAN, VLAN and SAN do not describe a distance, but a **use** or a **logical** split.

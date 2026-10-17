@@ -1,12 +1,167 @@
 ---
 title: "Comment fonctionne Internet à l'échelle mondiale"
-description: "Opérateurs, points d'échange, câbles sous-marins, transit et peering : le chemin d'un paquet à travers Internet."
+description: "Un réseau de réseaux : systèmes autonomes, opérateurs de transit, peering et points d'échange, câbles sous-marins, registres d'adresses et BGP. Le chemin d'un paquet à travers Internet, et comment l'observer depuis chez soi."
 pubDate: 2026-10-17
 level: beginner
-tags: [internet, wan, bgp]
+tags: [internet, wan, bgp, peering]
 vendor: []
 ---
 
-<Callout type="note" title="En cours d'écriture">
-Ce tutoriel est en cours de rédaction. Il sera publié très bientôt.
-</Callout>
+Quand vous ouvrez une page web hébergée à l'autre bout du monde, la réponse arrive en une fraction de seconde. Entre
+votre box et le serveur, le paquet a traversé une dizaine de réseaux qui appartiennent à des entreprises
+différentes, souvent concurrentes, dans plusieurs pays, parfois au fond de l'océan. Personne ne dirige Internet
+dans son ensemble : il fonctionne parce que des dizaines de milliers d'organisations ont des **accords** entre
+elles, et un **protocole** commun pour s'annoncer leurs routes.
+
+## Un réseau de réseaux
+
+Internet n'est pas un réseau : c'est l'**interconnexion** de plus de 70 000 réseaux indépendants, les **systèmes
+autonomes** (<Term id="as" />). Chacun a un numéro (ASN) et gère ses propres routeurs et sa propre politique :
+
+| Type d'AS | Exemples | Rôle |
+|---|---|---|
+| **Opérateurs d'accès** | Votre fournisseur Internet, les opérateurs mobiles | Raccorder les particuliers et les entreprises |
+| **Opérateurs de transit** | Les grands opérateurs internationaux | Transporter le trafic des autres, d'un continent à l'autre |
+| **Fournisseurs de contenu et clouds** | Google, Microsoft, Amazon, Meta, Netflix | Héberger les services, au plus près des utilisateurs |
+| **Entreprises et organismes** | Universités, banques, administrations | Avoir leurs propres adresses et plusieurs opérateurs |
+
+Les adresses IP et les numéros d'AS sont attribués par cinq **registres régionaux** (RIR), sous l'autorité de
+l'IANA : le **RIPE NCC** pour l'Europe et le Moyen-Orient, l'ARIN pour l'Amérique du Nord, l'APNIC pour
+l'Asie-Pacifique, le LACNIC pour l'Amérique latine et l'AFRINIC pour l'Afrique. Leurs bases de données sont
+publiques : on peut y retrouver à qui appartient n'importe quelle adresse.
+
+## Transit et peering : qui paie qui
+
+Pour que deux réseaux échangent du trafic, ils passent l'un de ces deux accords :
+
+<Topology
+  width={720}
+  height={300}
+  nodes={[
+    { id: 't1', type: 'cloud', x: 360, y: 60, label: 'Opérateur de transit', sub: 'mondial', tone: 'violet' },
+    { id: 'a', type: 'cloud', x: 170, y: 200, label: 'FAI A', sub: 'accès' },
+    { id: 'b', type: 'cloud', x: 550, y: 200, label: 'FAI B', sub: 'accès' },
+    { id: 'c', type: 'server', x: 360, y: 240, label: 'Fournisseur de contenu', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'a', to: 't1', label: 'transit (payant)', tone: 'violet' },
+    { from: 'b', to: 't1', label: 'transit (payant)', tone: 'violet' },
+    { from: 'a', to: 'c', label: 'peering', tone: 'emerald', style: 'dashed' },
+    { from: 'c', to: 'b', label: 'peering', tone: 'emerald', style: 'dashed' },
+  ]}
+  caption="Le transit donne accès à tout Internet, contre paiement. Le peering relie directement deux réseaux pour leur trafic mutuel, en général gratuitement."
+/>
+
+- **Le transit** : un réseau paie un opérateur de transit pour atteindre **tout** Internet. L'opérateur lui annonce
+  toutes les routes du monde et transporte son trafic partout. Les plus grands opérateurs, dits *Tier 1*, n'achètent
+  eux-mêmes de transit à personne : ils s'échangent du trafic entre eux.
+- **Le peering** : deux réseaux s'échangent **directement** le trafic qui les concerne, l'un vers l'autre, sans
+  passer par un intermédiaire, et le plus souvent sans paiement. Un fournisseur d'accès et un fournisseur de
+  vidéo ont tout intérêt à le faire : le trafic est plus rapide, et aucun des deux ne paie de transit pour lui.
+
+### Les points d'échange
+
+Établir un lien physique avec chaque réseau avec lequel on veut faire du peering coûterait trop cher. Les **points
+d'échange Internet** (IXP, *Internet eXchange Points*) résolvent le problème : un grand réseau commuté, dans
+quelques data centers d'une ville, auquel des centaines de réseaux se raccordent une seule fois. Chacun peut alors
+établir des sessions de peering avec tous les autres. Les plus grands sont à Francfort (DE-CIX), Amsterdam
+(AMS-IX) et Londres (LINX) ; en France, France-IX à Paris et Marseille.
+
+## Les câbles sous-marins
+
+Entre les continents, presque tout le trafic Internet passe par **des câbles de fibre optique posés au fond des
+océans** : plus de 500 câbles, qui transportent l'essentiel du trafic intercontinental, loin devant les satellites.
+Un câble moderne transporte des centaines de térabits par seconde sur quelques paires de fibres, avec des
+répéteurs tous les 50 à 100 km pour amplifier le signal.
+
+Ils arrivent à terre dans des **stations d'atterrissement**, puis rejoignent des data centers. **Marseille** est
+l'un des principaux carrefours du monde : une quinzaine de câbles y relient l'Europe à l'Afrique, au Moyen-Orient
+et à l'Asie. Les câbles sont construits par des consortiums d'opérateurs et, de plus en plus, par les géants du
+contenu eux-mêmes. Ils sont parfois coupés (ancres de navires, séismes) : le trafic passe alors par les autres
+câbles, plus lentement, le temps de la réparation par un navire câblier.
+
+## BGP, la colle d'Internet
+
+Comment chaque réseau sait-il par où joindre les 70 000 autres ? Grâce à <Term id="bgp" /> : chaque AS annonce à ses
+voisins les préfixes qu'il possède, et relaie ceux qu'il a appris, selon ses accords commerciaux. Un routeur
+d'opérateur connaît ainsi plus d'un million de préfixes IPv4 et IPv6. La formation
+[Routage dynamique](/formations/routing) explique BGP en détail.
+
+BGP repose sur la **confiance** : un AS peut annoncer, par erreur ou par malveillance, des adresses qui ne lui
+appartiennent pas. En 2008, un opérateur pakistanais qui voulait bloquer YouTube dans son pays a annoncé ses
+adresses au monde entier, et rendu YouTube injoignable pendant deux heures. En 2021, Facebook a retiré par erreur
+ses propres annonces : ses services ont disparu d'Internet pendant six heures. Les opérateurs déploient
+aujourd'hui <Term id="rpki" />, qui permet de vérifier qu'un AS a bien le droit d'annoncer un préfixe.
+
+## Le chemin d'un paquet
+
+Que se passe-t-il quand vous ouvrez `www.example.com` depuis chez vous ?
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'box', label: 'Votre box' },
+    { id: 'fai', label: 'Votre FAI', tone: 'sky' },
+    { id: 'ix', label: 'IXP ou transit', tone: 'violet' },
+    { id: 'srv', label: 'Hébergeur', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'box', to: 'fai', label: 'requête DNS, puis HTTPS', tone: 'sky' },
+    { note: 'le FAI cherche la meilleure route BGP vers l’hébergeur', tone: 'slate' },
+    { from: 'fai', to: 'ix', label: 'peering ou transit', tone: 'violet' },
+    { from: 'ix', to: 'srv', label: 'réseau de l’hébergeur', tone: 'emerald' },
+    { from: 'srv', to: 'box', label: 'réponse, par un chemin peut-être différent', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="Le chemin traverse plusieurs réseaux indépendants. Chacun choisit sa route selon ses propres accords : le retour ne prend pas forcément le même chemin que l'aller."
+/>
+
+1. Votre box demande l'adresse du site au **DNS** de votre fournisseur (voir
+   [DDI : DNS, DHCP et IPAM](/formations/operations/ddi)).
+2. Le paquet part vers le réseau de votre fournisseur d'accès, qui consulte sa table BGP.
+3. Si l'hébergeur est un de ses partenaires de **peering**, le paquet passe directement par un point d'échange ou un
+   lien privé ; sinon, il part vers un **opérateur de transit**.
+4. Le paquet arrive dans le réseau de l'hébergeur, puis sur le serveur.
+
+Pour les grands services, le serveur est souvent **tout près de vous** : les fournisseurs de vidéo et les réseaux
+de diffusion de contenu (CDN) installent des serveurs de cache directement dans les réseaux des fournisseurs
+d'accès. Votre vidéo ne traverse alors aucun océan.
+
+## L'observer depuis chez soi
+
+Ces outils fonctionnent depuis n'importe quel poste Linux, macOS ou WSL connecté à Internet.
+
+**1. Les étapes du chemin.** `mtr` combine `traceroute` et `ping` : il montre chaque routeur traversé, avec la
+latence et les pertes à chaque saut.
+
+```bash
+mtr -rwzc 10 one.one.one.one
+```
+
+L'option `-z` affiche le numéro d'AS de chaque saut : vous voyez le paquet quitter le réseau de votre fournisseur
+pour celui de Cloudflare. Comparez avec une destination lointaine, par exemple un service hébergé en Australie :
+la latence fait un bond au moment de traverser l'océan.
+
+**2. À qui appartient une adresse.** Le service public de Team Cymru donne l'AS d'une adresse IP :
+
+```bash
+whois -h whois.cymru.com " -v 8.8.8.8"
+```
+
+Vous obtenez le numéro d'AS, le préfixe annoncé, le pays et le nom de l'organisation. Essayez avec votre propre
+adresse publique.
+
+**3. La fiche d'un réseau.** Sur **PeeringDB** (`www.peeringdb.com`), cherchez votre fournisseur d'accès : vous
+voyez à quels points d'échange il est raccordé, et sa politique de peering. Sur **RIPEstat** (`stat.ripe.net`),
+cherchez une adresse ou un AS : préfixes annoncés, voisins BGP, historique, et validité RPKI.
+
+## À retenir
+
+- Internet est un **réseau de réseaux** : plus de 70 000 **systèmes autonomes** indépendants, aux adresses
+  attribuées par cinq **registres régionaux**.
+- **Transit** (payant, vers tout Internet) et **peering** (direct, souvent gratuit) ; les **points d'échange** permettent
+  le peering à grande échelle.
+- Les **câbles sous-marins** transportent l'essentiel du trafic entre continents ; Marseille est l'un des grands
+  carrefours mondiaux.
+- **BGP** relie le tout, sur la base de la confiance, renforcée aujourd'hui par **RPKI**.
+- Les grands contenus sont servis **près de vous**, par des caches installés chez les fournisseurs d'accès.
+- `mtr`, `whois`, PeeringDB et RIPEstat permettent de voir tout cela depuis chez soi.
