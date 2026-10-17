@@ -1,0 +1,73 @@
+---
+title: "La sécurité"
+description: "Protéger et segmenter le réseau : firewall avec état et NGFW, NAT, politiques de sécurité, VPN IPsec et segmentation, avec des exemples FortiGate, Palo Alto et Stormshield et un lab nftables / strongSwan."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, ngfw, nat, ipsec, vpn, segmentation, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 0
+---
+
+Les sauts précédents ont construit un réseau qui **fonctionne** : les paquets trouvent leur chemin, les
+liens sont redondants, la configuration est automatisée. Ce saut s'occupe de le rendre **sûr** : décider
+qui a le droit de parler à qui, relier des sites à travers Internet sans exposer le trafic, et limiter les
+dégâts le jour où une machine est compromise.
+
+L'outil central est le **firewall**. Ce saut explique ce qu'il fait vraiment (une table de sessions, pas
+une simple liste de règles), comment écrire et entretenir une politique qui reste lisible au bout de cinq
+ans, comment monter un VPN <Term id="ipsec" /> entre deux sites, et comment découper le réseau pour qu'un
+attaquant ne puisse pas aller partout une fois entré.
+
+## Au programme
+
+| Chapitre | Ce que vous saurez faire |
+|---|---|
+| **Les bases d'un firewall** | Distinguer ACL et firewall avec état, lire une table de sessions, configurer zones et NAT, situer ce qu'apporte un NGFW |
+| **Politiques de sécurité** | Écrire une politique dans le bon ordre, repérer les règles trop larges ou masquées, organiser le cycle de vie des règles |
+| **VPN IPsec** | Comprendre IKEv2 et ESP, choisir les algorithmes, monter un VPN par route, dépanner un tunnel qui ne monte pas |
+| **Segmentation** | Découper le réseau en zones, construire une matrice de flux, contrôler l'accès avec 802.1X et NAC, appliquer le zero trust |
+
+Les exemples sont donnés pour trois constructeurs, à parts égales : **Fortinet** (FortiGate),
+**Palo Alto Networks** et **Stormshield**. Les concepts sont les mêmes partout ; seul le vocabulaire change.
+
+## Le lab
+
+Un siège et une agence, chacun derrière son firewall, reliés à « Internet » par un routeur Arista cEOS.
+Les firewalls commerciaux ne tournent pas librement dans ContainerLab : ceux du lab sont des Linux, avec
+**nftables** pour le filtrage et le NAT, et **strongSwan** pour le VPN IPsec. Les mécanismes sont
+exactement ceux d'un FortiGate ou d'un Palo Alto : table de sessions, zones, NAT, IKEv2.
+
+<Topology
+  width={720}
+  height={410}
+  groups={[
+    { x: 20, y: 20, w: 330, h: 370, label: 'Siège', tone: 'sky' },
+    { x: 540, y: 220, w: 160, h: 170, label: 'Agence', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 90, y: 90, label: 'pc-hq', sub: '10.10.10.10' },
+    { id: 'srv', type: 'server', x: 90, y: 210, label: 'srv-hq', sub: '10.10.20.10', tone: 'violet' },
+    { id: 'dmz', type: 'server', x: 90, y: 325, label: 'dmz-web', sub: '172.16.30.10', tone: 'amber' },
+    { id: 'fwhq', type: 'firewall', x: 270, y: 210, label: 'fw-hq', sub: '203.0.113.2', tone: 'rose' },
+    { id: 'inet', type: 'router', x: 450, y: 110, label: 'inet', sub: 'cEOS' },
+    { id: 'ext', type: 'host', x: 620, y: 70, label: 'ext', sub: '192.0.2.10' },
+    { id: 'fwbr', type: 'firewall', x: 620, y: 270, label: 'fw-branch', sub: '198.51.100.2', tone: 'rose' },
+    { id: 'pcbr', type: 'host', x: 620, y: 355, label: 'pc-branch' },
+  ]}
+  links={[
+    { from: 'pc', to: 'fwhq' }, { from: 'srv', to: 'fwhq' }, { from: 'dmz', to: 'fwhq' },
+    { from: 'fwhq', to: 'inet' }, { from: 'inet', to: 'ext' }, { from: 'inet', to: 'fwbr' },
+    { from: 'fwbr', to: 'pcbr' },
+    { from: 'fwhq', to: 'fwbr', style: 'dashed', tone: 'violet', label: 'IPsec' },
+  ]}
+  caption="Le lab security. Au siège, trois zones (utilisateurs, serveurs, DMZ) derrière fw-hq ; l'agence est reliée au siège par un tunnel IPsec à travers « Internet »."
+/>
+
+## Prérequis
+
+- La formation [Fondamentaux](/formations/fundamentals), en particulier les chapitres
+  [TCP et UDP](/formations/fundamentals/tcp-udp) et [Le routage statique](/formations/fundamentals/static-routing).
+- Utile pour le chapitre IPsec : [TLS, certificats et inspection](/formations/proxy/tls-pki) pour les
+  certificats, et les [bases de BGP](/formations/routing/bgp-basics).
+- Pour le lab : un poste avec ContainerLab, Docker et l'image Arista cEOS, voir
+  [Monter son lab](/tutoriels/containerlab-setup).

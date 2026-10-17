@@ -1,0 +1,313 @@
+---
+title: "Les bases d'un firewall"
+description: "ACL sans état ou firewall avec état, la table de sessions, zones et deny implicite, NAT source et destination, mode routé ou transparent, ce qu'ajoute un NGFW, et le vocabulaire de FortiGate, Palo Alto et Stormshield."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, ngfw, nat, conntrack, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 1
+---
+
+Un firewall se place entre deux zones du réseau et décide, pour chaque connexion, si elle a le droit de
+passer. Cette définition cache l'essentiel : un firewall moderne ne juge pas des **paquets**, il juge des
+**sessions**. C'est ce qui le distingue d'une simple liste de contrôle d'accès sur un routeur, et c'est ce
+qu'il faut comprendre pour le configurer et le dépanner.
+
+## ACL ou firewall avec état
+
+Une <Term id="acl" /> sur un routeur examine chaque paquet **isolément** : adresses, protocole, ports. Elle
+ne se souvient de rien. Pour qu'un poste consulte un site web, il faut donc deux règles : l'aller (du poste
+vers le port 443) **et** le retour (du port 443 vers le poste, sur n'importe quel port au-dessus de 1024).
+Cette seconde règle est une porte ouverte : tout paquet qui prétend venir d'un port 443 entre.
+
+Un firewall **avec état** (*stateful*) mémorise chaque connexion qu'il autorise dans une **table de
+sessions**. Le premier paquet (le SYN, pour <Term id="tcp" />) est confronté à la politique ; s'il est
+accepté, une entrée est créée, et tous les paquets suivants de la même connexion, dans les deux sens, sont
+reconnus et passent sans réévaluer les règles. Plus besoin de règle de retour : la réponse est autorisée
+**parce qu'elle appartient à une session connue**.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'Premier paquet', fields: [
+      { label: 'Session connue ?', sub: 'non', span: 2, tone: 'slate' },
+      { label: 'DNAT', sub: 'destination', span: 2, tone: 'amber' },
+      { label: 'Routage', sub: 'interface de sortie', span: 2, tone: 'emerald' },
+      { label: 'Politique', sub: 'zones, objets, ports', span: 2, tone: 'rose' },
+      { label: 'SNAT', sub: 'source', span: 2, tone: 'amber' },
+      { label: 'Création', sub: 'de la session', span: 2, tone: 'violet' },
+    ] },
+    { label: 'Paquets suivants', fields: [
+      { label: 'Session connue ?', sub: 'oui', span: 2, tone: 'violet' },
+      { label: 'Traductions et sortie appliquées directement, sans relire la politique', span: 10, tone: 'violet', dashed: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="Le parcours d'un paquet dans un firewall avec état. Seul le premier paquet d'une connexion passe par la politique ; les suivants sont reconnus dans la table de sessions."
+/>
+
+Ce fonctionnement a des conséquences directes :
+
+- **La politique ne décrit que l'ouverture des connexions.** Une règle « utilisateurs vers Internet, port
+  443 » suffit ; le trafic de retour suit tout seul.
+- **Le firewall doit voir les deux sens.** Si l'aller passe par un firewall et le retour par un autre
+  (routage asymétrique), le second voit arriver une réponse sans session et la jette. C'est la première
+  chose à vérifier quand « le SYN part mais rien ne revient ».
+- **Les sessions ont une durée de vie.** Une connexion TCP inactive est oubliée au bout d'un délai
+  (souvent une heure) ; une application qui garde des connexions ouvertes sans rien envoyer peut être
+  coupée silencieusement.
+- **La table a une taille.** Une inondation de SYN cherche justement à la remplir (voir le chapitre
+  [TCP et UDP](/formations/fundamentals/tcp-udp)).
+
+## Zones, interfaces et deny implicite
+
+Un firewall raisonne en **zones** : des groupes d'interfaces qui partagent le même niveau de confiance.
+Typiquement : *outside* (Internet), *users* (postes), *servers* (serveurs internes), et une
+<Term id="dmz" /> pour les serveurs publiés sur Internet. Les règles s'écrivent **d'une zone vers une autre**.
+
+<Topology
+  width={700}
+  height={330}
+  groups={[
+    { x: 20, y: 20, w: 200, h: 290, label: 'Zones internes', tone: 'sky' },
+    { x: 480, y: 20, w: 200, h: 130, label: 'outside', tone: 'slate' },
+    { x: 480, y: 180, w: 200, h: 130, label: 'dmz', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'u', type: 'host', x: 120, y: 85, label: 'users', sub: '10.10.10.0/24' },
+    { id: 's', type: 'server', x: 120, y: 225, label: 'servers', sub: '10.10.20.0/24', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 350, y: 165, label: 'fw-hq', tone: 'rose' },
+    { id: 'i', type: 'cloud', x: 580, y: 85, label: 'Internet' },
+    { id: 'd', type: 'server', x: 580, y: 240, label: 'dmz-web', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'u', to: 'fw', label: 'eth2' }, { from: 's', to: 'fw', label: 'eth3' },
+    { from: 'fw', to: 'i', label: 'eth1' }, { from: 'fw', to: 'd', label: 'eth4' },
+  ]}
+  caption="Chaque interface du firewall appartient à une zone. La politique dit quels flux sont permis d'une zone à l'autre ; tout le reste est refusé."
+/>
+
+Toute politique se termine par un **deny implicite** : ce qui n'est pas explicitement autorisé est refusé.
+On ne liste pas ce qu'on interdit, on liste ce qu'on permet. Deux façons de refuser :
+
+| Action | Ce que reçoit l'émetteur | Effet |
+|---|---|---|
+| **Drop** (jeter) | Rien | L'application attend, puis abandonne : *Connection timed out*. Ne révèle rien à un attaquant |
+| **Reject** (rejeter) | Un RST TCP ou un message ICMP | Échec immédiat : *Connection refused*. Plus confortable pour les utilisateurs internes |
+
+On jette généralement vers l'extérieur, et on peut rejeter en interne, pour que les applications
+échouent vite plutôt que d'attendre un délai d'expiration.
+
+## Le NAT
+
+Les réseaux internes utilisent des adresses privées, qui ne sont pas routées sur Internet. Le firewall
+traduit les adresses au passage, et il garde la trace de chaque traduction dans la table de sessions, pour
+défaire la traduction au retour.
+
+- **SNAT** (traduction de la source) : les postes sortent vers Internet avec l'adresse publique du
+  firewall. Plusieurs milliers de postes partagent une seule adresse grâce aux ports : c'est le **PAT**
+  (*Port Address Translation*), ou *masquerade*, ou *hide NAT* selon les constructeurs.
+- **DNAT** (traduction de la destination) : une adresse publique et un port sont redirigés vers un serveur
+  interne. C'est ainsi qu'on publie le site web de la DMZ : `203.0.113.2:80` devient `172.16.30.10:80`.
+  On parle aussi de *port forwarding*, de *VIP* (FortiGate) ou de *NAT de destination*.
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'e', label: 'ext', sub: '192.0.2.10' },
+    { id: 'f', label: 'fw-hq', sub: '203.0.113.2', tone: 'rose' },
+    { id: 'd', label: 'dmz-web', sub: '172.16.30.10', tone: 'amber' },
+  ]}
+  messages={[
+    { from: 'e', to: 'f', label: 'SYN vers 203.0.113.2:80', tone: 'emerald' },
+    { note: 'DNAT : destination réécrite, session créée', tone: 'amber' },
+    { from: 'f', to: 'd', label: 'SYN vers 172.16.30.10:80', sub: 'source inchangée : 192.0.2.10', tone: 'emerald' },
+    { from: 'd', to: 'f', label: 'SYN-ACK vers 192.0.2.10', style: 'dashed', tone: 'violet' },
+    { from: 'f', to: 'e', label: 'SYN-ACK depuis 203.0.113.2:80', sub: 'traduction défaite grâce à la session', style: 'dashed', tone: 'violet' },
+  ]}
+  caption="Un DNAT. Le client ne voit que l'adresse publique ; le serveur voit la vraie adresse du client. La table de sessions garde le lien entre les deux."
+/>
+
+<Callout type="warning">
+L'ordre entre NAT et politique **dépend du constructeur**, et c'est une source d'erreurs classique. Chez
+**Palo Alto**, une règle de sécurité vers un serveur publié utilise l'adresse **publique** (avant NAT) mais
+la zone de **destination réelle** (après NAT). Chez **FortiGate**, la règle désigne directement l'objet VIP
+qui porte la traduction. Chez **Stormshield**, NAT et filtrage sont deux onglets de la même politique. Avant
+d'écrire une règle de publication, vérifiez dans la documentation de votre firewall sur quelle adresse (avant
+ou après traduction) il évalue la politique.
+</Callout>
+
+## Mode routé ou transparent
+
+- **Mode routé** (couche 3) : chaque interface a une adresse IP, le firewall est la **passerelle** des
+  réseaux qu'il protège. C'est le cas le plus courant, et celui du lab.
+- **Mode transparent** (couche 2, ou *bridge*) : le firewall s'insère sur un lien comme un câble
+  intelligent, sans adresse ni changement de plan d'adressage. Pratique pour ajouter du filtrage dans un
+  réseau existant sans toucher aux passerelles ; plus délicat à dépanner.
+
+## Ce qu'ajoute un NGFW
+
+Un firewall classique s'arrête aux couches 3 et 4. Un <Term id="ngfw" /> (*Next-Generation Firewall*) lit
+plus loin dans le trafic :
+
+| Fonction | Ce qu'elle apporte |
+|---|---|
+| **Identification applicative** | Reconnaître l'application (Teams, BitTorrent, SSH) quel que soit le port, et écrire des règles par application plutôt que par port |
+| **Identification des utilisateurs** | Écrire des règles par groupe Active Directory plutôt que par adresse IP |
+| **<Term id="ips" />** | Bloquer les attaques connues par signatures (exploitation de failles, scans) |
+| **Antivirus et sandbox** | Analyser les fichiers qui traversent, et exécuter les suspects dans un environnement isolé |
+| **Filtrage d'URL** | Les catégories du proxy web, directement sur le firewall |
+| **Inspection TLS** | Déchiffrer pour voir le contenu, avec les mêmes enjeux qu'au saut [Proxy et load balancing](/formations/proxy/tls-pki) |
+
+Chaque fonction a un coût en performance. Les fiches techniques donnent souvent plusieurs débits : le
+débit « firewall » (filtrage simple), très élevé, et le débit avec IPS, antivirus et inspection TLS
+activés, parfois cinq à dix fois plus faible. C'est ce second chiffre qui sert au dimensionnement.
+
+## Le vocabulaire des constructeurs
+
+Les concepts sont partout les mêmes ; les noms changent :
+
+| Concept | Fortinet FortiGate | Palo Alto Networks | Stormshield SNS |
+|---|---|---|---|
+| Règle de filtrage | *Firewall policy* | *Security policy rule* | Règle de filtrage, dans un des 10 *slots* de politique |
+| Zone | Interface, ou *zone* qui en regroupe plusieurs | *Zone*, obligatoire | Interfaces *protégées* (`in`, `dmz1`) ou non (`out`) |
+| Pare-feu virtuel | *VDOM* | *vsys* | Politiques distinctes par slot (pas de virtualisation complète) |
+| Routage | Table de routage par VDOM | *Virtual router* / *logical router* | Routage statique, dynamique (Bird) |
+| Publication (DNAT) | Objet *VIP* | Règle de NAT de destination | Règle de NAT de destination, onglet NAT |
+| Sortie Internet (SNAT) | `set nat enable` sur la règle, ou *IP pool* | Règle NAT *dynamic-ip-and-port* | Règle NAT « *hide* » (masquerading) |
+| Identification applicative | *Application control* | *App-ID* | Moteur de prévention d'intrusion ASQ |
+| Haute disponibilité | FGCP (actif / passif ou actif / actif) | Paire HA, liens HA1 et HA2 | Cluster HA, lien HA |
+
+Une règle qui autorise les utilisateurs vers l'intranet, chez chacun :
+
+```text title="FortiGate (CLI)"
+config firewall address
+    edit "SRV-HQ"
+        set subnet 10.10.20.10 255.255.255.255
+    next
+end
+config firewall policy
+    edit 20
+        set name "users-to-intranet"
+        set srcintf "port2"
+        set dstintf "port3"
+        set srcaddr "LAN-USERS"
+        set dstaddr "SRV-HQ"
+        set service "HTTP"
+        set schedule "always"
+        set action accept
+        set logtraffic all
+    next
+end
+```
+
+```text title="Palo Alto (CLI, mode configuration)"
+set address SRV-HQ ip-netmask 10.10.20.10/32
+set rulebase security rules users-to-intranet from users to servers source 10.10.10.0/24 destination SRV-HQ application web-browsing service application-default action allow
+```
+
+Chez **Stormshield**, la configuration se fait essentiellement dans l'interface web : *Configuration >
+Politique de sécurité > Filtrage et NAT*, une ligne avec la source `Network_in`, la destination `SRV-HQ`,
+le port `http` et l'action *passer*. Les objets réseau se créent dans *Objets*, et la politique active est
+l'un des dix slots disponibles, ce qui permet de préparer une politique sans l'appliquer.
+
+## La haute disponibilité
+
+Un firewall est sur le chemin de tout le trafic : sa panne coupe le site. On les déploie donc par **paires** :
+
+- **Actif / passif** : un firewall traite tout, l'autre attend avec la même configuration ; il reprend les
+  adresses du premier en cas de panne. Le mode le plus courant, et le plus simple à dépanner.
+- **Synchronisation des sessions** : si la table de sessions est copiée en continu sur le passif, les
+  connexions en cours survivent à la bascule. Sans elle, toutes les sessions doivent être rouvertes.
+- **Actif / actif** : les deux traitent du trafic. Plus de capacité, mais une complexité réelle (le
+  routage asymétrique devient la norme, et les deux doivent partager leurs sessions).
+
+<Callout type="field">
+Une paire de firewalls sert surtout… pendant les mises à jour. La procédure classique : mettre à jour le
+passif, basculer, vérifier que tout fonctionne, mettre à jour l'ancien actif. Une paire dont la bascule
+n'a jamais été testée en dehors d'une panne réelle réserve souvent des surprises : un lien de
+synchronisation débranché, une interface oubliée dans la surveillance, une configuration qui a divergé.
+Testez la bascule à chaque mise à jour, en heures ouvrées, avec les équipes applicatives prévenues.
+</Callout>
+
+## Dans le lab
+
+Le firewall du siège, `fw-hq`, est un Linux avec **nftables**. Sa politique tient dans un fichier, à
+recharger après chaque modification :
+
+<CodeFile lab="security" file="fw-hq/nftables.nft" />
+
+On y retrouve tout le chapitre : des **zones** (une interface chacune), des **objets** (`define`), une
+chaîne `transit` dont la politique par défaut est `drop` (le **deny implicite**), la règle
+`ct state established,related accept` qui laisse passer les **retours de session**, un **DNAT** pour le site
+de la DMZ et un **SNAT** (`masquerade`) pour la sortie Internet.
+
+<Lab name="security" lang="fr" />
+
+Le déploiement installe nftables et strongSwan sur les deux firewalls : comptez une minute avant qu'ils
+soient prêts.
+
+**1. Les sessions.** Depuis l'utilisateur externe, consultez le site publié, puis regardez la table de
+sessions de `fw-hq` :
+
+```bash
+docker exec clab-security-ext curl -s -o /dev/null -w '%{http_code}\n' http://203.0.113.2/
+docker exec clab-security-fw-hq conntrack -L -p tcp --dport 80
+```
+
+```text
+tcp      6 119 TIME_WAIT src=192.0.2.10 dst=203.0.113.2 sport=47928 dport=80 src=172.16.30.10 dst=192.0.2.10 sport=80 dport=47928 [ASSURED] mark=0 use=1
+```
+
+Une session contient deux sens : l'aller tel que le client l'a envoyé (`dst=203.0.113.2`), et le retour
+attendu (`src=172.16.30.10`). C'est la trace du **DNAT** : le firewall sait que la réponse de `dmz-web` doit
+repartir avec l'adresse publique.
+
+**2. Sans état, plus de retour.** Dans `fw-hq/nftables.nft`, commentez la ligne
+`ct state established,related accept comment "retours des sessions autorisées"` de la chaîne `transit`,
+puis rechargez :
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-pc-hq ping -c1 -W2 192.0.2.10
+```
+
+Le ping part (la règle R12 l'autorise), mais la réponse est jetée : aucune règle ne l'autorise. C'est le
+monde des ACL sans état. Décommentez la ligne et rechargez : tout revient.
+
+**3. Drop ou reject.** Le poste du siège essaie une connexion SSH, que rien n'autorise :
+
+```bash
+docker exec clab-security-pc-hq sh -c 'time nc -w 5 192.0.2.10 22'
+```
+
+Cinq secondes d'attente, puis abandon : c'est un **drop**. Ajoutez maintenant, juste après la dernière
+ligne `counter comment "transit : refusé par défaut (deny implicite)"` de la chaîne `transit` :
+
+```text title="fw-hq/nftables.nft, à la fin de la chaîne transit"
+        meta l4proto tcp reject with tcp reset
+```
+
+Rechargez et relancez : l'échec est immédiat (`real 0m 0.00s`). Le firewall répond par un RST à la place
+du serveur : c'est un **reject**. Retirez la ligne ensuite.
+
+**4. Les compteurs.** Chaque règle compte les paquets qui l'ont déclenchée :
+
+```bash
+docker exec clab-security-fw-hq nft list chain inet filter transit
+```
+
+Repérez la ligne `R30 site public` (votre `curl` de l'étape 1), et la dernière ligne, qui compte tout ce
+que le deny implicite a refusé. Gardez cette commande : le chapitre suivant s'en sert pour trouver une
+règle inutile.
+
+## À retenir
+
+- Une **ACL** juge chaque paquet isolément ; un **firewall avec état** juge des **sessions** et laisse
+  passer les retours tout seul.
+- Seul le **premier paquet** d'une connexion passe par la politique. Le firewall doit voir **les deux sens**.
+- Une politique s'écrit **de zone à zone** et se termine par un **deny implicite**. *Drop* : timeout ;
+  *reject* : refus immédiat.
+- **SNAT / PAT** pour sortir, **DNAT** pour publier, et l'ordre NAT / politique dépend du constructeur.
+- Un **NGFW** ajoute applications, utilisateurs, IPS, antivirus, URL et TLS, au prix du débit.
+- Toujours **par paire**, et une bascule testée régulièrement.

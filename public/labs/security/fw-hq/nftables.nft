@@ -1,0 +1,79 @@
+#!/usr/sbin/nft -f
+# fw-hq : politique de sécurité du siège (chapitres « Les bases d'un firewall » et suivants)
+# Recharger après une modification :
+#   docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+# Voir les compteurs de chaque règle :
+#   docker exec clab-security-fw-hq nft list chain inet filter transit
+
+flush ruleset
+
+# Interfaces (zones)
+define OUTSIDE = "eth1"
+define USERS   = "eth2"
+define SERVERS = "eth3"
+define DMZ     = "eth4"
+define BRANCH  = "ipsec0"
+
+# Objets
+define NET_USERS  = 10.10.10.0/24
+define NET_BRANCH = 10.20.0.0/16
+define SRV_HQ     = 10.10.20.10
+define DMZ_WEB    = 172.16.30.10
+define PUBLIC_IP  = 203.0.113.2
+
+table inet filter {
+
+    # Trafic à destination du firewall lui-même
+    chain input {
+        type filter hook input priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iifname "lo" accept
+        iifname "eth0" accept comment "réseau de management ContainerLab"
+        iifname { $USERS, $BRANCH } icmp type echo-request accept
+        iifname $OUTSIDE ip saddr 198.51.100.2 udp dport { 500, 4500 } accept comment "IKE et NAT-T depuis l'agence"
+        iifname $OUTSIDE ip saddr 198.51.100.2 meta l4proto esp accept comment "ESP depuis l'agence"
+        counter comment "input : refusé par défaut"
+    }
+
+    # Trafic qui traverse le firewall
+    chain transit {
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept comment "retours des sessions autorisées"
+        ct state invalid counter drop
+
+        # R10 Utilisateurs vers Internet
+        iifname $USERS oifname $OUTSIDE tcp dport { 80, 443 } counter accept comment "R10 web sortant"
+        iifname $USERS oifname $OUTSIDE udp dport 53 counter accept comment "R11 DNS sortant"
+        iifname $USERS oifname $OUTSIDE icmp type echo-request counter accept comment "R12 ping sortant"
+
+        # R15 Ancienne règle « temporaire » : tout le LAN utilisateurs vers les serveurs
+        iifname $USERS oifname $SERVERS counter accept comment "R15 legacy : utilisateurs vers serveurs, tout (ticket 2019)"
+
+        # R20 Utilisateurs vers l'intranet
+        iifname $USERS oifname $SERVERS ip daddr $SRV_HQ tcp dport 80 counter accept comment "R20 intranet"
+
+        # R30 Internet vers le site public de la DMZ (après DNAT)
+        iifname $OUTSIDE oifname $DMZ ip daddr $DMZ_WEB tcp dport 80 counter accept comment "R30 site public"
+
+        # R40 Agence vers le siège, par le tunnel IPsec
+        iifname $BRANCH oifname $SERVERS ip daddr $SRV_HQ tcp dport 80 counter accept comment "R40 agence vers intranet"
+        iifname $BRANCH icmp type echo-request counter accept comment "R41 ping depuis l'agence"
+        iifname $USERS oifname $BRANCH counter accept comment "R42 siège vers agence"
+
+        counter comment "transit : refusé par défaut (deny implicite)"
+    }
+}
+
+table ip nat {
+    # DNAT : l'adresse publique, port 80, est traduite vers le serveur de la DMZ
+    chain prerouting {
+        type nat hook prerouting priority dstnat;
+        iifname $OUTSIDE ip daddr $PUBLIC_IP tcp dport 80 counter dnat to $DMZ_WEB comment "publication du site"
+    }
+    # SNAT : tout ce qui sort vers Internet prend l'adresse publique du firewall
+    chain postrouting {
+        type nat hook postrouting priority srcnat;
+        oifname $OUTSIDE counter masquerade comment "sortie Internet"
+    }
+}

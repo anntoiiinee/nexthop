@@ -1,0 +1,310 @@
+---
+title: "Firewall basics"
+description: "Stateless ACL or stateful firewall, the session table, zones and implicit deny, source and destination NAT, routed or transparent mode, what an NGFW adds, and the FortiGate, Palo Alto and Stormshield vocabulary."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, ngfw, nat, conntrack, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 1
+---
+
+A firewall sits between two zones of the network and decides, for each connection, whether it may pass.
+That definition hides the key point: a modern firewall does not judge **packets**, it judges **sessions**.
+That is what sets it apart from a simple access list on a router, and that is what you need to understand
+to configure and troubleshoot it.
+
+## ACL or stateful firewall
+
+An <Term id="acl" /> on a router examines each packet **in isolation**: addresses, protocol, ports. It
+remembers nothing. For a workstation to browse a website, you therefore need two rules: the way out (from
+the workstation to port 443) **and** the way back (from port 443 to the workstation, on any port above
+1024). That second rule is an open door: any packet claiming to come from port 443 gets in.
+
+A **stateful** firewall remembers every connection it allows in a **session table**. The first packet (the
+SYN, for <Term id="tcp" />) is checked against the policy; if accepted, an entry is created, and every
+following packet of the same connection, in both directions, is recognised and passes without
+re-evaluating the rules. No return rule needed: the reply is allowed **because it belongs to a known
+session**.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'First packet', fields: [
+      { label: 'Known session?', sub: 'no', span: 2, tone: 'slate' },
+      { label: 'DNAT', sub: 'destination', span: 2, tone: 'amber' },
+      { label: 'Routing', sub: 'egress interface', span: 2, tone: 'emerald' },
+      { label: 'Policy', sub: 'zones, objects, ports', span: 2, tone: 'rose' },
+      { label: 'SNAT', sub: 'source', span: 2, tone: 'amber' },
+      { label: 'Creation', sub: 'of the session', span: 2, tone: 'violet' },
+    ] },
+    { label: 'Next packets', fields: [
+      { label: 'Known session?', sub: 'yes', span: 2, tone: 'violet' },
+      { label: 'Translations and egress applied directly, without reading the policy again', span: 10, tone: 'violet', dashed: true },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="A packet's path through a stateful firewall. Only the first packet of a connection goes through the policy; the next ones are recognised in the session table."
+/>
+
+This has direct consequences:
+
+- **The policy only describes how connections open.** A rule "users to the Internet, port 443" is enough;
+  the return traffic follows on its own.
+- **The firewall must see both directions.** If the way out goes through one firewall and the way back
+  through another (asymmetric routing), the second sees a reply with no session and drops it. It is the
+  first thing to check when "the SYN goes out but nothing comes back".
+- **Sessions have a lifetime.** An idle TCP connection is forgotten after a timeout (often an hour); an
+  application that keeps connections open without sending anything can be silently cut off.
+- **The table has a size.** A SYN flood tries precisely to fill it (see the
+  [TCP and UDP](/en/courses/fundamentals/tcp-udp) chapter).
+
+## Zones, interfaces and implicit deny
+
+A firewall reasons in **zones**: groups of interfaces sharing the same trust level. Typically: *outside*
+(the Internet), *users* (workstations), *servers* (internal servers), and a <Term id="dmz" /> for servers
+published on the Internet. Rules are written **from one zone to another**.
+
+<Topology
+  width={700}
+  height={330}
+  groups={[
+    { x: 20, y: 20, w: 200, h: 290, label: 'Internal zones', tone: 'sky' },
+    { x: 480, y: 20, w: 200, h: 130, label: 'outside', tone: 'slate' },
+    { x: 480, y: 180, w: 200, h: 130, label: 'dmz', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'u', type: 'host', x: 120, y: 85, label: 'users', sub: '10.10.10.0/24' },
+    { id: 's', type: 'server', x: 120, y: 225, label: 'servers', sub: '10.10.20.0/24', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 350, y: 165, label: 'fw-hq', tone: 'rose' },
+    { id: 'i', type: 'cloud', x: 580, y: 85, label: 'Internet' },
+    { id: 'd', type: 'server', x: 580, y: 240, label: 'dmz-web', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'u', to: 'fw', label: 'eth2' }, { from: 's', to: 'fw', label: 'eth3' },
+    { from: 'fw', to: 'i', label: 'eth1' }, { from: 'fw', to: 'd', label: 'eth4' },
+  ]}
+  caption="Each firewall interface belongs to a zone. The policy says which flows are allowed from one zone to another; everything else is denied."
+/>
+
+Every policy ends with an **implicit deny**: whatever is not explicitly allowed is denied. You do not list
+what you forbid, you list what you allow. There are two ways to deny:
+
+| Action | What the sender gets | Effect |
+|---|---|---|
+| **Drop** | Nothing | The application waits, then gives up: *Connection timed out*. Reveals nothing to an attacker |
+| **Reject** | A TCP RST or an ICMP message | Immediate failure: *Connection refused*. Friendlier for internal users |
+
+You usually drop towards the outside, and may reject internally, so applications fail fast rather than
+waiting for a timeout.
+
+## NAT
+
+Internal networks use private addresses, which are not routed on the Internet. The firewall translates
+addresses on the fly, and records each translation in the session table, to undo it on the way back.
+
+- **SNAT** (source translation): workstations go out to the Internet with the firewall's public address.
+  Thousands of workstations share a single address thanks to ports: this is **PAT** (*Port Address
+  Translation*), or *masquerade*, or *hide NAT* depending on the vendor.
+- **DNAT** (destination translation): a public address and port are redirected to an internal server.
+  This is how the DMZ website is published: `203.0.113.2:80` becomes `172.16.30.10:80`. Also called *port
+  forwarding*, *VIP* (FortiGate) or *destination NAT*.
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'e', label: 'ext', sub: '192.0.2.10' },
+    { id: 'f', label: 'fw-hq', sub: '203.0.113.2', tone: 'rose' },
+    { id: 'd', label: 'dmz-web', sub: '172.16.30.10', tone: 'amber' },
+  ]}
+  messages={[
+    { from: 'e', to: 'f', label: 'SYN to 203.0.113.2:80', tone: 'emerald' },
+    { note: 'DNAT: destination rewritten, session created', tone: 'amber' },
+    { from: 'f', to: 'd', label: 'SYN to 172.16.30.10:80', sub: 'source unchanged: 192.0.2.10', tone: 'emerald' },
+    { from: 'd', to: 'f', label: 'SYN-ACK to 192.0.2.10', style: 'dashed', tone: 'violet' },
+    { from: 'f', to: 'e', label: 'SYN-ACK from 203.0.113.2:80', sub: 'translation undone thanks to the session', style: 'dashed', tone: 'violet' },
+  ]}
+  caption="A DNAT. The client only sees the public address; the server sees the client's real address. The session table keeps the link between the two."
+/>
+
+<Callout type="warning">
+The order between NAT and policy **depends on the vendor**, and it is a classic source of mistakes. At
+**Palo Alto**, a security rule towards a published server uses the **public** address (before NAT) but the
+**real** destination zone (after NAT). At **FortiGate**, the rule directly references the VIP object that
+carries the translation. At **Stormshield**, NAT and filtering are two tabs of the same policy. Before
+writing a publishing rule, check in your firewall's documentation which address (before or after
+translation) it evaluates the policy on.
+</Callout>
+
+## Routed or transparent mode
+
+- **Routed mode** (layer 3): each interface has an IP address, the firewall is the **gateway** of the
+  networks it protects. The most common case, and the lab's.
+- **Transparent mode** (layer 2, or *bridge*): the firewall is inserted on a link like a smart cable, with
+  no address and no change to the addressing plan. Handy to add filtering to an existing network without
+  touching gateways; harder to troubleshoot.
+
+## What an NGFW adds
+
+A classic firewall stops at layers 3 and 4. An <Term id="ngfw" /> (*Next-Generation Firewall*) reads further
+into the traffic:
+
+| Feature | What it brings |
+|---|---|
+| **Application identification** | Recognise the application (Teams, BitTorrent, SSH) whatever the port, and write rules per application rather than per port |
+| **User identification** | Write rules per Active Directory group rather than per IP address |
+| **<Term id="ips" />** | Block known attacks by signature (vulnerability exploits, scans) |
+| **Antivirus and sandbox** | Scan files crossing the firewall, and run suspicious ones in an isolated environment |
+| **URL filtering** | The web proxy categories, directly on the firewall |
+| **TLS inspection** | Decrypt to see the content, with the same stakes as in the [Proxy and load balancing](/en/courses/proxy/tls-pki) hop |
+
+Each feature costs performance. Datasheets often give several throughputs: the "firewall" throughput
+(simple filtering), very high, and the throughput with IPS, antivirus and TLS inspection enabled, sometimes
+five to ten times lower. The second figure is the one to size with.
+
+## Vendor vocabulary
+
+The concepts are the same everywhere; the names change:
+
+| Concept | Fortinet FortiGate | Palo Alto Networks | Stormshield SNS |
+|---|---|---|---|
+| Filtering rule | *Firewall policy* | *Security policy rule* | Filtering rule, in one of the 10 policy *slots* |
+| Zone | Interface, or a *zone* grouping several | *Zone*, mandatory | *Protected* interfaces (`in`, `dmz1`) or not (`out`) |
+| Virtual firewall | *VDOM* | *vsys* | Separate policies per slot (no full virtualisation) |
+| Routing | Routing table per VDOM | *Virtual router* / *logical router* | Static and dynamic routing (Bird) |
+| Publishing (DNAT) | *VIP* object | Destination NAT rule | Destination NAT rule, NAT tab |
+| Internet egress (SNAT) | `set nat enable` on the rule, or *IP pool* | *dynamic-ip-and-port* NAT rule | "*Hide*" NAT rule (masquerading) |
+| Application identification | *Application control* | *App-ID* | ASQ intrusion prevention engine |
+| High availability | FGCP (active / passive or active / active) | HA pair, HA1 and HA2 links | HA cluster, HA link |
+
+A rule allowing users to the intranet, on each:
+
+```text title="FortiGate (CLI)"
+config firewall address
+    edit "SRV-HQ"
+        set subnet 10.10.20.10 255.255.255.255
+    next
+end
+config firewall policy
+    edit 20
+        set name "users-to-intranet"
+        set srcintf "port2"
+        set dstintf "port3"
+        set srcaddr "LAN-USERS"
+        set dstaddr "SRV-HQ"
+        set service "HTTP"
+        set schedule "always"
+        set action accept
+        set logtraffic all
+    next
+end
+```
+
+```text title="Palo Alto (CLI, configuration mode)"
+set address SRV-HQ ip-netmask 10.10.20.10/32
+set rulebase security rules users-to-intranet from users to servers source 10.10.10.0/24 destination SRV-HQ application web-browsing service application-default action allow
+```
+
+On **Stormshield**, configuration happens mostly in the web interface: *Configuration > Security policy >
+Filter - NAT*, a line with source `Network_in`, destination `SRV-HQ`, port `http` and action *pass*. Network
+objects are created under *Objects*, and the active policy is one of ten available slots, which lets you
+prepare a policy without applying it.
+
+## High availability
+
+A firewall sits on the path of all traffic: its failure cuts off the site. They are therefore deployed in
+**pairs**:
+
+- **Active / passive**: one firewall handles everything, the other waits with the same configuration; it
+  takes over the first one's addresses on failure. The most common mode, and the simplest to troubleshoot.
+- **Session synchronisation**: if the session table is continuously copied to the passive unit, current
+  connections survive the failover. Without it, every session must be reopened.
+- **Active / active**: both handle traffic. More capacity, but real complexity (asymmetric routing becomes
+  the norm, and both must share their sessions).
+
+<Callout type="field">
+A firewall pair is mostly useful… during upgrades. The classic procedure: upgrade the passive unit, fail
+over, check that everything works, upgrade the former active unit. A pair whose failover has never been
+tested outside a real outage often holds surprises: an unplugged sync link, an interface left out of
+monitoring, a configuration that drifted. Test failover at every upgrade, during business hours, with the
+application teams informed.
+</Callout>
+
+## In the lab
+
+The headquarters firewall, `fw-hq`, is a Linux box with **nftables**. Its policy fits in one file, to reload
+after each change (comments in the lab files are in French):
+
+<CodeFile lab="security" file="fw-hq/nftables.nft" />
+
+You will find the whole chapter in it: **zones** (one interface each), **objects** (`define`), a `transit`
+chain whose default policy is `drop` (the **implicit deny**), the `ct state established,related accept`
+rule that lets **session replies** through, a **DNAT** for the DMZ website and an **SNAT** (`masquerade`) for
+Internet egress.
+
+<Lab name="security" lang="en" />
+
+Deployment installs nftables and strongSwan on both firewalls: allow a minute before they are ready.
+
+**1. Sessions.** From the external user, browse the published site, then look at `fw-hq`'s session table:
+
+```bash
+docker exec clab-security-ext curl -s -o /dev/null -w '%{http_code}\n' http://203.0.113.2/
+docker exec clab-security-fw-hq conntrack -L -p tcp --dport 80
+```
+
+```text
+tcp      6 119 TIME_WAIT src=192.0.2.10 dst=203.0.113.2 sport=47928 dport=80 src=172.16.30.10 dst=192.0.2.10 sport=80 dport=47928 [ASSURED] mark=0 use=1
+```
+
+A session holds both directions: the way out as the client sent it (`dst=203.0.113.2`), and the expected
+reply (`src=172.16.30.10`). That is the trace of the **DNAT**: the firewall knows the reply from `dmz-web`
+must go back with the public address.
+
+**2. Without state, no more replies.** In `fw-hq/nftables.nft`, comment out the
+`ct state established,related accept comment "retours des sessions autorisées"` line of the `transit`
+chain, then reload:
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-pc-hq ping -c1 -W2 192.0.2.10
+```
+
+The ping goes out (rule R12 allows it), but the reply is dropped: no rule allows it. That is the world of
+stateless ACLs. Uncomment the line and reload: everything comes back.
+
+**3. Drop or reject.** The headquarters workstation tries an SSH connection, which nothing allows:
+
+```bash
+docker exec clab-security-pc-hq sh -c 'time nc -w 5 192.0.2.10 22'
+```
+
+Five seconds of waiting, then it gives up: that is a **drop**. Now add, right after the last
+`counter comment "transit : refusé par défaut (deny implicite)"` line of the `transit` chain:
+
+```text title="fw-hq/nftables.nft, at the end of the transit chain"
+        meta l4proto tcp reject with tcp reset
+```
+
+Reload and try again: the failure is immediate (`real 0m 0.00s`). The firewall answers with an RST on
+behalf of the server: that is a **reject**. Remove the line afterwards.
+
+**4. Counters.** Each rule counts the packets that matched it:
+
+```bash
+docker exec clab-security-fw-hq nft list chain inet filter transit
+```
+
+Find the `R30 site public` line (your `curl` from step 1), and the last line, which counts everything the
+implicit deny refused. Keep this command: the next chapter uses it to find a useless rule.
+
+## Key takeaways
+
+- An **ACL** judges each packet in isolation; a **stateful firewall** judges **sessions** and lets replies
+  through on its own.
+- Only the **first packet** of a connection goes through the policy. The firewall must see **both
+  directions**.
+- A policy is written **zone to zone** and ends with an **implicit deny**. *Drop*: timeout; *reject*:
+  immediate refusal.
+- **SNAT / PAT** to go out, **DNAT** to publish, and the NAT / policy order depends on the vendor.
+- An **NGFW** adds applications, users, IPS, antivirus, URLs and TLS, at the cost of throughput.
+- Always **in pairs**, with failover tested regularly.

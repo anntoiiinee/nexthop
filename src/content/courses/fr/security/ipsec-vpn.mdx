@@ -1,0 +1,347 @@
+---
+title: "VPN IPsec"
+description: "Relier deux sites à travers Internet : IKEv2 et ESP, mode tunnel, algorithmes recommandés, clé partagée ou certificats, VPN par politique ou par route avec BGP, NAT-T, MTU, dépannage d'un tunnel, et accès distant."
+pubDate: 2026-10-17
+level: intermediate
+tags: [ipsec, vpn, ikev2, strongswan, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 3
+---
+
+Le siège et l'agence sont chacun reliés à Internet. Pour que leurs réseaux privés communiquent, on
+pourrait louer une liaison dédiée chez un opérateur (MPLS, voir le tutoriel [MPLS](/tutoriels/mpls)) ;
+on peut aussi passer **par Internet**, à condition que personne sur le chemin ne puisse lire ni modifier le
+trafic. C'est le rôle d'un VPN <Term id="ipsec" /> : un **tunnel chiffré** entre deux firewalls, dans lequel
+circule le trafic privé des deux sites.
+
+<Topology
+  width={720}
+  height={260}
+  groups={[
+    { x: 20, y: 20, w: 200, h: 220, label: 'Siège 10.10.0.0/16', tone: 'sky' },
+    { x: 500, y: 20, w: 200, h: 220, label: 'Agence 10.20.0.0/16', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 180, label: 'srv-hq' },
+    { id: 'fwa', type: 'firewall', x: 160, y: 90, label: 'fw-hq', sub: '203.0.113.2', tone: 'rose' },
+    { id: 'net', type: 'cloud', x: 360, y: 90, label: 'Internet' },
+    { id: 'fwb', type: 'firewall', x: 560, y: 90, label: 'fw-branch', sub: '198.51.100.2', tone: 'rose' },
+    { id: 'pcb', type: 'host', x: 640, y: 180, label: 'pc-branch' },
+  ]}
+  links={[
+    { from: 'pc', to: 'fwa' }, { from: 'fwa', to: 'net' }, { from: 'net', to: 'fwb' }, { from: 'fwb', to: 'pcb' },
+  ]}
+  flows={[
+    { from: 'fwb', to: 'fwa', label: 'tunnel ESP chiffré', tone: 'violet', offset: 32 },
+  ]}
+  caption="Les paquets entre 10.20.10.10 et 10.10.20.10 sont chiffrés par fw-branch, transportés sur Internet entre les deux adresses publiques, puis déchiffrés par fw-hq."
+/>
+
+## Les deux protocoles : IKE et ESP
+
+IPsec repose sur deux protocoles qui travaillent ensemble :
+
+- <Term id="ike" /> (*Internet Key Exchange*, UDP 500) est la **négociation** : les deux firewalls
+  s'authentifient, se mettent d'accord sur les algorithmes et calculent des clés. On utilise aujourd'hui
+  **IKEv2** ; IKEv1 (avec ses « mode principal » et « mode agressif ») est à abandonner.
+- <Term id="esp" /> (*Encapsulating Security Payload*, protocole IP 50) est le **transport** : il chiffre
+  et authentifie chaque paquet de données.
+
+IKEv2 établit deux niveaux d'association de sécurité (SA, *Security Association*) :
+
+1. l'**IKE SA** (souvent appelée « phase 1 ») : un canal chiffré entre les deux firewalls, qui sert à
+   négocier tout le reste ;
+2. une ou plusieurs **Child SA** (« phase 2 ») : les clés et algorithmes qu'ESP utilisera pour les données.
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'b', label: 'fw-branch', sub: 'initiateur', tone: 'emerald' },
+    { id: 'h', label: 'fw-hq', sub: 'répondeur', tone: 'sky' },
+  ]}
+  messages={[
+    { from: 'b', to: 'h', label: 'IKE_SA_INIT', sub: 'propositions, clé Diffie-Hellman, nonce', tone: 'emerald' },
+    { from: 'h', to: 'b', label: 'IKE_SA_INIT', sub: 'proposition choisie, clé DH, nonce', style: 'dashed', tone: 'sky' },
+    { note: 'IKE SA établie : la suite est chiffrée', tone: 'violet' },
+    { from: 'b', to: 'h', label: 'IKE_AUTH', sub: 'identité, authentification, propositions ESP, sélecteurs', tone: 'emerald' },
+    { from: 'h', to: 'b', label: 'IKE_AUTH', sub: 'identité, authentification, ESP choisi', style: 'dashed', tone: 'sky' },
+    { note: 'Child SA installée : les données circulent en ESP', tone: 'violet' },
+    { from: 'b', to: 'h', label: 'ESP', sub: '10.20.10.10 → 10.10.20.10, chiffré', tone: 'violet' },
+  ]}
+  caption="IKEv2 en quatre messages. Le premier échange crée un canal chiffré, le second authentifie les deux firewalls et crée la Child SA qui transportera les données."
+/>
+
+## Le mode tunnel et le paquet ESP
+
+Entre deux firewalls, IPsec fonctionne en **mode tunnel** : le paquet d'origine, avec ses adresses
+privées, est entièrement chiffré et placé dans un nouveau paquet entre les deux adresses publiques.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: "D'origine", fields: [
+      { label: 'IP', sub: '10.20.10.10 → 10.10.20.10', span: 4, tone: 'emerald', start: 4 },
+      { label: 'TCP + données', span: 5, tone: 'emerald' },
+    ] },
+    { label: 'Sur Internet', fields: [
+      { label: 'Nouvel en-tête IP', sub: '198.51.100.2 → 203.0.113.2', span: 3, tone: 'slate' },
+      { label: 'En-tête ESP', sub: 'SPI, séquence', span: 2, tone: 'violet' },
+      { label: 'Paquet d’origine chiffré', sub: 'IP privée + TCP + données', span: 5, tone: 'violet', dashed: true },
+      { label: 'ICV', sub: 'intégrité', span: 2, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="44rem"
+  caption="En mode tunnel, rien du paquet d'origine n'est visible sur Internet : ni ses adresses privées, ni ses ports. Le SPI désigne la Child SA à utiliser pour le déchiffrer."
+/>
+
+Le **mode transport**, qui ne chiffre que les données et garde l'en-tête d'origine, sert surtout entre deux
+machines (ou pour protéger un tunnel GRE) : on le rencontre peu entre firewalls.
+
+## Choisir les algorithmes
+
+Chaque SA se négocie à partir de **propositions** : chacun annonce les combinaisons qu'il accepte, et la
+première commune est retenue. Si aucune ne correspond, la négociation échoue.
+
+| Rôle | Recommandé | À proscrire |
+|---|---|---|
+| Chiffrement | AES-GCM 256 (chiffrement et intégrité en un), ou AES-CBC 256 avec SHA-256 | DES, 3DES |
+| Intégrité / PRF | SHA-256, SHA-384 | MD5, SHA-1 |
+| Échange Diffie-Hellman | Groupes 19, 20 (courbes elliptiques), 21, ou 15+ (3072 bits) | Groupes 1, 2, 5 |
+| PFS (*Perfect Forward Secrecy*) | Activé : un nouvel échange DH à chaque renouvellement de Child SA | Désactivé |
+
+L'ANSSI publie des recommandations détaillées pour IPsec ; les valeurs ci-dessus en sont l'esprit.
+Les durées de vie typiques : quelques heures pour l'IKE SA, une heure pour la Child SA. Les clés sont
+renouvelées automatiquement avant expiration, sans couper le tunnel.
+
+## S'authentifier : clé partagée ou certificats
+
+- **Clé partagée** (PSK, *pre-shared key*) : la même clé configurée des deux côtés. Simple, mais elle doit
+  être longue, aléatoire, **différente pour chaque tunnel**, et elle se retrouve en clair dans les
+  sauvegardes de configuration.
+- **Certificats** : chaque firewall présente un certificat émis par la PKI de l'entreprise (voir
+  [TLS, certificats et inspection](/formations/proxy/tls-pki)). Rien de secret n'est partagé, la révocation
+  d'un site ne touche pas les autres, et c'est la seule méthode raisonnable au-delà de quelques tunnels.
+
+## Par politique ou par route
+
+C'est le choix d'architecture le plus important :
+
+| | VPN par politique (*policy-based*) | VPN par route (*route-based*) |
+|---|---|---|
+| **Ce qui entre dans le tunnel** | Ce que décrivent les **sélecteurs de trafic** : « 10.20.10.0/24 vers 10.10.20.0/24 » | Ce qui est **routé** vers l'interface du tunnel (<Term id="vti" />) |
+| **Ajouter un réseau** | Modifier les sélecteurs des deux côtés, renégocier | Ajouter une route |
+| **Routage dynamique** | Impossible | Possible : BGP ou OSPF au-dessus du tunnel |
+| **Redondance** | Difficile | Deux tunnels, deux routes ou deux sessions BGP |
+| **Interopérabilité** | Les sélecteurs doivent correspondre exactement des deux côtés | Sélecteurs `0.0.0.0/0` des deux côtés, beaucoup moins d'erreurs |
+
+Le **VPN par route** est aujourd'hui la norme entre firewalls. Avec deux tunnels vers deux fournisseurs
+d'accès différents et une session <Term id="bgp" /> dans chacun, la bascule se fait toute seule, avec les
+mécanismes vus dans la formation [Routage dynamique](/formations/routing). C'est aussi exactement ainsi
+que l'on se raccorde aux clouds publics (saut 8).
+
+## Traverser le NAT
+
+ESP n'a pas de ports : un routeur qui fait du PAT ne sait pas le traduire. Quand IKE détecte un NAT sur le
+chemin, les deux extrémités encapsulent ESP dans **UDP 4500** : c'est le **NAT-T** (*NAT Traversal*). Côté
+firewall, il faut donc autoriser **UDP 500, UDP 4500 et ESP** entre les deux adresses publiques.
+
+## MTU et MSS
+
+L'encapsulation ajoute 50 à 70 octets à chaque paquet. Un paquet de 1500 octets ne tient plus dans le lien
+Internet : il est fragmenté, ou jeté si le bit *Don't Fragment* est positionné. Symptôme classique : le
+ping passe, la poignée de main TCP aussi, mais les transferts restent bloqués. La parade est celle du
+chapitre [TCP et UDP](/formations/fundamentals/tcp-udp) : réduire le **MSS** à 1360 ou 1350 sur l'interface
+du tunnel.
+
+## Ce que ça donne chez les constructeurs
+
+Un VPN par route vers l'agence, avec AES-GCM et le groupe DH 20 :
+
+```text title="FortiGate (CLI)"
+config vpn ipsec phase1-interface
+    edit "to-branch"
+        set interface "port1"
+        set ike-version 2
+        set peertype any
+        set proposal aes256gcm-prfsha384
+        set dhgrp 20
+        set remote-gw 198.51.100.2
+        set psksecret <clé-partagée>
+    next
+end
+config vpn ipsec phase2-interface
+    edit "to-branch"
+        set phase1name "to-branch"
+        set proposal aes256gcm
+        set dhgrp 20
+    next
+end
+config router static
+    edit 10
+        set dst 10.20.0.0 255.255.0.0
+        set device "to-branch"
+    next
+end
+```
+
+Chez FortiGate, la phase 1 crée une interface `to-branch` : il reste à écrire les règles de la politique
+entre cette interface et les zones internes.
+
+```text title="Palo Alto (CLI, mode configuration)"
+set network ike crypto-profiles ike-crypto-profiles IKE-GCM encryption aes-256-gcm hash sha384 dh-group group20
+set network ike crypto-profiles ipsec-crypto-profiles IPSEC-GCM esp encryption aes-256-gcm authentication none dh-group group20
+set network ike gateway GW-BRANCH protocol version ikev2
+set network ike gateway GW-BRANCH protocol ikev2 ike-crypto-profile IKE-GCM
+set network ike gateway GW-BRANCH authentication pre-shared-key key <clé-partagée>
+set network ike gateway GW-BRANCH local-address interface ethernet1/1
+set network ike gateway GW-BRANCH peer-address ip 198.51.100.2
+set network interface tunnel units tunnel.1 ip 169.254.42.1/30
+set network tunnel ipsec TUN-BRANCH tunnel-interface tunnel.1 auto-key ike-gateway GW-BRANCH
+set network tunnel ipsec TUN-BRANCH auto-key ipsec-crypto-profile IPSEC-GCM
+set network virtual-router default routing-table ip static-route BRANCH destination 10.20.0.0/16 interface tunnel.1
+```
+
+Chez Palo Alto, l'interface `tunnel.1` doit aussi être placée dans une zone (par exemple `vpn`) et dans le
+virtual router.
+
+Chez **Stormshield**, le tunnel se configure dans *Configuration > VPN > VPN IPsec* : un correspondant
+(l'adresse publique de l'agence et sa clé ou son certificat), des **profils de chiffrement** IKE et IPsec,
+et une **interface virtuelle IPsec** pour le mode par route, vers laquelle on route le réseau distant.
+
+## Dépanner un tunnel
+
+On dépanne IPsec **dans l'ordre des étapes** :
+
+| Symptôme | Cause probable |
+|---|---|
+| Aucune réponse au premier message | UDP 500 / 4500 bloqué, mauvaise adresse du correspondant, firewall en amont |
+| `NO_PROPOSAL_CHOSEN` à l'IKE_SA_INIT | Propositions IKE différentes (chiffrement, PRF, groupe DH) |
+| `AUTHENTICATION_FAILED` | Clé partagée différente, identité (ID) attendue différente, certificat refusé |
+| IKE SA établie, mais pas de Child SA (`NO_PROPOSAL_CHOSEN` ou `TS_UNACCEPTABLE`) | Propositions ESP ou PFS différentes ; sélecteurs de trafic différents (VPN par politique) |
+| Tunnel établi, mais pas de trafic | Route manquante vers le tunnel, règle de politique manquante, NAT appliqué au trafic du tunnel |
+| Tunnel établi, petits paquets OK, gros bloqués | MTU et MSS |
+
+<Callout type="field">
+Le cas le plus fréquent entre deux constructeurs différents : la phase 1 monte, la phase 2 non. Chacun
+regarde son équipement, voit « tunnel : actif » et accuse l'autre. Dans la grande majorité des cas, la
+différence est dans la proposition ESP (le PFS activé d'un seul côté, un groupe DH différent) ou, pour un
+VPN par politique, dans les sélecteurs : `10.10.0.0/16` d'un côté, `10.10.20.0/24` de l'autre. Échangez
+les **journaux du répondeur** : c'est lui qui écrit ce qu'il a reçu et pourquoi il a refusé.
+</Callout>
+
+## L'accès distant
+
+Pour les utilisateurs nomades, le même firewall accepte des connexions VPN depuis un **client** installé
+sur le poste (FortiClient, GlobalProtect, client VPN Stormshield), en IPsec ou en TLS (« VPN SSL »).
+L'authentification se fait sur l'annuaire, avec une <Term id="mfa" /> obligatoire. Les VPN d'accès
+distant exposés sur Internet ont été la cible de très nombreuses failles critiques ces dernières années :
+mises à jour sans délai, et migration progressive vers l'accès par application (**ZTNA**), où l'utilisateur
+n'accède qu'aux applications autorisées et pas au réseau entier (voir le SSE au saut
+[Proxy et load balancing](/formations/proxy/forward-proxy)).
+
+## Dans le lab
+
+`fw-hq` et `fw-branch` sont reliés par un VPN IPsec **par route**, monté par **strongSwan** : chacun a une
+interface `ipsec0` (une VTI), et une route vers le réseau de l'autre site par cette interface.
+
+<CodeFile lab="security" file="fw-branch/swanctl.conf" />
+
+<Lab name="security" lang="fr" />
+
+**1. L'état du tunnel.**
+
+```bash
+docker exec clab-security-fw-hq swanctl --list-sas
+```
+
+```text
+branch: #2, ESTABLISHED, IKEv2, f2b6c453ffda8037_i e47fbbe19bcce409_r*
+  local  'fw-hq.example.com' @ 203.0.113.2[4500]
+  remote 'fw-branch.example.com' @ 198.51.100.2[4500]
+  AES_GCM_16-256/PRF_HMAC_SHA2_384/ECP_384
+  net: #4, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256
+    in  c07f1d2b (0x0000002a),    710 bytes,    11 packets
+    out c309e1f4 (0x0000002a),   1205 bytes,     6 packets
+    local  0.0.0.0/0
+    remote 0.0.0.0/0
+```
+
+- `ESTABLISHED, IKEv2` et `AES_GCM_16-256/PRF_HMAC_SHA2_384/ECP_384` : l'IKE SA, avec ses algorithmes
+  (`ECP_384` est le groupe DH 20) ;
+- `net: … INSTALLED, TUNNEL` : la Child SA, avec ses deux **SPI** (un par sens) et ses compteurs ;
+- `0.0.0.0/0` des deux côtés : c'est un VPN par route, le routage décide de ce qui entre dans le tunnel.
+
+**2. Du trafic dans le tunnel.** Depuis l'agence, consultez l'intranet du siège :
+
+```bash
+docker exec clab-security-pc-branch curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10/
+```
+
+Puis lancez une capture sur l'interface Internet de `fw-hq`, et, dans un second terminal, un ping depuis
+l'agence :
+
+```bash
+docker exec -it clab-security-fw-hq tcpdump -nni eth1
+```
+
+```bash
+docker exec clab-security-pc-branch ping -c2 10.10.20.10
+```
+
+```text
+IP 198.51.100.2 > 203.0.113.2: ESP(spi=0xc07f1d2b,seq=0xc), length 120
+IP 203.0.113.2 > 198.51.100.2: ESP(spi=0xc309e1f4,seq=0x7), length 120
+```
+
+Sur Internet, on ne voit que les deux adresses publiques et le SPI : ni les adresses privées, ni le
+protocole ICMP. Le routeur `inet` ne connaît d'ailleurs aucun réseau privé (`show ip route` sur `inet`).
+
+**3. La politique s'applique aussi au tunnel.** Depuis l'agence, la base de données du siège est
+refusée : la règle `R40` de `fw-hq` n'autorise que HTTP depuis `ipsec0`.
+
+```bash
+docker exec clab-security-pc-branch nc -w 3 10.10.20.10 5432
+```
+
+Un tunnel n'est pas une autorisation : le trafic qui en sort passe par la politique comme le reste.
+
+**4. Casser la phase 2.** Dans `fw-branch/swanctl.conf`, remplacez
+`esp_proposals = aes256gcm16-ecp384` par `esp_proposals = aes128-sha256-modp2048`, puis rechargez et
+relancez le tunnel :
+
+```bash
+docker exec clab-security-fw-branch swanctl --load-all
+docker exec clab-security-fw-branch swanctl --terminate --ike hq
+docker exec clab-security-fw-branch swanctl --initiate --child net
+```
+
+```text
+[IKE] received NO_PROPOSAL_CHOSEN notify, no CHILD_SA built
+[IKE] failed to establish CHILD_SA, keeping IKE_SA
+initiate failed: establishing CHILD_SA 'net' failed
+```
+
+L'IKE SA est établie, la Child SA non : le cas d'école. Le journal du **répondeur** donne la raison exacte :
+
+```bash
+docker exec clab-security-fw-hq grep -E "proposals|no acceptable" /var/log/charon.log
+```
+
+```text
+06[CFG] received proposals: ESP:AES_CBC_128/HMAC_SHA2_256_128/NO_EXT_SEQ
+06[CFG] configured proposals: ESP:AES_GCM_16_256/ECP_384/NO_EXT_SEQ
+06[IKE] no acceptable proposal found
+```
+
+Remettez la proposition d'origine, rechargez, et relancez les trois commandes : le tunnel remonte.
+
+## À retenir
+
+- **IKEv2** négocie et authentifie (UDP 500 / 4500), **ESP** chiffre les données (protocole IP 50). Une
+  **IKE SA** (phase 1), puis des **Child SA** (phase 2).
+- En **mode tunnel**, le paquet privé est entièrement chiffré et encapsulé entre les adresses publiques.
+- **AES-GCM**, SHA-2, groupes DH **19 / 20** et PFS ; jamais de DES, MD5, SHA-1 ni de groupes 1, 2, 5.
+- Des **certificats** dès qu'il y a plus de quelques tunnels ; une clé partagée longue et unique sinon.
+- Le **VPN par route** (VTI) est la norme : on route vers le tunnel, et on peut y faire passer BGP.
+- Dépanner **dans l'ordre** : joignabilité, phase 1, phase 2, routage et politique, puis MTU. Lire les
+  journaux du **répondeur**.

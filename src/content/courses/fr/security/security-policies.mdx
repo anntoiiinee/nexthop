@@ -1,0 +1,237 @@
+---
+title: "Politiques de sécurité"
+description: "Écrire une politique de firewall qui reste lisible : ordre d'évaluation, objets, moindre privilège, règles trop larges, masquées ou redondantes, cycle de vie des règles, interaction avec le NAT et automatisation."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, policy, security, automation]
+vendor: [fortinet, paloalto, stormshield]
+order: 2
+---
+
+Un firewall neuf a une politique de dix règles, claires et justifiées. Cinq ans plus tard, il en a mille,
+dont personne ne sait plus à quoi servent la moitié, et chaque nouvelle demande est ajoutée « au-dessus,
+pour être sûr que ça marche ». La sécurité du réseau ne dépend pas seulement du firewall choisi, mais de la
+**qualité de sa politique**. Ce chapitre explique comment l'écrire et, surtout, comment l'entretenir.
+
+## Une politique se lit de haut en bas
+
+Le firewall compare chaque nouvelle connexion aux règles **dans l'ordre**, et applique la **première qui
+correspond**. Les règles suivantes ne sont même pas lues. Deux conséquences :
+
+- **L'ordre change le résultat.** Une règle large placée en haut s'applique avant une règle précise placée
+  en dessous.
+- **Les règles précises vont en haut, les larges en bas**, juste avant le deny implicite.
+
+<Topology
+  width={700}
+  height={250}
+  nodes={[
+    { id: 'pc', type: 'host', x: 80, y: 120, label: 'pc-hq', sub: '→ srv-hq:80' },
+    { id: 'r15', type: 'firewall', x: 290, y: 120, label: 'R15', sub: 'users → servers, tout', tone: 'amber' },
+    { id: 'r20', type: 'firewall', x: 470, y: 120, label: 'R20', sub: 'users → srv-hq:80', tone: 'slate' },
+    { id: 'srv', type: 'server', x: 630, y: 120, label: 'srv-hq', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'pc', to: 'r15', tone: 'emerald' },
+    { from: 'r15', to: 'r20', style: 'dashed' },
+    { from: 'r20', to: 'srv', style: 'dashed' },
+  ]}
+  flows={[
+    { from: 'pc', to: 'r15', label: 'correspond : accepté', tone: 'emerald', offset: -30 },
+  ]}
+  notes={[
+    { x: 470, y: 215, text: 'jamais lue : règle masquée', tone: 'rose' },
+  ]}
+  caption="La règle R15, trop large, est évaluée avant R20 : R20 ne sert jamais. Supprimer R20 ne changerait rien ; supprimer R15, beaucoup."
+/>
+
+## Les objets
+
+Une règle ne devrait jamais contenir d'adresse IP en dur. On crée des **objets** (un serveur, un réseau, un
+service) et des **groupes** d'objets, avec des noms qui ont un sens :
+
+| À éviter | Préférable |
+|---|---|
+| `10.10.20.10` | `SRV-HQ-INTRANET` |
+| `10.10.10.0/24, 10.20.10.0/24` | Groupe `GRP-USERS` (siège et agence) |
+| `tcp/8443` | Service `SVC-APP-ADMIN` |
+
+Quand le serveur change d'adresse, on modifie l'objet une fois, et toutes les règles suivent. Les
+conventions de nommage des objets suivent la même logique que celles des équipements (voir
+[Conventions de nommage et IPAM](/formations/automation/naming-ipam)).
+
+## Le moindre privilège
+
+Chaque règle doit autoriser **le minimum nécessaire** au besoin exprimé : la bonne source, la bonne
+destination, le bon service. Les signes d'une règle trop large :
+
+| Signe | Exemple | Risque |
+|---|---|---|
+| Service `any` | « utilisateurs vers serveurs, tous ports » | Accès aux bases de données, au partage de fichiers, à l'administration |
+| Source ou destination `any` | « n'importe qui vers le serveur web » en interne | Le premier poste compromis atteint le serveur |
+| Réseau entier au lieu d'un serveur | « utilisateurs vers 10.10.0.0/16 » | Tous les serveurs présents et futurs du /16 |
+| Règle « temporaire » sans date de fin | « ouverture pour la migration, ticket 2019 » | Elle sera encore là dans dix ans |
+
+Un NGFW permet d'aller plus loin : autoriser une **application** (par exemple `ssl` et `web-browsing`
+chez Palo Alto) plutôt qu'un port, et un **groupe d'utilisateurs** plutôt qu'un réseau.
+
+## Les règles inutiles : masquées et redondantes
+
+Une politique ancienne contient presque toujours :
+
+- des **règles masquées** (*shadowed*) : une règle plus haute couvre déjà tout ce qu'elles autorisent. Elles
+  ne servent jamais, mais donnent une fausse idée de ce qui est réellement permis ;
+- des **règles redondantes** : deux règles qui autorisent la même chose, souvent ajoutées par deux personnes
+  différentes à deux ans d'écart ;
+- des **règles mortes** : elles autorisent un flux vers un serveur qui n'existe plus.
+
+L'outil le plus simple pour les trouver : les **compteurs d'utilisation** (*hit counts*). Une règle dont le
+compteur reste à zéro pendant des mois est masquée, morte, ou liée à un usage rare (une clôture annuelle,
+un plan de reprise) : il faut enquêter avant de supprimer. Tous les firewalls affichent ces compteurs,
+avec la date de dernière utilisation. Palo Alto propose en plus un *Policy Optimizer*, et les outils
+d'analyse de politique (Tufin, AlgoSec, FireMon) détectent automatiquement masquages et redondances sur un
+parc entier.
+
+Pour savoir quelle règle s'applique à un flux précis, sans attendre qu'il passe, les firewalls savent
+**simuler** l'évaluation :
+
+```text title="Palo Alto : quelle règle pour ce flux ?"
+test security-policy-match from users to servers source 10.10.10.10 destination 10.10.20.10 protocol 6 destination-port 5432
+```
+
+```text title="FortiGate : même question"
+diagnose firewall iprope lookup 10.10.10.10 51234 10.10.20.10 5432 6 port2
+```
+
+## Le cycle de vie d'une règle
+
+La plupart des politiques se dégradent parce qu'on ajoute des règles sans jamais en retirer. Chaque règle
+devrait porter, dans son nom, son commentaire ou ses étiquettes :
+
+- **un propriétaire** : l'équipe ou la personne qui en a besoin, et qu'on interrogera à la revue ;
+- **une justification** : le ticket ou la demande d'origine ;
+- **une date de création, et une date d'expiration** pour tout ce qui est temporaire.
+
+<PacketFormat
+  cols={10}
+  rows={[
+    { fields: [
+      { label: '1. Demande', sub: 'besoin, propriétaire', span: 2, tone: 'sky' },
+      { label: '2. Analyse', sub: 'moindre privilège', span: 2, tone: 'sky' },
+      { label: '3. Mise en place', sub: 'objets, commentaire', span: 2, tone: 'emerald' },
+      { label: '4. Revue', sub: 'annuelle, compteurs', span: 2, tone: 'violet' },
+      { label: '5. Retrait', sub: 'ou reconduction', span: 2, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Une règle naît d'une demande, et doit pouvoir mourir : la revue périodique avec les propriétaires est l'étape que l'on oublie."
+/>
+
+Une **revue** au moins annuelle, règle par règle, avec les propriétaires, est souvent exigée par les
+référentiels de sécurité (ISO 27001, PCI DSS). Elle s'appuie sur les compteurs : on commence par les règles
+jamais utilisées et les règles expirées.
+
+<Callout type="field">
+La règle « temporaire » est la plus durable de toutes. Une ouverture large pour une migration, un
+prestataire, un test, sans date de fin ni propriétaire, survit à la migration, au départ du prestataire et
+à la personne qui l'a créée. Au moment de l'audit, personne n'ose la supprimer de peur de casser quelque
+chose. La parade est simple : pas de règle sans propriétaire et sans date, et une échéance qui déclenche
+automatiquement une relance. Les FortiGate et les Palo Alto savent d'ailleurs associer un **calendrier**
+(*schedule*) à une règle, qui la désactive seul à la date prévue.
+</Callout>
+
+## Politique et NAT
+
+Au chapitre précédent, on a vu que l'ordre entre NAT et politique dépend du constructeur. En écrivant une
+règle, il faut donc savoir **quelles adresses** le firewall compare :
+
+| Cas | Ce qu'on écrit dans la règle de sécurité |
+|---|---|
+| Sortie Internet (SNAT) | Partout : l'adresse **privée** du poste en source. La traduction se fait après la politique |
+| Publication (DNAT), Palo Alto | L'adresse **publique** en destination, mais la zone **réelle** du serveur (après NAT) |
+| Publication (DNAT), FortiGate | L'objet **VIP** en destination, qui porte la traduction |
+| Publication (DNAT), Stormshield | Une règle de NAT de destination, puis une règle de filtrage : voir la documentation de votre version |
+
+## Automatiser
+
+Une politique de plusieurs centaines de règles se gère mal à la main. Les trois constructeurs exposent une
+**API** (REST pour FortiGate et Stormshield, XML et REST pour Palo Alto) et des collections Ansible
+(`fortinet.fortios`, `paloaltonetworks.panos`, `stormshield.sns`). On peut alors :
+
+- décrire les règles en YAML, dans Git, et les déployer comme les configurations réseau du saut
+  [Automatisation](/formations/automation) ;
+- faire relire chaque demande d'ouverture par une *merge request*, avec le ticket en description ;
+- exporter régulièrement la politique et ses compteurs pour la revue annuelle.
+
+Les consoles de gestion centralisées (FortiManager, Panorama, Stormshield Management Center) permettent
+aussi de partager les objets et les règles communes entre de nombreux firewalls.
+
+## Dans le lab
+
+La politique de `fw-hq` contient une règle héritée, `R15`, que personne n'a remise en cause depuis 2019.
+
+<Lab name="security" lang="fr" />
+
+**1. La matrice de flux.** Voici ce dont le siège a réellement besoin :
+
+| Source | Destination | Service | Besoin | Règle |
+|---|---|---|---|---|
+| Utilisateurs | Internet | HTTP, HTTPS, DNS, ping | Navigation | R10 à R12 |
+| Utilisateurs | `srv-hq` | HTTP | Intranet | R20 |
+| Internet | `dmz-web` (par DNAT) | HTTP | Site public | R30 |
+| Agence | `srv-hq` | HTTP, ping | Intranet depuis l'agence | R40, R41 |
+| Utilisateurs | Agence | tout | Support des postes de l'agence | R42 |
+
+La base de données de `srv-hq` (port 5432) n'est utilisée que par l'application intranet, sur le serveur
+lui-même : **aucun flux réseau** ne doit l'atteindre.
+
+**2. Constater l'écart.** Depuis le poste du siège :
+
+```bash
+docker exec clab-security-pc-hq curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10/
+docker exec clab-security-pc-hq nc -w 3 10.10.20.10 5432
+```
+
+L'intranet répond (`200`), mais la base de données aussi : `base de donnees srv-hq`. Rien dans la matrice
+ne justifie ce second flux.
+
+**3. Lire les compteurs.**
+
+```bash
+docker exec clab-security-fw-hq nft list chain inet filter transit
+```
+
+```text
+iifname "eth2" oifname "eth3" counter packets 2 bytes 120 accept comment "R15 legacy : utilisateurs vers serveurs, tout (ticket 2019)"
+iifname "eth2" oifname "eth3" ip daddr 10.10.20.10 tcp dport 80 counter packets 0 bytes 0 accept comment "R20 intranet"
+```
+
+Le compteur de `R20` reste à **0** alors que l'intranet fonctionne : tout le trafic est pris par `R15`, placée
+au-dessus et plus large. `R20` est **masquée**, et `R15` autorise bien plus que la matrice.
+
+**4. Corriger.** Supprimez la ligne `R15` de `fw-hq/nftables.nft`, rechargez, et refaites les tests :
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-pc-hq curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10/
+docker exec clab-security-pc-hq nc -w 3 10.10.20.10 5432
+```
+
+L'intranet répond toujours, grâce à `R20` dont le compteur augmente maintenant. La base de données ne
+répond plus. La politique correspond enfin à la matrice.
+
+**5. Pour aller plus loin.** Ajoutez dans le commentaire de chaque règle un propriétaire et un ticket
+(`comment "R20 intranet | équipe intranet | CHG-1234"`). Sur une VM d'évaluation FortiGate ou Palo Alto,
+refaites l'étape 3 avec les compteurs de l'interface web et la commande de simulation vue plus haut.
+
+## À retenir
+
+- La politique est lue **de haut en bas**, la **première règle** qui correspond s'applique : les règles
+  précises en haut, les larges en bas.
+- Des **objets** nommés, jamais d'adresse en dur ; le **moindre privilège** pour chaque règle.
+- Les **compteurs** révèlent les règles masquées, redondantes ou mortes ; la **simulation** dit quelle règle
+  s'applique à un flux.
+- Chaque règle a un **propriétaire**, une **justification** et, si elle est temporaire, une **date de fin**.
+  Une revue annuelle avec les propriétaires.
+- Savoir sur quelles adresses (avant ou après NAT) votre firewall évalue la politique.
+- Une politique dans Git et déployée par API se relit et s'audite comme du code.

@@ -88,7 +88,7 @@ public/
 ├── favicon.svg, favicon.ico, apple-touch-icon.png, icon-*.png, site.webmanifest
 ├── og-default.png                 # image de partage par défaut (1200×630)
 ├── logos/                         # logos disponibles en PNG seulement (utilisés en masque CSS)
-└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI)
+└── labs/<lab>/topology.clab.yml + configs/*.cfg   # evpn-basic, static-routing, ospf-basic, bgp-basic, netops (scripts Python/Ansible), proxy-lb (Squid, HAProxy, nginx, PKI), security (nftables, strongSwan)
 src/
 ├── content.config.js              # collections "tutorials" et "courses" (schéma Zod)
 ├── content/
@@ -229,6 +229,7 @@ Mise en route (une seule fois) :
 - [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
 - [x] Formation Automatisation : chapitre « Conventions de nommage et IPAM » (`naming-ipam`, avant NetBox), avec `conventions.yml` et `python/check_conventions.py` dans le lab `netops`
 - [x] Saut 6 · Proxy et load balancing complet en FR et EN : 5 chapitres (proxy sortant, TLS et inspection, reverse proxy, load balancing et F5, WAF), lab `proxy-lb` (Squid, HAProxy, nginx, PKI générée par `pki/make-pki.sh`), composant `<Sequence>`
+- [x] Saut 5 · La sécurité complet en FR et EN : 4 chapitres (bases d'un firewall, politiques de sécurité, VPN IPsec, segmentation), multi-constructeur (FortiGate, Palo Alto, Stormshield), lab `security` (firewalls Linux nftables + strongSwan en VPN par route VTI, routeur cEOS)
 - [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
 - [ ] Contenus à venir : Jinja2 en détail, Vault, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 

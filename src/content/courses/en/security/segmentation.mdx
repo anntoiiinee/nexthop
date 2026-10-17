@@ -1,0 +1,234 @@
+---
+title: "Segmentation"
+description: "Splitting the network to limit lateral movement: macro and micro-segmentation, zones, VRFs and internal firewall, flow matrix, 802.1X and NAC, zero trust principles, OT and IoT, and how to segment an existing network."
+pubDate: 2026-10-17
+level: intermediate
+tags: [segmentation, zero-trust, nac, 802.1x, vrf, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 4
+---
+
+An attacker almost never lands directly on the server they target. They get in through a workstation (a
+booby-trapped attachment, a stolen password), then they **move**: they look for file shares, administration
+servers, the directory, until they get the rights that let them encrypt the whole information system. This
+**lateral movement** is the decisive step of a ransomware attack. In a "flat" network, where everyone
+reaches everyone, nothing slows it down.
+
+**Segmentation** splits the network into zones separated by controls, so that a compromise stays
+**contained** within its zone.
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 20, y: 20, w: 320, h: 260, label: 'Flat network', tone: 'rose' },
+    { x: 380, y: 20, w: 320, h: 260, label: 'Segmented network', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'p1', type: 'host', x: 80, y: 90, label: 'Compromised PC', tone: 'rose' },
+    { id: 's1', type: 'server', x: 280, y: 90, label: 'Servers', tone: 'rose' },
+    { id: 'a1', type: 'server', x: 80, y: 220, label: 'Directory', tone: 'rose' },
+    { id: 'o1', type: 'server', x: 280, y: 220, label: 'Backups', tone: 'rose' },
+    { id: 'p2', type: 'host', x: 440, y: 90, label: 'Compromised PC', tone: 'rose' },
+    { id: 'fw', type: 'firewall', x: 540, y: 155, label: 'Firewall', tone: 'emerald' },
+    { id: 's2', type: 'server', x: 640, y: 90, label: 'Servers', tone: 'violet' },
+    { id: 'o2', type: 'server', x: 640, y: 220, label: 'Backups', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'p1', to: 's1', tone: 'rose' }, { from: 'p1', to: 'a1', tone: 'rose' }, { from: 'p1', to: 'o1', tone: 'rose' },
+    { from: 'p2', to: 'fw' },
+    { from: 'fw', to: 's2', tone: 'emerald' },
+    { from: 'fw', to: 'o2', style: 'blocked' },
+  ]}
+  caption="On the left, the compromised workstation reaches everything. On the right, it only reaches what the policy allows: the servers' web application, never the backups."
+/>
+
+## Macro and micro-segmentation
+
+| | Macro-segmentation | Micro-segmentation |
+|---|---|---|
+| **Granularity** | Large zones: users, servers, DMZ, administration, guests, OT | Each application, or even each machine |
+| **Where control happens** | On a firewall between zones | As close as possible to machines: hypervisor firewall, agent on the server, switch ACL |
+| **Tools** | VLANs, <Term id="vrf" />s, internal firewall | Distributed firewalls (VMware NSX, Illumio, Cisco Secure Workload), cloud security groups |
+| **Effort** | Reasonable, and most of the benefit | High: you need to know each application's flows precisely |
+
+**Always** start with macro-segmentation: it already stops most lateral movement.
+
+## Typical zones
+
+| Zone | Content | Basic rule |
+|---|---|---|
+| **Users** | Workstations | To servers: applications only. Never between workstations |
+| **Servers** | Internal applications | No initiative towards workstations; to the Internet through the proxy only |
+| **<Term id="dmz" />** | Servers published on the Internet | Can initiate **nothing** towards the inside: if compromised, it stays isolated |
+| **Administration** | Bastion, administration tools | The only zone reaching management interfaces (see [Management and out-of-band access](/en/courses/operations/oob)) |
+| **Backups** | Backup servers and storage | Isolated from everything, including ordinary administrators: the last line against ransomware |
+| **Guests, IoT** | Guest Wi-Fi, connected devices | Internet only |
+| **OT** (industrial) | PLCs, industrial supervision | Cut off from IT, exchanges through a dedicated buffer zone |
+
+**Backups** deserve special attention: modern ransomware tries to destroy them before encrypting the rest.
+A backup zone reachable from any server with the domain administrator account protects nothing.
+
+## Separating zones: VLANs, VRFs and firewall
+
+- **VLAN and subnet**: each zone has its VLAN and subnet (see [VLANs](/en/courses/fundamentals/vlan)). It is
+  the basic separation, but a VLAN alone filters nothing: you need a control between them.
+- **ACLs on the core**: stateless filtering between VLANs, directly on the switches. Fast and cheap, but
+  quickly unreadable, with neither logging nor application identification.
+- **Internal firewall**: the zones' gateway is the firewall itself, or inter-zone traffic is steered to it.
+  Stateful filtering, logs, IPS: the reference solution between zones of different sensitivity.
+- **VRF**: in a large network or a data center fabric, each zone is a VRF, a separate routing table. Two
+  VRFs do not talk at all, except through a chosen crossing point, usually a firewall. It is how you
+  segment at scale, as covered in the Data center course.
+
+<Callout type="note">
+A firewall only sees traffic **that crosses it**. Two workstations in the same VLAN talk directly, through
+the switch, without ever going through it. To control traffic **inside** a zone, you need other tools:
+*private VLANs* or port isolation on the switch (workstations only reach their gateway), the workstations'
+local firewall, or micro-segmentation.
+</Callout>
+
+## The flow matrix
+
+You do not segment without knowing **who needs to talk to whom**. The flow matrix lists, for each pair of
+zones, the required flows, their justification and their owner. It is the reference document for the policy
+(see [Security policies](/en/courses/security/security-policies)).
+
+| From \ To | Users | Servers | DMZ | Internet | Administration |
+|---|---|---|---|---|---|
+| **Users** | forbidden | HTTPS applications | HTTPS | through the proxy | forbidden |
+| **Servers** | forbidden | per application | forbidden | updates, through the proxy | forbidden |
+| **DMZ** | forbidden | specific API, if essential | n/a | forbidden | forbidden |
+| **Internet** | forbidden | forbidden | HTTPS (DNAT) | n/a | forbidden |
+| **Administration** | remote support | SSH, RDP, API | SSH | updates | n/a |
+
+## Controlling network access: 802.1X and NAC
+
+Segmenting assumes you know **which zone** each device belongs to. On an access network, anyone can plug a
+laptop into a wall socket. <Term id="nac" /> (*Network Access Control*) addresses this:
+
+- **802.1X**: before opening the port, the switch asks the device to authenticate (with a certificate,
+  preferably), and relays the request to a RADIUS server (Cisco ISE, Aruba ClearPass, FortiNAC, Microsoft
+  NPS);
+- the server answers with a **decision**: accepted, refused, and above all **which VLAN** or ACL to place
+  the device in. A company laptop goes into the users VLAN, a printer into the printers VLAN, an unknown
+  device into a quarantine VLAN;
+- for devices that cannot do 802.1X (printers, cameras), MAC address authentication (**MAB**) is used, less
+  secure, complemented by profiling.
+
+## Zero trust
+
+The classic model trusts whatever is **inside** the network. <Term id="zerotrust" /> starts from the
+opposite principle: **no position on the network grants rights**. Every access is authenticated, authorised
+according to the user's identity and the state of their device, and limited to the requested application.
+
+In practice, zero trust is not a product but a direction:
+
+- strong authentication everywhere (<Term id="mfa" />), including internally;
+- access per **application** rather than per network (ZTNA, instead of a VPN that opens everything);
+- checking the device's state (up to date, encrypted, antivirus running) before granting access;
+- segmentation and logging, to detect and contain whatever gets through anyway.
+
+The segmentation of this chapter is its **network foundation**: without it, a compromised workstation inside
+keeps broad access, however good the authentication.
+
+## Industrial networks and IoT
+
+**OT** networks (PLCs, industrial supervision, building management) have specific constraints: devices you
+can neither update nor reboot, old protocols without authentication, and availability above everything.
+They are separated from IT by a **buffer zone** (an industrial DMZ): no direct flow between IT and OT, only
+exchanges through relay servers in that zone. The reference model is the zones and levels of the IEC 62443
+standard (and the Purdue model).
+
+**Connected devices** (cameras, badge readers, screens, sensors) follow the same logic: a dedicated VLAN, no
+access to the inside, Internet limited to the vendor's services.
+
+## Segmenting an existing network
+
+Segmenting a new network is easy. Segmenting a flat network that has been running for fifteen years is a
+project, carried out in this order:
+
+1. **Map**: inventory the machines and their roles (an IPAM helps).
+2. **Observe**: place the firewall between the future zones **letting everything through**, and log every
+   flow for several weeks, including a month-end.
+3. **Build the matrix** from those logs, and have it validated by the application owners. Each unjustified
+   flow is a question to ask, not a rule to create.
+4. **Write the policy**, temporarily keeping a last broad rule that allows and logs whatever is not
+   described yet.
+5. **Tighten**: when that last rule only sees unexpected flows, replace it with the implicit deny.
+
+<Callout type="field">
+The classic mistake is to start at step 4, trusting the applications' documentation. On cutover day, you
+discover the flows nobody had documented: the printer sending scans to a share, the licence server of a
+business application, the month-end scheduled task. The observation phase feels long; it costs much less
+than a week of production incidents.
+</Callout>
+
+## In the lab
+
+At headquarters, the `fw-hq` firewall already separates three zones: users, servers and DMZ. We check what it
+contains, then apply the observation approach.
+
+<Lab name="security" lang="en" />
+
+**1. Simulate a DMZ compromise.** Imagine the public web server `dmz-web` has been hacked. From that server,
+the attacker tries to go further:
+
+```bash
+docker exec clab-security-dmz-web nc -w 3 10.10.20.10 5432
+docker exec clab-security-dmz-web wget -q -T 3 -O /dev/null http://10.10.20.10/
+docker exec clab-security-dmz-web ping -c1 -W2 10.10.10.10
+docker exec clab-security-dmz-web wget -q -T 3 -O /dev/null http://192.0.2.10/
+```
+
+Everything fails: the DMZ can initiate nothing, neither to the servers, nor to the workstations, nor even to
+the Internet. The attacker cannot download tools or reach a command server either. The compromise stays
+**contained**. The website itself remains reachable from the Internet, because replies to incoming
+connections pass thanks to the session table.
+
+**2. Observe before blocking.** Start from the situation of the previous chapter, once `R15` is deleted: users
+only reach the intranet. Suppose you do not know the real flows between users and servers. Add an observation
+rule just before the last line of the `transit` chain, then reload and flush the session table:
+
+```text title="fw-hq/nftables.nft, before the implicit deny"
+        iifname $USERS oifname $SERVERS counter accept comment "OBS observation temporaire"
+```
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-fw-hq conntrack -F
+```
+
+Generate user activity, then list the sessions between the two zones:
+
+```bash
+docker exec clab-security-pc-hq sh -c 'curl -s -o /dev/null http://10.10.20.10/; nc -w 2 10.10.20.10 5432; ping -c1 10.10.20.10'
+docker exec clab-security-fw-hq conntrack -L -s 10.10.10.0/24 -d 10.10.20.0/24
+```
+
+```text
+tcp      6 119 TIME_WAIT src=10.10.10.10 dst=10.10.20.10 sport=42692 dport=5432 … [ASSURED]
+tcp      6 119 TIME_WAIT src=10.10.10.10 dst=10.10.20.10 sport=46540 dport=80 … [ASSURED]
+icmp     1 29 src=10.10.10.10 dst=10.10.20.10 type=8 code=0 …
+```
+
+That is the **observed** matrix: HTTP, ping, and a database access. The first two are justified; the third is
+a question for the application owner. In production, you keep observing for several weeks and log rather
+than reading the table by hand.
+
+**3. Tighten.** Delete the `OBS` rule and reload: only the flows described in the matrix remain allowed.
+
+**4. The limits.** A second workstation in the users VLAN would reach `pc-hq` directly, without going through
+`fw-hq`: the firewall only sees traffic **between** zones. On a real network, that is the job of port isolation
+on the access switch, or of the workstations' local firewall.
+
+## Key takeaways
+
+- Segmentation limits **lateral movement**: a compromise must stay within its zone.
+- **Macro-segmentation** first (zones, VLANs, VRFs, internal firewall), **micro-segmentation** next, where the
+  risk justifies it.
+- The **DMZ** initiates nothing towards the inside; **backups** are isolated from everything.
+- A **flow matrix** validated by the owners is the basis of the policy.
+- **802.1X and NAC** put each device in the right zone; **zero trust** removes any trust tied to network
+  position.
+- Segmenting an existing network: **observe** before blocking, then tighten gradually.

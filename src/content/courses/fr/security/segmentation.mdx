@@ -1,0 +1,242 @@
+---
+title: "Segmentation"
+description: "Découper le réseau pour limiter le mouvement latéral : macro et micro-segmentation, zones, VRF et firewall interne, matrice de flux, 802.1X et NAC, principes du zero trust, cas OT et IoT, et la démarche pour segmenter un réseau existant."
+pubDate: 2026-10-17
+level: intermediate
+tags: [segmentation, zero-trust, nac, 802.1x, vrf, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 4
+---
+
+Un attaquant n'entre presque jamais directement sur le serveur qu'il vise. Il entre par un poste (une
+pièce jointe piégée, un mot de passe volé), puis il se **déplace** : il cherche les partages de fichiers,
+les serveurs d'administration, l'annuaire, jusqu'à obtenir les droits qui lui permettent de chiffrer tout
+le système d'information. Ce **mouvement latéral** est l'étape décisive d'une attaque par rançongiciel. Dans
+un réseau « à plat », où tout le monde joint tout le monde, rien ne le freine.
+
+La **segmentation** découpe le réseau en zones séparées par des contrôles, pour qu'une compromission reste
+**contenue** dans sa zone.
+
+<Topology
+  width={720}
+  height={300}
+  groups={[
+    { x: 20, y: 20, w: 320, h: 260, label: 'Réseau à plat', tone: 'rose' },
+    { x: 380, y: 20, w: 320, h: 260, label: 'Réseau segmenté', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'p1', type: 'host', x: 80, y: 90, label: 'Poste compromis', tone: 'rose' },
+    { id: 's1', type: 'server', x: 280, y: 90, label: 'Serveurs', tone: 'rose' },
+    { id: 'a1', type: 'server', x: 80, y: 220, label: 'Annuaire', tone: 'rose' },
+    { id: 'o1', type: 'server', x: 280, y: 220, label: 'Sauvegardes', tone: 'rose' },
+    { id: 'p2', type: 'host', x: 440, y: 90, label: 'Poste compromis', tone: 'rose' },
+    { id: 'fw', type: 'firewall', x: 540, y: 155, label: 'Firewall', tone: 'emerald' },
+    { id: 's2', type: 'server', x: 640, y: 90, label: 'Serveurs', tone: 'violet' },
+    { id: 'o2', type: 'server', x: 640, y: 220, label: 'Sauvegardes', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'p1', to: 's1', tone: 'rose' }, { from: 'p1', to: 'a1', tone: 'rose' }, { from: 'p1', to: 'o1', tone: 'rose' },
+    { from: 'p2', to: 'fw' },
+    { from: 'fw', to: 's2', tone: 'emerald' },
+    { from: 'fw', to: 'o2', style: 'blocked' },
+  ]}
+  caption="À gauche, le poste compromis atteint tout. À droite, il n'atteint que ce que la politique autorise : l'application web des serveurs, jamais les sauvegardes."
+/>
+
+## Macro et micro-segmentation
+
+| | Macro-segmentation | Micro-segmentation |
+|---|---|---|
+| **Granularité** | De grandes zones : utilisateurs, serveurs, DMZ, administration, invités, OT | Chaque application, voire chaque machine |
+| **Où se fait le contrôle** | Sur un firewall entre les zones | Au plus près des machines : firewall de l'hyperviseur, agent sur le serveur, ACL du switch |
+| **Outils** | VLAN, <Term id="vrf" />, firewall interne | Firewalls distribués (VMware NSX, Illumio, Cisco Secure Workload), groupes de sécurité du cloud |
+| **Effort** | Raisonnable, et le plus gros du bénéfice | Élevé : il faut connaître précisément les flux de chaque application |
+
+On commence **toujours** par la macro-segmentation : elle arrête déjà la majorité des mouvements latéraux.
+
+## Les zones types
+
+| Zone | Contenu | Règle de base |
+|---|---|---|
+| **Utilisateurs** | Postes de travail | Vers les serveurs : seulement les applications. Jamais entre postes |
+| **Serveurs** | Applications internes | Pas d'initiative vers les postes ; vers Internet par le proxy seulement |
+| **<Term id="dmz" />** | Serveurs publiés sur Internet | Ne peut **rien** initier vers l'interne : si elle est compromise, elle reste isolée |
+| **Administration** | Bastion, outils d'administration | La seule zone qui joint les interfaces d'administration (voir [Management et accès hors bande](/formations/operations/oob)) |
+| **Sauvegardes** | Serveurs et stockage de sauvegarde | Isolée de tout, y compris des administrateurs ordinaires : c'est la dernière ligne contre un rançongiciel |
+| **Invités, IoT** | Wi-Fi invité, objets connectés | Internet uniquement |
+| **OT** (industriel) | Automates, supervision industrielle | Coupée de l'IT, échanges par une zone tampon dédiée |
+
+Les **sauvegardes** méritent une attention particulière : les rançongiciels modernes cherchent à les
+détruire avant de chiffrer le reste. Une zone de sauvegarde que l'on joint depuis n'importe quel serveur
+avec le compte d'administration du domaine ne protège de rien.
+
+## Séparer les zones : VLAN, VRF et firewall
+
+- **VLAN et sous-réseau** : chaque zone a son VLAN et son sous-réseau (voir les [VLAN](/formations/fundamentals/vlan)).
+  C'est la séparation de base, mais un VLAN seul ne filtre rien : il faut un contrôle entre eux.
+- **ACL sur le cœur de réseau** : un filtrage sans état entre VLAN, directement sur les switches. Rapide et
+  peu coûteux, mais vite illisible, et sans journalisation ni identification applicative.
+- **Firewall interne** : la passerelle des zones est le firewall lui-même, ou le trafic entre zones y est
+  dirigé. Filtrage avec état, journaux, IPS : la solution de référence entre zones de sensibilités
+  différentes.
+- **VRF** : dans un grand réseau ou une fabric de data center, chaque zone est une VRF, une table de routage
+  séparée. Deux VRF ne se parlent pas du tout, sauf par un point de passage choisi, en général un firewall.
+  C'est la façon de segmenter à grande échelle, que l'on retrouve dans la formation Data center.
+
+<Callout type="note">
+Un firewall ne voit que le trafic **qui le traverse**. Deux postes du même VLAN se parlent directement, par
+le switch, sans jamais passer par lui. Pour contrôler le trafic **à l'intérieur** d'une zone, il faut d'autres
+outils : *private VLAN* ou isolation de ports sur le switch (les postes ne joignent que leur passerelle), le
+firewall local des postes, ou la micro-segmentation.
+</Callout>
+
+## La matrice de flux
+
+On ne segmente pas sans savoir **qui a besoin de parler à qui**. La matrice de flux recense, pour chaque
+paire de zones, les flux nécessaires, leur justification et leur propriétaire. C'est le document de
+référence de la politique (voir [Politiques de sécurité](/formations/security/security-policies)).
+
+| De \ Vers | Utilisateurs | Serveurs | DMZ | Internet | Administration |
+|---|---|---|---|---|---|
+| **Utilisateurs** | interdit | HTTPS applications | HTTPS | par le proxy | interdit |
+| **Serveurs** | interdit | selon l'application | interdit | mises à jour, par le proxy | interdit |
+| **DMZ** | interdit | API précise, si indispensable | n/a | interdit | interdit |
+| **Internet** | interdit | interdit | HTTPS (DNAT) | n/a | interdit |
+| **Administration** | prise en main à distance | SSH, RDP, API | SSH | mises à jour | n/a |
+
+## Contrôler l'accès au réseau : 802.1X et NAC
+
+Segmenter suppose de savoir **dans quelle zone** placer chaque équipement. Sur un réseau d'accès, n'importe
+qui peut brancher un portable sur une prise murale. Le <Term id="nac" /> (*Network Access Control*) règle ce
+point :
+
+- **802.1X** : avant d'ouvrir le port, le switch demande au poste de s'authentifier (par certificat, de
+  préférence), et transmet la demande à un serveur RADIUS (Cisco ISE, Aruba ClearPass, FortiNAC, Microsoft
+  NPS) ;
+- le serveur répond avec une **décision** : accepté, refusé, et surtout **dans quel VLAN** ou avec quelle
+  ACL placer le poste. Un poste de l'entreprise va dans le VLAN utilisateurs, une imprimante dans le VLAN
+  imprimantes, un équipement inconnu dans un VLAN de quarantaine ;
+- pour les équipements qui ne savent pas faire de 802.1X (imprimantes, caméras), on utilise
+  l'authentification par adresse MAC (**MAB**), moins sûre, complétée par du profilage.
+
+## Le zero trust
+
+Le modèle classique fait confiance à ce qui est **à l'intérieur** du réseau. Le <Term id="zerotrust" /> part
+du principe inverse : **aucune position sur le réseau ne donne de droits**. Chaque accès est authentifié,
+autorisé selon l'identité de l'utilisateur et l'état de son poste, et limité à l'application demandée.
+
+En pratique, le zero trust n'est pas un produit mais une direction :
+
+- authentification forte partout (<Term id="mfa" />), y compris en interne ;
+- accès par **application** plutôt que par réseau (ZTNA, au lieu d'un VPN qui donne accès à tout) ;
+- vérification de l'état du poste (à jour, chiffré, antivirus actif) avant l'accès ;
+- segmentation et journalisation, pour détecter et contenir ce qui passe malgré tout.
+
+La segmentation de ce chapitre en est la **base réseau** : sans elle, un poste compromis à l'intérieur
+garde un accès large, quelle que soit la qualité de l'authentification.
+
+## Les réseaux industriels et l'IoT
+
+Les réseaux **OT** (automates, supervision industrielle, gestion technique du bâtiment) ont des
+contraintes particulières : des équipements qu'on ne peut ni mettre à jour ni redémarrer, des protocoles
+anciens sans authentification, et une disponibilité qui prime sur tout. On les sépare de l'IT par une
+**zone tampon** (une DMZ industrielle) : aucun flux direct entre IT et OT, seulement des échanges par des
+serveurs relais dans cette zone. Le modèle de référence est celui des niveaux de la norme IEC 62443 (et du
+modèle Purdue).
+
+Les **objets connectés** (caméras, badgeuses, écrans, capteurs) suivent la même logique : un VLAN dédié,
+aucun accès à l'interne, Internet limité aux services du constructeur.
+
+## Segmenter un réseau existant
+
+Segmenter un réseau neuf est simple. Segmenter un réseau à plat qui fonctionne depuis quinze ans est un
+projet, qui se mène dans cet ordre :
+
+1. **Cartographier** : inventorier les machines et leurs rôles (l'IPAM aide, voir
+   [Conventions de nommage et IPAM](/formations/automation/naming-ipam)).
+2. **Observer** : placer le firewall entre les futures zones **en laissant tout passer**, et journaliser
+   tous les flux pendant plusieurs semaines, une fin de mois comprise.
+3. **Construire la matrice** à partir de ces journaux, et la faire valider par les propriétaires des
+   applications. Chaque flux non justifié est une question à poser, pas une règle à créer.
+4. **Écrire la politique**, en laissant temporairement une dernière règle large qui autorise et journalise
+   ce qui n'est pas encore décrit.
+5. **Resserrer** : quand cette dernière règle ne voit plus passer que des flux inattendus, la remplacer
+   par le deny implicite.
+
+<Callout type="field">
+L'erreur classique est de commencer par l'étape 4, sur la foi de la documentation des applications. Le
+jour du basculement, on découvre les flux que personne n'avait documentés : l'imprimante qui envoie les
+scans sur un partage, le serveur de licences d'un logiciel métier, la tâche planifiée de fin de mois. La
+phase d'observation paraît longue ; elle coûte beaucoup moins cher qu'une semaine d'incidents en production.
+</Callout>
+
+## Dans le lab
+
+Au siège, le firewall `fw-hq` sépare déjà trois zones : utilisateurs, serveurs et DMZ. On vérifie ce qu'elle
+contient, puis on applique la démarche d'observation.
+
+<Lab name="security" lang="fr" />
+
+**1. Simuler une compromission de la DMZ.** Imaginons que le serveur web public `dmz-web` ait été piraté.
+Depuis ce serveur, l'attaquant tente d'aller plus loin :
+
+```bash
+docker exec clab-security-dmz-web nc -w 3 10.10.20.10 5432
+docker exec clab-security-dmz-web wget -q -T 3 -O /dev/null http://10.10.20.10/
+docker exec clab-security-dmz-web ping -c1 -W2 10.10.10.10
+docker exec clab-security-dmz-web wget -q -T 3 -O /dev/null http://192.0.2.10/
+```
+
+Tout échoue : la DMZ ne peut rien initier, ni vers les serveurs, ni vers les postes, ni même vers Internet.
+L'attaquant ne peut pas non plus télécharger ses outils ou contacter son serveur de commande. La
+compromission reste **contenue**. Le site, lui, reste joignable depuis Internet, car les réponses aux
+connexions entrantes passent grâce à la table de sessions.
+
+**2. Observer avant de bloquer.** On repart de la situation du chapitre précédent, une fois `R15` supprimée :
+les utilisateurs ne joignent plus que l'intranet. Supposons qu'on ne connaisse pas les flux réels entre
+utilisateurs et serveurs. Ajoutez une règle d'observation juste avant la dernière ligne de la chaîne
+`transit`, puis rechargez et videz la table de sessions :
+
+```text title="fw-hq/nftables.nft, avant le deny implicite"
+        iifname $USERS oifname $SERVERS counter accept comment "OBS observation temporaire"
+```
+
+```bash
+docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+docker exec clab-security-fw-hq conntrack -F
+```
+
+Générez l'activité des utilisateurs, puis listez les sessions entre les deux zones :
+
+```bash
+docker exec clab-security-pc-hq sh -c 'curl -s -o /dev/null http://10.10.20.10/; nc -w 2 10.10.20.10 5432; ping -c1 10.10.20.10'
+docker exec clab-security-fw-hq conntrack -L -s 10.10.10.0/24 -d 10.10.20.0/24
+```
+
+```text
+tcp      6 119 TIME_WAIT src=10.10.10.10 dst=10.10.20.10 sport=42692 dport=5432 … [ASSURED]
+tcp      6 119 TIME_WAIT src=10.10.10.10 dst=10.10.20.10 sport=46540 dport=80 … [ASSURED]
+icmp     1 29 src=10.10.10.10 dst=10.10.20.10 type=8 code=0 …
+```
+
+Voilà la matrice **observée** : HTTP, ping, et un accès à la base de données. Les deux premiers sont
+justifiés ; le troisième est une question à poser au propriétaire de l'application. En production, on
+garde l'observation plusieurs semaines et on journalise plutôt que de lire la table à la main.
+
+**3. Resserrer.** Supprimez la règle `OBS`, rechargez : seuls les flux décrits dans la matrice restent
+autorisés.
+
+**4. Les limites.** Un second poste dans le VLAN utilisateurs joindrait `pc-hq` directement, sans
+passer par `fw-hq` : le firewall ne voit que le trafic **entre** zones. Sur un vrai réseau, c'est le rôle de
+l'isolation de ports sur le switch d'accès, ou du firewall local des postes.
+
+## À retenir
+
+- La segmentation limite le **mouvement latéral** : une compromission doit rester dans sa zone.
+- **Macro-segmentation** d'abord (zones, VLAN, VRF, firewall interne), **micro-segmentation** ensuite, là où
+  le risque le justifie.
+- La **DMZ** n'initie rien vers l'interne ; les **sauvegardes** sont isolées de tout.
+- Une **matrice de flux** validée par les propriétaires est la base de la politique.
+- **802.1X et NAC** placent chaque équipement dans la bonne zone ; le **zero trust** retire toute confiance
+  liée à la position sur le réseau.
+- Segmenter l'existant : **observer** avant de bloquer, puis resserrer progressivement.

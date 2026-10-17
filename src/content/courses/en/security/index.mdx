@@ -1,0 +1,73 @@
+---
+title: "Security"
+description: "Protecting and segmenting the network: stateful firewall and NGFW, NAT, security policies, IPsec VPN and segmentation, with FortiGate, Palo Alto and Stormshield examples and an nftables / strongSwan lab."
+pubDate: 2026-10-17
+level: intermediate
+tags: [firewall, ngfw, nat, ipsec, vpn, segmentation, security]
+vendor: [fortinet, paloalto, stormshield]
+order: 0
+---
+
+The previous hops built a network that **works**: packets find their way, links are redundant, the
+configuration is automated. This hop is about making it **safe**: deciding who may talk to whom, linking
+sites across the Internet without exposing traffic, and limiting the damage the day a machine is
+compromised.
+
+The central tool is the **firewall**. This hop explains what it really does (a session table, not just a
+list of rules), how to write and maintain a policy that is still readable five years later, how to build an
+<Term id="ipsec" /> VPN between two sites, and how to split the network so an attacker cannot go everywhere
+once inside.
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **Firewall basics** | Tell an ACL from a stateful firewall, read a session table, configure zones and NAT, see what an NGFW adds |
+| **Security policies** | Write a policy in the right order, spot overly broad or shadowed rules, organise the rule lifecycle |
+| **IPsec VPN** | Understand IKEv2 and ESP, choose algorithms, build a route-based VPN, troubleshoot a tunnel that will not come up |
+| **Segmentation** | Split the network into zones, build a flow matrix, control access with 802.1X and NAC, apply zero trust |
+
+Examples are given for three vendors, in equal measure: **Fortinet** (FortiGate), **Palo Alto Networks**
+and **Stormshield**. The concepts are the same everywhere; only the vocabulary changes.
+
+## The lab
+
+A headquarters and a branch office, each behind its firewall, connected to the "Internet" by an Arista
+cEOS router. Commercial firewalls do not run freely in ContainerLab: the lab firewalls are Linux, with
+**nftables** for filtering and NAT, and **strongSwan** for the IPsec VPN. The mechanisms are exactly those
+of a FortiGate or a Palo Alto: session table, zones, NAT, IKEv2.
+
+<Topology
+  width={720}
+  height={410}
+  groups={[
+    { x: 20, y: 20, w: 330, h: 370, label: 'Headquarters', tone: 'sky' },
+    { x: 540, y: 220, w: 160, h: 170, label: 'Branch', tone: 'emerald' },
+  ]}
+  nodes={[
+    { id: 'pc', type: 'host', x: 90, y: 90, label: 'pc-hq', sub: '10.10.10.10' },
+    { id: 'srv', type: 'server', x: 90, y: 210, label: 'srv-hq', sub: '10.10.20.10', tone: 'violet' },
+    { id: 'dmz', type: 'server', x: 90, y: 325, label: 'dmz-web', sub: '172.16.30.10', tone: 'amber' },
+    { id: 'fwhq', type: 'firewall', x: 270, y: 210, label: 'fw-hq', sub: '203.0.113.2', tone: 'rose' },
+    { id: 'inet', type: 'router', x: 450, y: 110, label: 'inet', sub: 'cEOS' },
+    { id: 'ext', type: 'host', x: 620, y: 70, label: 'ext', sub: '192.0.2.10' },
+    { id: 'fwbr', type: 'firewall', x: 620, y: 270, label: 'fw-branch', sub: '198.51.100.2', tone: 'rose' },
+    { id: 'pcbr', type: 'host', x: 620, y: 355, label: 'pc-branch' },
+  ]}
+  links={[
+    { from: 'pc', to: 'fwhq' }, { from: 'srv', to: 'fwhq' }, { from: 'dmz', to: 'fwhq' },
+    { from: 'fwhq', to: 'inet' }, { from: 'inet', to: 'ext' }, { from: 'inet', to: 'fwbr' },
+    { from: 'fwbr', to: 'pcbr' },
+    { from: 'fwhq', to: 'fwbr', style: 'dashed', tone: 'violet', label: 'IPsec' },
+  ]}
+  caption={'The security lab. At headquarters, three zones (users, servers, DMZ) behind fw-hq; the branch reaches headquarters through an IPsec tunnel across the "Internet".'}
+/>
+
+## Prerequisites
+
+- The [Fundamentals](/en/courses/fundamentals) course, especially the [TCP and UDP](/en/courses/fundamentals/tcp-udp)
+  and [Static routing](/en/courses/fundamentals/static-routing) chapters.
+- Useful for the IPsec chapter: [TLS, certificates and inspection](/en/courses/proxy/tls-pki) for
+  certificates, and [BGP basics](/en/courses/routing/bgp-basics).
+- For the lab: a machine with ContainerLab, Docker and the Arista cEOS image, see
+  [Build your network lab](/en/tutorials/containerlab-setup).

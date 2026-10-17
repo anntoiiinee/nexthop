@@ -16,6 +16,14 @@ export const glossary = {
       en: "The framework controlling access to devices: who logs in (authentication), what they may do (authorization), and the record of what they did (accounting).",
     },
   },
+  acl: {
+    term: 'ACL',
+    expansion: 'Access Control List',
+    definition: {
+      fr: "Liste de règles qui autorisent ou refusent des paquets selon leurs adresses, protocoles et ports, sans mémoriser les connexions.",
+      en: "List of rules permitting or denying packets by address, protocol and port, without remembering connections.",
+    },
+  },
   api: {
     term: 'API',
     expansion: 'Application Programming Interface',
@@ -119,12 +127,28 @@ export const glossary = {
       en: "Protocol that automatically assigns hosts their IP address, mask, gateway and DNS servers.",
     },
   },
+  dmz: {
+    term: 'DMZ',
+    expansion: 'Demilitarized Zone',
+    definition: {
+      fr: "Zone réseau intermédiaire, entre Internet et le réseau interne, qui accueille les serveurs publiés (site web, relais de messagerie, reverse proxy).",
+      en: "Intermediate network zone, between the Internet and the internal network, hosting published servers (website, mail relay, reverse proxy).",
+    },
+  },
   ebgp: {
     term: 'eBGP',
     expansion: 'External BGP',
     definition: {
       fr: "Session BGP entre deux systèmes autonomes différents, par exemple entre une entreprise et son opérateur.",
       en: "BGP session between two different autonomous systems, for example between a company and its ISP.",
+    },
+  },
+  esp: {
+    term: 'ESP',
+    expansion: 'Encapsulating Security Payload',
+    definition: {
+      fr: "Protocole IPsec (IP protocole 50) qui chiffre et authentifie les paquets transportés dans le tunnel.",
+      en: "IPsec protocol (IP protocol 50) that encrypts and authenticates the packets carried in the tunnel.",
     },
   },
   evpn: {
@@ -213,12 +237,36 @@ export const glossary = {
       en: "Routing protocol used inside an autonomous system, such as OSPF or IS-IS.",
     },
   },
+  ike: {
+    term: 'IKE',
+    expansion: 'Internet Key Exchange',
+    definition: {
+      fr: "Protocole (UDP 500, puis 4500 avec NAT-T) qui authentifie les deux extrémités d'un VPN IPsec et négocie les clés et les algorithmes.",
+      en: "Protocol (UDP 500, then 4500 with NAT-T) that authenticates both ends of an IPsec VPN and negotiates keys and algorithms.",
+    },
+  },
   ipam: {
     term: 'IPAM',
     expansion: 'IP Address Management',
     definition: {
       fr: "Registre des préfixes, adresses IP et VLAN d'un réseau, qui sait ce qui est libre et refuse les doublons, comme NetBox ou Infoblox.",
       en: 'Registry of the prefixes, IP addresses and VLANs of a network, which knows what is free and rejects duplicates, such as NetBox or Infoblox.',
+    },
+  },
+  ips: {
+    term: 'IPS',
+    expansion: 'Intrusion Prevention System',
+    definition: {
+      fr: "Système qui analyse le trafic à la recherche de signatures d'attaques connues et bloque les paquets correspondants.",
+      en: "System that inspects traffic for known attack signatures and blocks the matching packets.",
+    },
+  },
+  ipsec: {
+    term: 'IPsec',
+    expansion: 'IP Security',
+    definition: {
+      fr: "Ensemble de protocoles qui chiffrent et authentifient le trafic IP, utilisé pour les VPN entre sites et l'accès distant.",
+      en: "Suite of protocols encrypting and authenticating IP traffic, used for site-to-site VPNs and remote access.",
     },
   },
   jinja: {
@@ -308,12 +356,28 @@ export const glossary = {
       en: 'Maximum size, in bytes, of a packet that can cross a link without being fragmented. 1500 bytes by default on Ethernet.',
     },
   },
+  nac: {
+    term: 'NAC',
+    expansion: 'Network Access Control',
+    definition: {
+      fr: "Contrôle d'accès au réseau : un équipement n'obtient son VLAN ou ses droits qu'après authentification (802.1X) et vérification de sa conformité.",
+      en: "Network access control: a device only gets its VLAN or rights after authentication (802.1X) and a compliance check.",
+    },
+  },
   nat: {
     term: 'NAT',
     expansion: 'Network Address Translation',
     definition: {
       fr: "Traduction d'adresses IP par un routeur ou un firewall. Elle permet notamment à des machines en adressage privé de sortir sur Internet derrière une adresse publique.",
       en: 'IP address translation performed by a router or firewall. It notably lets hosts with private addresses reach the Internet behind a public address.',
+    },
+  },
+  ngfw: {
+    term: 'NGFW',
+    expansion: 'Next-Generation Firewall',
+    definition: {
+      fr: "Firewall qui, en plus du filtrage avec état, identifie les applications et les utilisateurs et intègre IPS, antivirus, filtrage d'URL et inspection TLS.",
+      en: "Firewall that, beyond stateful filtering, identifies applications and users and embeds IPS, antivirus, URL filtering and TLS inspection.",
     },
   },
   ospf: {
@@ -523,6 +587,14 @@ export const glossary = {
       en: 'Separate routing table on the same device: interfaces in a VRF only see that VRF’s routes, like a separate virtual router.',
     },
   },
+  vti: {
+    term: 'VTI',
+    expansion: 'Virtual Tunnel Interface',
+    definition: {
+      fr: "Interface virtuelle associée à un tunnel IPsec : ce qui est routé vers elle est chiffré. Base des VPN « par route », compatibles avec le routage dynamique.",
+      en: "Virtual interface tied to an IPsec tunnel: whatever is routed to it gets encrypted. The basis of route-based VPNs, compatible with dynamic routing.",
+    },
+  },
   vxlan: {
     term: 'VXLAN',
     expansion: 'Virtual Extensible LAN',
@@ -553,6 +625,13 @@ export const glossary = {
     definition: {
       fr: "Format de fichier texte lisible, à base d'indentation, utilisé pour les inventaires, les variables et les playbooks Ansible.",
       en: "Human-readable, indentation-based text file format used for inventories, variables and Ansible playbooks.",
+    },
+  },
+  zerotrust: {
+    term: 'Zero trust',
+    definition: {
+      fr: "Principe de sécurité : aucune confiance accordée à un utilisateur ou un équipement du seul fait de sa position sur le réseau. Chaque accès est authentifié et autorisé.",
+      en: "Security principle: no trust granted to a user or device just because of where it sits on the network. Every access is authenticated and authorized.",
     },
   },
   ztp: {
