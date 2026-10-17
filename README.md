@@ -28,14 +28,14 @@ Auteur : Antoine Lecarpentier, IT Network Specialist.
 ## Fonctionnalités
 
 - **Tutoriels et formations** en MDX, bilingues, avec filtres par niveau et par technologie (`/tutoriels?tech=arista`).
-- **Outils interactifs**, 100 % côté navigateur : calculateur de sous-réseau, découpeur VLSM (plan partageable par URL, export CSV), quiz de subnetting, décodeur de certificat X.509 / CSR.
+- **Outils interactifs**, 100 % côté navigateur : calculateur de sous-réseau, découpeur VLSM (plan partageable par URL, export CSV), quiz de subnetting, décodeur de certificat X.509 / CSR, référence ports et protocoles.
 - **Partage** : boutons LinkedIn, X, Bluesky, Reddit, e-mail, copie du lien et partage natif (mobile), sans script tiers.
 - **Glossaire** : `<Term id="nat" />` souligne le terme en pointillés et affiche sa définition au survol.
 - **Labs ContainerLab** : topologies dans `public/labs/`, schéma généré automatiquement, commande `curl` prête à copier.
 - **Recherche** Pagefind (Ctrl/⌘+K), limitée à la langue de la page.
 - **Flux RSS** FR (`/rss.xml`) et EN (`/en/rss.xml`) : tutoriels et chapitres de formation.
 - **Thème clair/sombre** : suit le système par défaut, choix mémorisé, sans flash au chargement.
-- **Accueil** : chiffres du site, « par où commencer » par profil, carrousel des technologies, terme du jour, FAQ.
+- **Accueil** : chiffres du site, « par où commencer » par profil, carrousel des technologies, carrousel des outils, terme du jour, FAQ.
 - **Référencement** : sitemap, `robots.txt`, canonical, hreflang, Open Graph, données structurées schema.org.
 - **Lecteurs** : bouton Buy Me a Coffee, lien « Signaler une erreur » qui pré-remplit une issue GitHub.
 
@@ -91,8 +91,8 @@ src/
 ├── assets/avatar.png              # photo de profil (optimisée au build)
 ├── components/
 │   ├── HomePage, TutorialsPage, CoursesPage, CoursePage, ChapterPage, WhoamiPage
-│   ├── ToolsPage, ToolPage, ToolCard           # page Outils + page dédiée par outil
-│   ├── SubnetCalculator, VlsmPlanner, SubnetQuiz
+│   ├── ToolsPage, ToolPage, ToolCard, ToolCarousel  # page Outils, page dédiée, carrousel de l'accueil
+│   ├── SubnetCalculator, VlsmPlanner, SubnetQuiz, CertDecoder, PortsReference
 │   ├── Term, TermOfTheDay                      # glossaire
 │   ├── Search, ThemeToggle                     # header
 │   ├── LogoMarquee, Faq, SupportCard           # accueil, fin d'article
@@ -101,6 +101,7 @@ src/
 ├── data/
 │   ├── tools.ts                   # liste des outils (slug, textes, composant)
 │   ├── glossary.ts                # définitions de <Term>
+│   ├── ports.ts                   # référence ports et protocoles (registre IANA)
 │   ├── brands.ts                  # logos du carrousel (id = vendor ou tag)
 │   ├── startHere.ts               # « par où commencer » de l'accueil
 │   ├── faq.ts, profile.ts, roadmap.ts
@@ -214,6 +215,7 @@ Mise en route (une seule fois) :
 - [x] Tutoriel « Monter son lab » (ContainerLab, cEOS, Cisco, commandes) en FR et EN, lié depuis chaque lab et depuis la FAQ
 - [x] Page Outils : section « Outils de la communauté » (`src/data/communityTools.ts`), avec eos-downloader de TiTom73 ; toujours créditer l'auteur et la licence du projet
 - [x] Saut 7 · Services et observabilité : page de présentation et chapitre « Management et accès hors bande » (`oob`) en FR et EN, exercice dans le lab `netops`
+- [x] Outil : référence ports et protocoles (`src/data/ports.ts`), et carrousel des outils sur l'accueil
 - [ ] Formation Data center : un passage sur le management de la fabric (switch de management par baie, Management0 en VRF MGMT) renvoyant vers le chapitre `oob`
 - [ ] Contenus à venir : Jinja2 en détail, Vault, conventions et IPAM, DDI, télémétrie gNMIc / Prometheus / Grafana (voir la section suivante)
 
@@ -333,7 +335,7 @@ une mise en garde sur les coûts (NAT Gateway, Transit Gateway et VPN sont factu
 Tous fonctionnent dans le navigateur, sans serveur, comme les outils existants. Pour en ajouter un :
 un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 
-**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting, décodeur de certificat X.509 / CSR.
+**Déjà en ligne** : calculateur de sous-réseau IPv4, découpeur VLSM, quiz de subnetting, décodeur de certificat X.509 / CSR, référence ports et protocoles.
 
 | Priorité | Outil | Ce qu'il fait | Effort |
 |---|---|---|---|
@@ -348,7 +350,7 @@ un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 | Spécifique | Décodeur de route EVPN | Expliquer chaque champ d'une route EVPN (type, RD, ESI, MAC, IP) | Moyen à élevé |
 | Spécifique | Générateur de plan VNI / VLAN | Règle de numérotation → tableau et extrait YAML pour AVD | Moyen |
 | Spécifique | ~~Décodeur de certificat X.509 / CSR~~ (fait) | CN, SAN, dates, émetteur, taille de clé, sans que rien ne quitte le navigateur | Moyen |
-| Spécifique | Référence ports et protocoles | Tableau consultable port → protocole, avec lien vers le glossaire | Faible |
+| Spécifique | ~~Référence ports et protocoles~~ (fait) | Tableau consultable port → protocole, avec lien vers le glossaire | Faible |
 
 ---
 
