@@ -56,7 +56,8 @@ service) and **groups** of objects, with meaningful names:
 | `tcp/8443` | Service `SVC-APP-ADMIN` |
 
 When the server changes address, you change the object once, and every rule follows. Object naming follows
-the same logic as device naming conventions.
+the same logic as device naming conventions (see
+[Naming conventions and IPAM](/en/courses/automation/naming-ipam)).
 
 ## Least privilege
 
@@ -153,7 +154,8 @@ A policy of several hundred rules is hard to manage by hand. All three vendors e
 FortiGate and Stormshield, XML and REST for Palo Alto) and Ansible collections (`fortinet.fortios`,
 `paloaltonetworks.panos`, `stormshield.sns`). You can then:
 
-- describe the rules in YAML, in Git, and deploy them like network configurations;
+- describe the rules in YAML, in Git, and deploy them like the network configurations of the
+  [Automation](/en/courses/automation) hop;
 - have every opening request reviewed through a *merge request*, with the ticket in the description;
 - regularly export the policy and its counters for the yearly review.
 

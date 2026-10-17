@@ -1,0 +1,64 @@
+---
+title: "Network automation"
+description: "Managing your network as code: Python, Ansible, GitOps backups, break-glass account rotation, naming conventions and IPAM, NetBox as the source of truth and Arista AVD, with a lab and ready-to-use scripts."
+pubDate: 2026-10-18
+level: intermediate
+tags: [automation, python, ansible, gitops, netbox, avd]
+vendor: [arista, netbox]
+order: 0
+---
+
+Configuring three switches by hand is quick. Configuring three hundred, without mistakes, identically,
+and knowing at any time what changed and why, is another story. Network automation (also called
+**NetOps** or **NetDevOps**) brings developer practices to the network: versioned code, repeatable
+tasks and traceable changes.
+
+## The common thread: the network team gets tooled up
+
+The company from the previous courses has grown, and so has its network team. It wants to stop logging
+into devices one by one, and to build a complete toolchain:
+
+<Topology
+  width={760}
+  height={300}
+  groups={[{ x: 470, y: 40, w: 274, h: 245, label: 'Management network', tone: 'sky' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 70, y: 70, label: 'Engineer', sub: 'commit' },
+    { id: 'git', type: 'server', x: 230, y: 64, label: 'GitLab', sub: 'repo + CI', tone: 'violet' },
+    { id: 'nb', type: 'server', x: 70, y: 220, label: 'NetBox', sub: 'source of truth', tone: 'amber' },
+    { id: 'runner', type: 'server', x: 360, y: 154, label: 'Runner', sub: 'Ansible · Python', tone: 'emerald' },
+    { id: 'sp', type: 'switch', x: 600, y: 90, label: 'spine1' },
+    { id: 'l1', type: 'switch', x: 530, y: 220, label: 'leaf1' },
+    { id: 'l2', type: 'switch', x: 670, y: 220, label: 'leaf2' },
+  ]}
+  links={[
+    { from: 'eng', to: 'git' }, { from: 'git', to: 'runner' }, { from: 'nb', to: 'runner', label: 'API' },
+    { from: 'runner', to: 'sp', label: 'SSH · eAPI' }, { from: 'runner', to: 'l1' }, { from: 'runner', to: 'l2' },
+    { from: 'sp', to: 'l1', style: 'dashed' }, { from: 'sp', to: 'l2', style: 'dashed' },
+  ]}
+  caption="The chain built chapter after chapter: code and configurations in Git, data in NetBox, and a runner that executes Ansible and Python against the devices."
+/>
+
+## What you will learn
+
+| Chapter | What you will be able to do |
+|---|---|
+| **1. Python for networking** | Connect to devices with Netmiko, use JSON output, work in parallel |
+| **2. Ansible for networking** | Write an inventory and playbooks, understand idempotency, protect secrets with Vault |
+| **3. GitOps backups** | Back up every configuration to Git each day with a GitLab CI pipeline |
+| **4. Break-glass account rotation** | Remove the default admin account, create a single break-glass account and rotate it automatically |
+| **5. Naming conventions and IPAM** | Set naming rules and the addressing plan, and have the CI check them |
+| **6. NetBox, the source of truth** | Model your network in NetBox and derive inventories and configurations from it |
+| **7. Arista AVD** | Generate, document and validate a fabric's configurations from a YAML model |
+
+## Prerequisites
+
+- The [Fundamentals](/en/courses/fundamentals) course; [dynamic routing](/en/courses/routing) helps for the AVD chapter.
+- Being comfortable with a Linux terminal (`cd`, `ls`, editing a file).
+- No Python or Ansible experience is needed: we start from the basics.
+
+<Callout type="note">
+Every script in this course is a real file, grouped in the `netops` lab: three Arista cEOS switches, an
+inventory shared by Python and Ansible, and the chapters' scripts. The code shown in the chapters is
+exactly the code you download. The comments inside the lab files are in French.
+</Callout>

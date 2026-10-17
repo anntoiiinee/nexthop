@@ -1,0 +1,181 @@
+---
+title: "NetBox, the source of truth"
+description: "Describing your network in NetBox rather than in spreadsheets: data model, API and pynetbox, dynamic Ansible inventory, configuration generation and drift detection."
+pubDate: 2026-10-18
+level: intermediate
+tags: [netbox, source-of-truth, ipam, automation, python, ansible]
+vendor: [netbox]
+order: 6
+---
+
+So far, our scripts read a small hand-written `inventory.yml`. On a real network, information is scattered: a
+spreadsheet for IP addresses, another one for VLANs, a Visio diagram for cabling, and the devices'
+configuration as the only reliable reference. **NetBox** brings all of it into a single database: the
+<Term id="sot" />, the source of truth. The conventions and addressing plan from the previous chapter become
+data there.
+
+## The source of truth principle
+
+The change is first of all cultural: **the device is no longer the reference, NetBox is.** You describe in
+NetBox what the network **should be** (devices, interfaces, addresses, VLANs, cables), and configurations
+are **derived** from it automatically.
+
+<Topology
+  width={760}
+  height={290}
+  nodes={[
+    { id: 'eng', type: 'host', x: 70, y: 80, label: 'Engineer', sub: 'describes the intent' },
+    { id: 'nb', type: 'server', x: 250, y: 74, label: 'NetBox', sub: 'source of truth', tone: 'amber' },
+    { id: 'gen', type: 'server', x: 450, y: 74, label: 'Ansible · Python', sub: 'data + templates', tone: 'emerald' },
+    { id: 'net', type: 'switch', x: 660, y: 80, label: 'Devices' },
+    { id: 'git', type: 'server', x: 450, y: 230, label: 'Git backups', sub: 'actual state', tone: 'violet' },
+  ]}
+  links={[{ from: 'eng', to: 'nb' }, { from: 'nb', to: 'gen', label: 'API' }, { from: 'gen', to: 'net' }, { from: 'net', to: 'git' }, { from: 'git', to: 'nb', style: 'dashed' }]}
+  flows={[
+    { from: 'gen', to: 'net', label: 'deploys', tone: 'emerald', offset: -16 },
+    { from: 'git', to: 'nb', label: 'comparison: drift?', tone: 'rose', offset: -16 },
+  ]}
+  caption="The intent lives in NetBox, configurations are generated from it. The chapter 3 backups show the actual state: the difference between the two is the drift."
+/>
+
+The benefits:
+
+- **a single reference**: no more outdated spreadsheet, no more IP address assigned twice;
+- **consistent configurations**, always generated the same way from the same data;
+- **documentation that is up to date by design**, since it is what produces the network.
+
+## The data model
+
+NetBox is an open source web application, built for and by network engineers. Its model covers most of an
+infrastructure:
+
+| Domain | Main objects |
+|---|---|
+| **Organization** | regions, sites, tenants (customers or entities) |
+| **DCIM** (physical infrastructure) | racks, device types, devices, interfaces, cables, platforms |
+| **IPAM** (addressing) | VRFs, prefixes, IP addresses, ranges, VLANs and VLAN groups |
+| **Circuits** | providers, leased circuits |
+| **Extensions** | custom fields, tags, *config contexts* (free-form JSON data per device or group) |
+
+**IPAM** alone is often convincing: NetBox knows which prefixes are free, assigns the next available
+address, and refuses duplicates.
+
+<Callout type="tip">
+To try NetBox without installing anything, a public demo instance is available at `demo.netbox.dev`. For
+your own instance, the **netbox-docker** project starts one in a few minutes:
+`git clone -b release https://github.com/netbox-community/netbox-docker.git`, then `docker compose up -d`
+(see the project README for exposing the port and creating the account).
+</Callout>
+
+## The API and pynetbox
+
+Everything you do in the web interface can be done through the REST <Term id="api" />, with an access token.
+In Python, the **pynetbox** library makes it very natural:
+
+```python title="netbox_examples.py"
+import os
+
+import pynetbox
+
+nb = pynetbox.api(os.environ["NETBOX_URL"], token=os.environ["NETBOX_TOKEN"])
+
+# The leafs of site "agence-a", with their management address
+for device in nb.dcim.devices.filter(site="agence-a", role="leaf"):
+    print(device.name, device.platform, device.primary_ip4)
+
+# Reserve the next free /26 in the branch block
+block = nb.ipam.prefixes.get(prefix="192.168.10.0/24")
+vlan50 = block.available_prefixes.create({"prefix_length": 26, "description": "VLAN 50 · Voice"})
+print("Assigned prefix:", vlan50)
+```
+
+The last line replaces half an hour of searching a spreadsheet, with no risk of duplicates.
+
+## An Ansible inventory pulled from NetBox
+
+Rather than maintaining `inventory.yml` by hand, Ansible can read its devices **directly from NetBox** with
+the inventory plugin of the `netbox.netbox` collection:
+
+```yaml title="netbox_inventory.yml"
+plugin: netbox.netbox.nb_inventory
+api_endpoint: https://netbox.example.com
+# token read from the NETBOX_TOKEN environment variable
+validate_certs: true
+query_filters:
+  - status: active
+group_by:
+  - sites
+  - device_roles
+  - platforms
+```
+
+```bash
+ansible-galaxy collection install netbox.netbox
+ansible-inventory -i netbox_inventory.yml --graph          # see the generated groups
+ansible-playbook -i netbox_inventory.yml ansible/backup.yml
+```
+
+A device added to NetBox immediately shows up in the inventory: the chapter 3 backup picks it up the very
+next night, without touching a file.
+
+<Callout type="note">
+The names of the generated groups (for example `platforms_eos` or `sites_agence_a`) depend on the plugin
+version and its options: check them with `ansible-inventory --graph`, then put the connection variables
+(`ansible_network_os`…) in the matching `group_vars`.
+</Callout>
+
+## Generating configurations
+
+With NetBox data and a <Term id="jinja" /> template, you produce complete configurations. For example, a
+device's interfaces section:
+
+```jinja title="templates/interfaces.j2"
+{% for itf in interfaces %}
+interface {{ itf.name }}
+   description {{ itf.description or itf.connected_to }}
+{% if itf.ip %}
+   no switchport
+   ip address {{ itf.ip }}
+{% elif itf.vlan %}
+   switchport access vlan {{ itf.vlan }}
+{% endif %}
+!
+{% endfor %}
+```
+
+The script fetches the device's interfaces from NetBox (name, description, cable, IP address, VLAN), fills
+the template, and Ansible deploys the result with `eos_config`, after a `--check --diff`.
+
+<Callout type="field">
+This is exactly the model of large migrations: sites are modeled in NetBox, scripts generate the underlay,
+overlay and management configurations from that data, and deployment follows. The day an address changes,
+you change it in NetBox, not on fifty devices.
+</Callout>
+
+## Detecting drift
+
+A source of truth is only worth something if the network matches it. Yet someone will always end up changing
+a device by hand. By comparing the **configuration generated from NetBox** with the **actual saved
+configuration** (chapter 3), you get the list of differences, the *drift*, to fix in one direction or the
+other.
+
+## Best practices
+
+- **NetBox first**: every change starts in NetBox, never directly on the device.
+- **Clean data**: roles, platforms and [naming conventions](/en/courses/automation/naming-ipam) defined from
+  the start; a shaky model produces shaky configurations.
+- **Per-team permissions** and a change history (NetBox logs every change).
+- **Automations triggered by NetBox**: *event rules* and *webhooks* can start a pipeline as soon as an object
+  changes (generate, check, deploy).
+
+## Key takeaways
+
+- The **source of truth** describes what the network **should be**; configurations are derived from it.
+- NetBox covers **DCIM** (physical), **IPAM** (addresses, VLANs, VRFs), circuits, and extends through custom
+  fields and *config contexts*.
+- Everything is reachable through the **API**: **pynetbox** in Python, **nb_inventory** for a dynamic Ansible
+  inventory.
+- NetBox data + **Jinja2** templates = generated, consistent configurations.
+- Comparing intent with backups reveals **drift**.
+
+Last chapter: **Arista AVD**, which takes this logic all the way for data center fabrics.
