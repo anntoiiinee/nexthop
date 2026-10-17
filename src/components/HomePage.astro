@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { routes, t, type Lang } from '@/i18n/ui';
 import { roadmap } from '@/data/roadmap';
 import { courseUrl, chapterUrl, getPublished, getCourses } from '@/lib/courses';
+import { levelColors } from '@/lib/levels';
 import { courseDates } from '@/lib/dates';
 import ContentDates from './ContentDates.astro';
 import { getTutorials, slugOf, tutorialUrl } from '@/lib/content';
@@ -27,7 +28,12 @@ const { lang } = Astro.props;
 const posts = await getTutorials(lang);
 const latest = posts.slice(0, 6);
 const published = await getPublished(lang);
-const courseDatesBySlug = Object.fromEntries((await getCourses(lang)).map((c) => [c.slug, courseDates(c)]));
+const courseList = await getCourses(lang);
+const courseDatesBySlug = Object.fromEntries(courseList.map((c) => [c.slug, courseDates(c)]));
+// Niveau de chaque formation : celui de la langue affichée, sinon celui de l'autre langue (formation pas encore traduite)
+const courseLevelBySlug = Object.fromEntries(
+  [...(await getCourses(lang === 'fr' ? 'en' : 'fr')), ...courseList].map((c) => [c.slug, c.landing.data.level])
+);
 
 // Étapes « Par où commencer ? » : on ne garde que celles publiées dans cette langue
 const tutorialSlugs = new Set(posts.map((p) => slugOf(p.id)));
@@ -245,11 +251,13 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
       <h2 class={h2}>{copy.roadmapTitle}</h2>
       <p class="mt-3 max-w-2xl text-slate-600 dark:text-slate-400">{copy.roadmapIntro}</p>
 
-      <ol class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <!-- Grille à sous-grilles : les mêmes parties de chaque carte sont alignées sur toute une rangée -->
+      <ol class="mt-10 grid gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
         {roadmap.map((step, i) => {
           const courseReady = published.courses.has(step.course);
+          const level = courseLevelBySlug[step.course] ?? step.level;
           return (
-            <li class="flex flex-col rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+            <li class="row-span-5 grid grid-rows-subgrid gap-0 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
               <div class="flex items-center justify-between">
                 <span class="font-mono text-xs text-slate-400">hop {i + 1}</span>
                 <span class="font-mono text-xs font-medium text-sky-600 dark:text-sky-400">{step.label}</span>
@@ -260,9 +268,16 @@ const h2 = 'text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl dark:te
                 ) : step.title[lang]}
               </h3>
               <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">{step.text[lang]}</p>
-              {courseDatesBySlug[step.course] && (
-                <ContentDates created={courseDatesBySlug[step.course].created} updated={courseDatesBySlug[step.course].updated} lang={lang} class="mt-2 text-xs" />
-              )}
+              <div class="mt-3 flex flex-col items-start gap-1">
+                {level && (
+                  <span class:list={['rounded-full px-2 py-0.5 text-[11px] font-medium', levelColors[level]]}>
+                    {t(lang, `level.${level}`)}
+                  </span>
+                )}
+                {courseDatesBySlug[step.course] && (
+                  <ContentDates created={courseDatesBySlug[step.course].created} updated={courseDatesBySlug[step.course].updated} lang={lang} class="text-xs" />
+                )}
+              </div>
 
               <ul class="mt-4 space-y-1.5 border-t border-slate-200 pt-4 text-sm dark:border-slate-800">
                 {step.chapters.map((chapter) =>

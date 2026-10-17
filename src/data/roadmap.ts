@@ -6,6 +6,8 @@ export interface RoadmapStep {
   title: T;
   text: T;
   chapters: { slug: string; title: T }[];
+  // Niveau prévu, affiché tant que la formation n'est pas publiée (ensuite, c'est le `level` de son index qui fait foi)
+  level?: 'beginner' | 'intermediate' | 'advanced';
 }
 
 export const roadmap: RoadmapStep[] = [
@@ -108,6 +110,7 @@ export const roadmap: RoadmapStep[] = [
   {
     course: 'cloud',
     label: 'Cloud · Hybride',
+    level: 'intermediate',
     title: { fr: 'Le réseau dans le cloud', en: 'Cloud networking' },
     text: { fr: 'Étendre le réseau de l’entreprise jusque dans le cloud.', en: 'Extending the corporate network into the cloud.' },
     chapters: [
