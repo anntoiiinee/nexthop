@@ -1,0 +1,27 @@
+# Données de leaf1 : ce que le gabarit transforme en configuration.
+# En production, elles viennent de NetBox ; ici, d'un simple fichier pour tester le gabarit.
+hostname: leaf1
+mgmt_ip: 172.20.30.12/24
+ntp_servers:
+  - 192.0.2.123
+  - 198.51.100.123
+vlans:
+  - id: 10
+    name: users
+  - id: 20
+    name: guest-wifi
+  - id: 30
+    name: servers
+interfaces:
+  - name: Ethernet1
+    peer: spine1
+    peer_port: Ethernet1
+    ip: 10.0.1.1/31
+  - name: Ethernet2
+    peer: spine1
+    peer_port: Ethernet2
+    ip: 10.0.1.3/31
+  - name: Ethernet3
+    access_vlan: 10
+  - name: Ethernet4
+    enabled: false

@@ -1,0 +1,7 @@
+---
+import CheatsheetPage from '@/components/CheatsheetPage.astro';
+import { cheatsheets } from '@/data/cheatsheets';
+
+export const getStaticPaths = () => cheatsheets.map((sheet) => ({ params: { sheet: sheet.slug } }));
+---
+<CheatsheetPage lang="fr" slug={Astro.params.sheet} />

@@ -3,12 +3,16 @@ import { render } from 'astro:content';
 import { mdxComponents } from '@/lib/mdx';
 import ArticleLayout from '@/layouts/ArticleLayout.astro';
 import { getTutorialPaths } from '@/lib/content';
+import { cheatsheets } from '@/data/cheatsheets';
+import CheatsheetCallout from '@/components/CheatsheetCallout.astro';
 
 export const getStaticPaths = () => getTutorialPaths('fr');
 
 const { post, alternates } = Astro.props;
 const { Content, headings } = await render(post);
+const sheets = cheatsheets.filter((sheet) => sheet.tutorials?.includes(post.id.split('/').slice(1).join('/')));
 ---
 <ArticleLayout post={post} headings={headings} lang="fr" alternates={alternates}>
   <Content components={mdxComponents} />
+  <CheatsheetCallout sheets={sheets} lang="fr" />
 </ArticleLayout>

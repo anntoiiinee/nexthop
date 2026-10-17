@@ -1,0 +1,351 @@
+---
+title: "Jinja2 et le rendu de configuration dans NetBox"
+description: "Écrire des gabarits Jinja2 pour générer des configurations réseau (variables, boucles, conditions, filtres, macros, gestion des espaces), les tester hors équipement, puis les confier à NetBox avec les config contexts et les config templates pour produire la structured config d'Arista AVD."
+pubDate: 2026-10-17
+level: intermediate
+tags: [jinja, netbox, automation, avd, ansible, python]
+vendor: [netbox, arista]
+---
+
+{/* Sorties déclarées en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const sansTrim = `!
+
+vlan 10
+
+vlan 20
+
+!`;
+export const avecTrim = `!
+vlan 10
+vlan 20
+!`;
+
+Dans un réseau automatisé, on n'écrit plus les configurations : on écrit des **gabarits**, et on les remplit avec
+des **données**. Le langage de gabarits le plus répandu est <Term id="jinja" />, utilisé par Ansible, par NetBox, par
+Arista AVD et par d'innombrables scripts Python. Ce tutoriel part des bases du langage, montre comment tester un
+gabarit sur son poste, puis confie le rendu à NetBox, qui devient capable de produire directement la
+**configuration structurée** d'un équipement, celle qu'AVD transforme ensuite en configuration EOS.
+
+## Le principe : données + gabarit = configuration
+
+<Topology
+  width={760}
+  height={220}
+  nodes={[
+    { id: 'data', type: 'server', x: 90, y: 100, label: 'Données', sub: 'YAML, NetBox', tone: 'amber' },
+    { id: 'tpl', type: 'server', x: 290, y: 100, label: 'Gabarit', sub: 'Jinja2', tone: 'violet' },
+    { id: 'render', type: 'router', x: 480, y: 100, label: 'Rendu', sub: 'Python, Ansible, NetBox', tone: 'emerald' },
+    { id: 'cfg', type: 'switch', x: 670, y: 100, label: 'Configuration', sub: 'leaf1.cfg' },
+  ]}
+  links={[{ from: 'data', to: 'render' }, { from: 'tpl', to: 'render' }, { from: 'render', to: 'cfg' }]}
+  caption="Le gabarit décrit la forme d'une configuration ; les données disent ce qui change d'un équipement à l'autre. Un même gabarit produit les configurations de cent leafs."
+/>
+
+L'intérêt est double : toutes les configurations ont **exactement la même forme**, et un changement de standard
+(un serveur NTP de plus, une nouvelle règle de description) se fait **une fois**, dans le gabarit.
+
+## Les bases du langage
+
+Jinja2 ne connaît que trois délimiteurs :
+
+| Délimiteur | Rôle | Exemple |
+|---|---|---|
+| `{{ ... }}` | Afficher une valeur | `hostname {{ hostname }}` |
+| `{% ... %}` | Une instruction : boucle, condition, macro | `{% for vlan in vlans %}` |
+| `{# ... #}` | Un commentaire, absent du résultat | `{# Configuration de base #}` |
+
+### Variables, boucles et conditions
+
+```jinja
+hostname {{ hostname }}
+{% for vlan in vlans %}
+vlan {{ vlan.id }}
+   name {{ vlan.name }}
+{% endfor %}
+{% if itf.ip is defined %}
+   no switchport
+   ip address {{ itf.ip }}
+{% elif itf.access_vlan is defined %}
+   switchport access vlan {{ itf.access_vlan }}
+{% endif %}
+```
+
+On accède aux champs d'un dictionnaire par un point (`vlan.id`). Dans une boucle, la variable spéciale `loop`
+donne la position : `loop.index` (à partir de 1), `loop.first`, `loop.last`.
+
+### Filtres et tests
+
+Un **filtre** transforme une valeur, avec la barre verticale. Un **test** vérifie une propriété, avec `is`.
+
+| Écriture | Résultat |
+|---|---|
+| `{{ vlan.name \| upper }}` | met en majuscules |
+| `{{ itf.mtu \| default(1500) }}` | valeur par défaut si la variable est absente |
+| `{{ vlans \| sort(attribute='id') }}` | trie une liste de dictionnaires |
+| `{{ ports \| join(',') }}` | assemble une liste : `Ethernet1,Ethernet2` |
+| `{{ vlans \| length }}` | nombre d'éléments |
+| `{% if itf.peer is defined %}` | la variable existe-t-elle ? |
+
+<Callout type="tip">
+Ansible ajoute ses propres filtres, très utiles en réseau, dans la collection `ansible.utils` : `ipaddr` pour
+extraire l'adresse, le réseau ou le masque d'un préfixe, `ipmath` pour calculer une adresse voisine. Ils n'existent
+pas dans Jinja2 seul : un gabarit qui les utilise ne se rend qu'avec Ansible.
+</Callout>
+
+### Macros
+
+Une **macro** est une fonction : on l'écrit une fois, on l'appelle partout. Exemple : appliquer la
+[convention de description](/formations/automation/naming-ipam) `vers:<voisin>:<port>` à toutes les interfaces.
+
+```jinja
+{% macro description(itf) -%}
+  {%- if itf.peer is defined -%}
+    vers:{{ itf.peer }}:{{ itf.peer_port }}
+  {%- else -%}
+    libre
+  {%- endif -%}
+{%- endmacro %}
+
+interface {{ itf.name }}
+   description {{ description(itf) }}
+```
+
+Pour les gabarits plus longs, `{% include 'ntp.j2' %}` insère un autre fichier : un gabarit par fonction
+(interfaces, BGP, SNMP, NTP) reste lisible et réutilisable.
+
+## Le piège des espaces et des sauts de ligne
+
+C'est la première difficulté de tout le monde. Par défaut, Jinja2 garde **tout** ce qui entoure les instructions,
+y compris le saut de ligne qui suit chaque `{% ... %}`. Ce gabarit :
+
+```jinja
+!
+{% for vlan in vlans %}
+vlan {{ vlan }}
+{% endfor %}
+!
+```
+
+produit, avec `vlans = [10, 20]`, des lignes vides parasites, une par instruction :
+
+<CliOutput title="Rendu par défaut" output={sansTrim} />
+
+Deux options d'environnement règlent le problème pour tout le gabarit :
+
+- `trim_blocks` supprime le saut de ligne qui suit une instruction ;
+- `lstrip_blocks` supprime les espaces avant une instruction, ce qui permet d'indenter les `{% if %}` pour la
+  lisibilité.
+
+<CliOutput title="Rendu avec trim_blocks et lstrip_blocks" output={avecTrim} />
+
+Pour un réglage au cas par cas, un tiret colle l'instruction à son voisin : `{%-` retire les espaces **avant**,
+`-%}` les retire **après**. C'est ce qu'utilise la macro ci-dessus pour produire `vers:spine1:Ethernet1` sur une
+seule ligne.
+
+<Callout type="warning">
+Une configuration EOS tolère les lignes vides, mais un fichier YAML, lui, dépend de son indentation : un espace de
+trop et la structure change. Pour un gabarit qui produit du YAML, activez toujours `trim_blocks` et
+`lstrip_blocks`, et validez le résultat avec un analyseur YAML.
+</Callout>
+
+## Tester un gabarit sur son poste
+
+Un gabarit se teste **sans aucun équipement** : on le rend avec des données d'exemple, et on lit le résultat. Le
+lab `netops` contient un gabarit de base pour un leaf, les données de leaf1 et un petit script de rendu.
+
+<CodeFile lab="netops" file="templates/data/leaf1.yml" />
+
+<CodeFile lab="netops" file="templates/eos_base.j2" />
+
+<CodeFile lab="netops" file="templates/render.py" />
+
+```text title="python3 templates/render.py templates/eos_base.j2 templates/data/leaf1.yml"
+hostname leaf1
+!
+ntp server 192.0.2.123 prefer
+ntp server 198.51.100.123
+!
+vlan 10
+   name USERS
+!
+vlan 20
+   name GUEST-WIFI
+!
+vlan 30
+   name SERVERS
+!
+interface Ethernet1
+   description vers:spine1:Ethernet1
+   no switchport
+   ip address 10.0.1.1/31
+!
+interface Ethernet2
+   description vers:spine1:Ethernet2
+   no switchport
+   ip address 10.0.1.3/31
+!
+interface Ethernet3
+   description libre
+   switchport access vlan 10
+!
+interface Ethernet4
+   description libre
+   shutdown
+!
+interface Management1
+   ip address 172.20.30.12/24
+```
+
+Le détail qui compte : `StrictUndefined`. Par défaut, une variable absente devient une chaîne vide, et le gabarit
+produit sans broncher `ip address` sans adresse. Avec `StrictUndefined`, le rendu **échoue** et nomme la variable
+manquante. Une erreur au rendu vaut mieux qu'une configuration fausse poussée en production.
+
+<Callout type="field">
+Dans un pipeline, on rend tous les gabarits avec toutes les données à chaque merge request, et on publie le
+**diff des configurations générées**. Le relecteur voit l'effet réel du changement sur chaque équipement, pas
+seulement la ligne modifiée dans le gabarit. C'est exactement ce que fait le flux GitOps du chapitre
+[Arista AVD](/formations/automation/avd).
+</Callout>
+
+## Confier le rendu à NetBox
+
+Jusqu'ici, les données venaient d'un fichier YAML. Dans une entreprise, elles sont dans
+[NetBox, la source de vérité](/formations/automation/netbox) : équipements, interfaces, adresses IP. NetBox sait
+rendre lui-même des gabarits Jinja2 avec ces données, grâce à deux objets du menu **Provisioning**.
+
+| Objet NetBox | Rôle | Exemple |
+|---|---|---|
+| **Config context** | Des données libres en JSON, appliquées selon des critères (site, rôle, plateforme, tag…) et fusionnées par ordre de poids | `{"ntp_servers": ["192.0.2.123"], "vlans": [...]}` pour tous les leafs d'un site |
+| **Config template** | Un gabarit Jinja2, assigné à un équipement, à un rôle ou à une plateforme | le gabarit des leafs, assigné au rôle `leaf` |
+
+Au moment du rendu, NetBox fournit au gabarit :
+
+- l'équipement lui-même, dans la variable **`device`**, avec tous ses objets liés : `device.name`,
+  `device.site`, `device.interfaces.all()`, et pour chaque interface `itf.ip_addresses.all()` ;
+- les données de son **config context**, fusionnées, comme variables de premier niveau : `ntp_servers`, `vlans`.
+
+<Topology
+  width={760}
+  height={260}
+  nodes={[
+    { id: 'dcim', type: 'server', x: 100, y: 70, label: 'DCIM / IPAM', sub: 'device, interfaces, IP', tone: 'amber' },
+    { id: 'ctx', type: 'server', x: 100, y: 190, label: 'Config context', sub: 'ntp_servers, vlans', tone: 'amber' },
+    { id: 'tpl', type: 'server', x: 360, y: 130, label: 'Config template', sub: 'Jinja2', tone: 'violet' },
+    { id: 'out', type: 'server', x: 620, y: 130, label: 'Render config', sub: 'interface ou API', tone: 'emerald' },
+  ]}
+  links={[{ from: 'dcim', to: 'tpl', label: 'device' }, { from: 'ctx', to: 'tpl', label: 'variables' }, { from: 'tpl', to: 'out' }]}
+  caption="NetBox rend le gabarit avec l'équipement et son config context. Le résultat s'affiche dans l'onglet « Render Config » de l'équipement, ou s'obtient par l'API."
+/>
+
+Le gabarit s'assigne à trois niveaux : à l'équipement directement, à son **rôle**, ou à sa **plateforme**. Le plus
+précis l'emporte. Assigner le gabarit au rôle `leaf` suffit pour que tous les leafs en héritent.
+
+<Callout type="note">
+NetBox n'active pas `trim_blocks` par défaut. Dans le config template, le champ **Environment parameters** accepte
+les options de l'environnement Jinja2, en JSON : `{"trim_blocks": true, "lstrip_blocks": true}`.
+</Callout>
+
+### Les gabarits dans Git
+
+Plutôt que de coller le gabarit dans l'interface de NetBox, on le range dans un dépôt Git, relu par merge request
+comme le reste du code (voir [Git et les branches](/tutoriels/git-branches)). NetBox se synchronise avec ce dépôt
+grâce à une **Data Source** (menu *Operations*) : le config template pointe alors vers un fichier du dépôt, et se
+met à jour à chaque synchronisation. Le gabarit a une seule version de référence, celle de Git.
+
+## La structured config d'AVD, produite par NetBox
+
+Le chapitre [Arista AVD](/formations/automation/avd) montre la chaîne d'AVD : un modèle de haut niveau,
+`eos_designs` qui calcule une **configuration structurée** (*structured config*) par équipement, puis
+`eos_cli_config_gen` qui la transforme en configuration EOS et en documentation.
+
+On peut court-circuiter la première étape : c'est **NetBox** qui produit la configuration structurée, à partir de
+ce qu'il sait de l'équipement. Le config template ne génère alors pas de la CLI, mais du **YAML au format
+d'AVD** :
+
+<CodeFile lab="netops" file="templates/netbox/structured_config.j2" />
+
+Pour un leaf avec deux liens vers les spines, une loopback, un port serveur et un port libre, et un config context
+qui définit deux VLAN et un serveur NTP, ce gabarit produit :
+
+```yaml title="Rendu pour leaf1"
+hostname: leaf1
+ntp:
+  servers:
+    - name: 192.0.2.123
+vlans:
+  - id: 10
+    name: USERS
+  - id: 20
+    name: GUEST-WIFI
+loopback_interfaces:
+  - name: Loopback0
+    description: ROUTER-ID
+    ip_address: 10.255.0.11/32
+ethernet_interfaces:
+  - name: Ethernet1
+    description: vers:spine1:Ethernet1
+    shutdown: false
+    mtu: 9214
+    ip_address: 10.0.1.1/31
+  - name: Ethernet2
+    description: vers:spine2:Ethernet1
+    shutdown: false
+    mtu: 9214
+    ip_address: 10.0.2.1/31
+  - name: Ethernet3
+    description: vers:srv-web-01:eth0
+    shutdown: false
+  - name: Ethernet4
+    description: libre
+    shutdown: true
+```
+
+Le script suivant demande ce rendu à NetBox pour chaque équipement (`POST /api/dcim/devices/<id>/render-config/`)
+et l'enregistre dans `intended/structured_configs/`, le dossier où AVD range ses configurations structurées :
+
+<CodeFile lab="netops" file="templates/netbox/fetch_structured_configs.py" />
+
+Il ne reste qu'à lancer le rôle `arista.avd.eos_cli_config_gen`, sans `eos_designs` : il lit ces fichiers et produit
+les configurations EOS et la documentation, exactement comme dans le chapitre AVD.
+
+<Callout type="warning">
+Le modèle de données d'AVD évolue d'une version majeure à l'autre : les clés de l'exemple (`vlans`,
+`loopback_interfaces`, `ethernet_interfaces`, `ntp.servers`) sont stables, mais d'autres, comme la façon de déclarer
+un port routé ou un port d'accès, changent selon la version. Partez de la documentation d'`eos_cli_config_gen` de la
+version installée, et testez le rendu avant de déployer.
+</Callout>
+
+### Quand choisir quelle approche ?
+
+| Approche | Ce qui fait foi | Adaptée à |
+|---|---|---|
+| Gabarit Jinja2 → CLI, rendu par Ansible ou Python | les fichiers de données et les gabarits | petits réseaux, configurations simples, multi-constructeurs |
+| Config template NetBox → CLI | NetBox | quand NetBox est déjà la référence, sans AVD |
+| Config template NetBox → structured config → AVD | NetBox pour les données, AVD pour la génération | fabrics Arista : on garde la génération éprouvée d'AVD, avec NetBox comme source |
+| Modèle AVD complet (`eos_designs`) | les fichiers YAML d'AVD | fabrics EVPN-VXLAN standard, où AVD calcule tout (adresses, AS, sessions) |
+
+## À vous de jouer
+
+1. Dans le lab `netops`, installez les dépendances (`pip install -r requirements.txt`) et rendez le gabarit :
+   `python3 templates/render.py templates/eos_base.j2 templates/data/leaf1.yml`.
+2. Ajoutez un serveur NTP dans les données et relancez : la boucle suit. Supprimez la ligne `mgmt_ip` : le rendu
+   échoue et nomme la variable, grâce à `StrictUndefined`.
+3. Dans `render.py`, passez `trim_blocks` et `lstrip_blocks` à `False`, et comparez le résultat.
+4. Ajoutez au gabarit une macro qui produit la ligne `mtu 9214` pour les interfaces routées seulement.
+5. Avec une instance NetBox (la démo publique `demo.netbox.dev` ou un `netbox-docker` local) : créez un config
+   context avec `ntp_servers` et `vlans`, un config template avec `structured_config.j2` et les paramètres
+   d'environnement `{"trim_blocks": true, "lstrip_blocks": true}`, assignez-le à un rôle, et ouvrez l'onglet
+   **Render Config** d'un équipement de ce rôle.
+
+## À retenir
+
+- Un **gabarit** décrit la forme, les **données** ce qui change : une seule source pour cent équipements.
+- `{{ }}` affiche, `{% %}` exécute, `{# #}` commente ; filtres (`upper`, `default`, `sort`, `join`), tests (`is
+  defined`) et **macros** couvrent l'essentiel.
+- Activez **`trim_blocks`** et **`lstrip_blocks`**, et **`StrictUndefined`** pour qu'une donnée manquante soit une
+  erreur.
+- Testez les gabarits **hors équipement**, et publiez le diff des configurations générées dans la merge request.
+- NetBox rend lui-même les gabarits : **config context** pour les données, **config template** pour le gabarit,
+  `device` et l'API `render-config` pour le résultat.
+- Un config template peut produire la **structured config d'AVD** : NetBox fournit les données, AVD génère la
+  configuration.

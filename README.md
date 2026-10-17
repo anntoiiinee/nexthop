@@ -149,6 +149,7 @@ src/
   - `<Bits ip prefix mask />` : adresse IPv4 en binaire, bits réseau / hôte ;
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
   - `<OsiModel />`, `<Lab name="…" />` ;
+  - `<GitGraph branches commits />` : graphe de commits Git (une ligne par branche, parents pour les fusions) ;
   - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé) ;
   - `<CliOutput title output notes />` : sortie CLI annotée (lignes surlignées, repères numérotés et légende). Chaque note : `{ line, text, match?, tone? }`, `line` commence à 1, `match` surligne un passage, `` `code` `` est mis en forme dans `text`. MDX retire les espaces de début de ligne à l'intérieur des balises : déclarer la sortie dans un ``export const maSortie = `…`;`` en haut du fichier (après le frontmatter), puis `output={maSortie}` (voir `fundamentals/stp.mdx`).
 - **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
@@ -247,7 +248,11 @@ Mise en route (une seule fois) :
 - [ ] Lab `cloud-aws` : faire un `terraform apply` réel sur un compte AWS, puis vérifier les consignes « Dans le lab » de chaque chapitre
 - [x] Outils : calculateur IPv6, calculateur MTU / overhead, visualiseur ContainerLab (même placement que les schémas des labs, `src/lib/clab.ts`), convertisseur binaire / hexa / décimal
 - [x] Tutoriel « Dépanner un réseau : la méthode » (`troubleshooting`) en FR et EN
-- [ ] Contenus à venir : Jinja2 en détail, Vault (voir la section suivante)
+- [x] Fiches mémo imprimables (`/fiches`, données dans `src/data/cheatsheets.ts`) : commutation, routage, BGP, EVPN-VXLAN, dépannage, subnetting ; une page A4 chacune (vérifié en PDF), bouton « Imprimer / Enregistrer en PDF », encart en fin des chapitres et tutoriels liés
+- [x] Tutoriel `bgp-evpn-route-types` réécrit (types 1 à 5, champs, dépannage), sans sorties CLI
+- [ ] Tutoriel `bgp-evpn-route-types` : ajouter les vraies sorties du lab `dc-fabric` (`show bgp evpn route-type mac-ip|imet|ip-prefix ipv4`, `show vxlan flood vtep`), annotées avec `<CliOutput>`
+- [x] Tutoriels « Git et les branches » (`git-branches`, composant `<GitGraph>`) et « Jinja2 et le rendu de configuration dans NetBox » (`jinja-netbox`, gabarits dans `public/labs/netops/templates/`, rendus réellement avec Jinja2 3.1)
+- [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---
 
@@ -258,15 +263,6 @@ Sujets validés, à rédiger. Pour chacun : où il s'insère, ce qu'il faut couv
 Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Routage dynamique · 3 Data center ·
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
 **8 Le réseau dans le cloud** (`cloud`). Les 8 sauts sont rédigés.
-
-### Formation Automatisation : Jinja2 en détail (nouveau chapitre, après Ansible)
-
-- Syntaxe : variables `{{ }}`, blocs `{% %}`, commentaires, boucles, conditions, filtres (`default`, `join`, `ipaddr`
-  / `ansible.utils.ipaddr`, `upper`…), tests, macros, `include` et héritage de gabarits.
-- Maîtriser les espaces et les sauts de ligne (`trim_blocks`, `lstrip_blocks`, `{%-`) : le piège n°1 des configurations générées.
-- Séparer données (YAML, NetBox) et gabarits ; un gabarit par fonction (interfaces, BGP, SNMP…).
-- Tester un gabarit hors équipement (rendu local en Python, `ansible.builtin.template` vers un fichier, diff).
-- Fichiers d'exemple à ajouter au lab `netops` (`templates/`) et affichés avec `<CodeFile>`.
 
 ### Formation Automatisation : les secrets et Vault (nouveau chapitre, ou approfondissement du chapitre Ansible)
 

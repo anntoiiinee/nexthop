@@ -1,0 +1,39 @@
+{#- Config template NetBox : produit la « structured config » d'un équipement, au format YAML d'Arista AVD.
+    NetBox fournit l'équipement dans la variable `device`, et les données de son config context
+    comme variables de premier niveau (ici `vlans` et `ntp_servers`).
+    À assigner au rôle « leaf » ou à la plateforme « eos » (Provisioning > Config Templates). -#}
+hostname: {{ device.name }}
+{% if ntp_servers is defined %}
+ntp:
+  servers:
+{% for server in ntp_servers %}
+    - name: {{ server }}
+{% endfor %}
+{% endif %}
+{% if vlans is defined %}
+vlans:
+{% for vlan in vlans | sort(attribute='id') %}
+  - id: {{ vlan.id }}
+    name: {{ vlan.name | upper }}
+{% endfor %}
+{% endif %}
+loopback_interfaces:
+{% for itf in device.interfaces.all() if itf.name.startswith('Loopback') %}
+  - name: {{ itf.name }}
+    description: {{ itf.description or 'loopback' }}
+{% for ip in itf.ip_addresses.all() %}
+    ip_address: {{ ip.address }}
+{% endfor %}
+{% endfor %}
+ethernet_interfaces:
+{% for itf in device.interfaces.all() if itf.name.startswith('Ethernet') %}
+  - name: {{ itf.name }}
+    description: {{ itf.description or 'libre' }}
+    shutdown: {{ (not itf.enabled) | lower }}
+{% if itf.mtu %}
+    mtu: {{ itf.mtu }}
+{% endif %}
+{% for ip in itf.ip_addresses.all() %}
+    ip_address: {{ ip.address }}
+{% endfor %}
+{% endfor %}

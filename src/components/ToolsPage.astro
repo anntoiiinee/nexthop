@@ -4,6 +4,7 @@ import { routes, t, type Lang } from '@/i18n/ui';
 import { tools } from '@/data/tools';
 import ToolCard from './ToolCard.astro';
 import { communityTools } from '@/data/communityTools';
+import { cheatsheets } from '@/data/cheatsheets';
 
 interface Props { lang: Lang; }
 const { lang } = Astro.props;
@@ -31,6 +32,14 @@ const { lang } = Astro.props;
     ) : (
       <p class="mt-10 text-slate-500">{t(lang, 'tools.empty')}</p>
     )}
+
+    <a href={routes.cheatsheets[lang]} class="group mt-10 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-dashed border-sky-300 bg-sky-50/50 p-6 transition hover:border-sky-400 dark:border-sky-500/40 dark:bg-sky-500/5">
+      <span>
+        <span class="block font-semibold text-slate-900 group-hover:text-sky-600 dark:text-white dark:group-hover:text-sky-400">{t(lang, 'cheats.toolsLink')}</span>
+        <span class="mt-1 block text-sm text-slate-600 dark:text-slate-400">{cheatsheets.map((sheet) => sheet.title[lang]).join(' · ')}</span>
+      </span>
+      <span class="text-sm font-medium text-sky-600 dark:text-sky-400">{t(lang, 'cheats.title')} →</span>
+    </a>
 
     {communityTools.length > 0 && (
       <section class="mt-20">

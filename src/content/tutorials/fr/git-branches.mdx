@@ -1,0 +1,259 @@
+---
+title: "Git et les branches, pour les ingénieurs réseau"
+description: "Comprendre Git en partant de ce qu'un ingénieur réseau versionne : commits, historique, branches, fusion, conflits, merge requests, revenir en arrière et ne jamais commiter un secret. Avec un exercice sur les fichiers du lab netops."
+pubDate: 2026-10-17
+level: beginner
+tags: [git, gitops, automation, gitlab]
+vendor: []
+---
+
+Les configurations sauvegardées, les playbooks Ansible, les scripts Python, les modèles AVD, le code Terraform :
+dès qu'on automatise un réseau, tout devient du texte, et ce texte vit dans **Git**. Pas besoin d'être développeur
+pour s'en servir, mais il faut en comprendre la logique, surtout celle des **branches**, qui fait peur au début et
+devient vite indispensable. Ce tutoriel part des usages d'un ingénieur réseau : modifier une liste de VLAN,
+proposer un changement, le faire relire, revenir en arrière.
+
+## Ce que Git apporte
+
+| Besoin | Sans Git | Avec Git |
+|---|---|---|
+| Savoir ce qui a changé | comparer deux fichiers à la main | `git diff`, ligne par ligne |
+| Savoir qui et pourquoi | demander autour de soi | chaque changement a un auteur, une date et un message |
+| Revenir en arrière | retrouver la bonne copie `config-OLD-v2-final.txt` | revenir à n'importe quelle version, à tout moment |
+| Travailler à plusieurs | s'envoyer des fichiers, écraser le travail des autres | chacun sur sa **branche**, fusion contrôlée |
+| Faire relire avant d'appliquer | un mail avec une pièce jointe | une **merge request**, avec le diff exact et des commentaires |
+
+C'est le socle de tout le saut [Automatisation](/formations/automation) : les
+[sauvegardes GitOps](/formations/automation/config-backup), les pipelines, la [source de vérité](/formations/automation/netbox).
+
+## Les notions de base
+
+- Un **dépôt** (*repository*) est un dossier suivi par Git. L'historique complet est rangé dans un sous-dossier
+  caché, `.git`.
+- Un **commit** est une **photo** de tous les fichiers suivis, à un instant donné, avec un auteur, une date, un
+  message et un lien vers le commit précédent (son **parent**). Chaque commit a un identifiant unique, une empreinte
+  comme `3f2a1c9`.
+- La **zone de préparation** (*staging area*) est l'endroit où l'on range les modifications qui feront partie du
+  prochain commit. On choisit ce qu'on commite, fichier par fichier, voire ligne par ligne.
+- Un **dépôt distant** (*remote*), souvent sur GitLab ou GitHub, sert de point de rendez-vous à l'équipe.
+
+Le cycle de travail tient en quatre commandes :
+
+```bash
+git status                 # qu'est-ce qui a changé ?
+git diff                   # le détail, ligne par ligne
+git add ansible/vars/vlans.yml
+git commit -m "Ajoute le VLAN 40 MANAGEMENT"
+```
+
+Une seule fois par machine, on indique son identité, qui apparaîtra dans chaque commit :
+
+```bash
+git config --global user.name "Prénom Nom"
+git config --global user.email "prenom.nom@example.com"
+git config --global init.defaultBranch main
+```
+
+## Les branches
+
+Une **branche** est simplement une **étiquette qui pointe vers un commit**, et qui avance à chaque nouveau commit.
+La branche principale s'appelle en général `main`. Créer une branche ne copie aucun fichier : c'est instantané et
+gratuit. On en crée une pour chaque changement, on y travaille tranquillement, et `main` reste intacte tant que le
+changement n'est pas validé.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'VLAN 10-30' },
+    { id: 'b', branch: 0, label: 'MTU 9214' },
+    { id: 'c', branch: 1, label: 'VLAN 40', parents: ['b'] },
+    { id: 'd', branch: 1, label: 'description', tag: 'HEAD' },
+  ]}
+  caption="La branche vlan-40 part du dernier commit de main. Ses deux commits n'existent que sur elle : main n'a pas bougé."
+/>
+
+```bash
+git switch -c vlan-40      # crée la branche et s'y place
+git branch                 # liste les branches ; l'étoile marque la branche courante
+git switch main            # revient sur main : les fichiers reprennent leur état de main
+```
+
+**HEAD** désigne l'endroit où vous êtes : la branche courante, et donc le commit dont vos fichiers sont la copie.
+Changer de branche change le contenu des fichiers sur le disque. C'est déroutant la première fois, et c'est
+précisément l'intérêt.
+
+<Callout type="tip">
+Nommez les branches d'après le changement, pas d'après la personne : `vlan-40`, `fix/mtu-leaf3`,
+`feature/backup-ansible`. Une branche vit le temps d'un changement, de quelques heures à quelques jours, puis on la
+supprime une fois fusionnée.
+</Callout>
+
+## Fusionner
+
+Quand le changement est prêt, on le **fusionne** (*merge*) dans `main`. Deux cas se présentent.
+
+**Avance rapide** (*fast-forward*) : si `main` n'a pas bougé depuis la création de la branche, Git déplace
+simplement l'étiquette `main` jusqu'au dernier commit de la branche. Aucun nouveau commit.
+
+**Commit de fusion** : si `main` a reçu d'autres commits entre-temps, Git crée un commit qui a **deux parents** et
+réunit les deux historiques.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'VLAN 10-30' },
+    { id: 'b', branch: 0, label: 'MTU 9214' },
+    { id: 'c', branch: 1, label: 'VLAN 40', parents: ['b'] },
+    { id: 'e', branch: 0, label: 'NTP', parents: ['b'] },
+    { id: 'd', branch: 1, label: 'description', parents: ['c'] },
+    { id: 'm', branch: 0, label: 'fusion', parents: ['e', 'd'], tag: 'main' },
+  ]}
+  caption="Pendant le travail sur vlan-40, quelqu'un a ajouté la configuration NTP sur main. La fusion crée un commit à deux parents."
+/>
+
+```bash
+git switch main
+git merge vlan-40
+git branch -d vlan-40      # supprime l'étiquette ; les commits restent dans l'historique
+```
+
+### Les conflits
+
+Si les deux branches ont modifié **les mêmes lignes** du même fichier, Git ne peut pas choisir à votre place : c'est
+un **conflit**. Il l'écrit directement dans le fichier, entre des marqueurs :
+
+```yaml title="ansible/vars/vlans.yml pendant un conflit"
+vlans:
+  - vlan_id: 10
+<<<<<<< HEAD
+    name: USERS-PARIS
+=======
+    name: USERS-LYON
+>>>>>>> renommage-lyon
+```
+
+La partie du haut est la version de la branche courante (`HEAD`), celle du bas la version de la branche qu'on
+fusionne. Pour résoudre : éditez le fichier pour garder la bonne version (ou un mélange des deux), supprimez les
+marqueurs, puis `git add` et `git commit`. Un conflit n'est pas une erreur : c'est Git qui pose une question.
+
+<Callout type="warning">
+Un conflit dans un fichier de configuration réseau mérite toujours un humain qui comprend le réseau. Garder « la
+version la plus récente » par réflexe peut annuler le changement d'un collègue, par exemple une ACL qu'il vient de
+durcir. En cas de doute, demandez à l'auteur de l'autre branche.
+</Callout>
+
+## Travailler en équipe : la merge request
+
+Avec un dépôt distant, le flux de travail devient :
+
+1. `git pull` sur `main` pour partir de la dernière version ;
+2. `git switch -c vlan-40`, puis modifier et commiter ;
+3. `git push -u origin vlan-40` pour envoyer la branche sur GitLab ;
+4. ouvrir une **merge request** (GitLab) ou une **pull request** (GitHub) : la demande de fusionner la branche
+   dans `main` ;
+5. le pipeline de CI vérifie le changement (syntaxe, [conventions](/formations/automation/naming-ipam),
+   `ansible-playbook --check --diff`), et un collègue relit le diff ;
+6. une fois approuvée, la fusion se fait dans l'interface, et la branche est supprimée.
+
+<GitGraph
+  branches={[{ name: 'main', tone: 'sky' }, { name: 'fix/ntp', tone: 'amber' }, { name: 'vlan-40', tone: 'emerald' }]}
+  commits={[
+    { id: 'a', branch: 0, label: 'v1' },
+    { id: 'c', branch: 1, label: 'NTP', parents: ['a'] },
+    { id: 'e', branch: 0, label: 'MR !11', parents: ['a', 'c'] },
+    { id: 'b', branch: 2, label: 'VLAN 40', parents: ['e'] },
+    { id: 'd', branch: 2, label: 'relecture', parents: ['b'] },
+    { id: 'f', branch: 0, label: 'MR !12', parents: ['e', 'd'], tag: 'main' },
+  ]}
+  caption="Chaque changement vit sur sa branche, et n'entre dans main que par une merge request relue."
+/>
+
+<Callout type="field">
+Sur un dépôt de production, protégez `main` : personne ne pousse directement dessus, tout passe par une merge
+request relue et un pipeline vert. C'est le même principe qu'une fenêtre de changement : le changement est
+préparé, relu et tracé avant d'être appliqué. Le dépôt garde ensuite la trace de qui a approuvé quoi.
+</Callout>
+
+### Rebase, en deux mots
+
+`git rebase main`, lancé depuis une branche, **rejoue** ses commits par-dessus la dernière version de `main`,
+comme si la branche venait d'être créée. L'historique devient linéaire, sans commit de fusion. C'est pratique pour
+mettre à jour sa propre branche avant une merge request. La règle : **ne rebasez jamais une branche que d'autres
+utilisent**, car le rebase réécrit les commits et désynchronise leurs copies.
+
+## Revenir en arrière
+
+| Situation | Commande | Effet |
+|---|---|---|
+| Annuler une modification non commitée d'un fichier | `git restore <fichier>` | le fichier revient à la version du dernier commit (la modification est perdue) |
+| Retirer un fichier de la zone de préparation | `git restore --staged <fichier>` | la modification reste, mais ne fera pas partie du commit |
+| Corriger le message ou oublier un fichier dans le dernier commit | `git commit --amend` | remplace le dernier commit (seulement s'il n'est pas encore poussé) |
+| Annuler un commit déjà partagé | `git revert <commit>` | crée un **nouveau** commit qui fait l'inverse ; l'historique reste intact |
+| Mettre de côté un travail en cours | `git stash`, puis `git stash pop` | range les modifications, et les ressort plus tard |
+
+<Callout type="warning">
+Sur une branche partagée, utilisez `git revert`, jamais `git reset --hard` suivi d'un `push --force` : réécrire un
+historique que d'autres ont déjà récupéré provoque des pertes de travail. `revert` est l'équivalent d'un retour
+arrière documenté : on voit dans l'historique que le changement a été appliqué, puis annulé.
+</Callout>
+
+## Ne jamais commiter un secret
+
+Un mot de passe, une clé TACACS+, un jeton d'API commité dans Git y reste **pour toujours**, même si on le supprime
+dans le commit suivant : il suffit de remonter l'historique. Trois réflexes :
+
+- un fichier **`.gitignore`** à la racine, qui liste ce que Git doit ignorer (fichiers de mots de passe, `.env`,
+  états Terraform, environnements Python) ;
+- les secrets dans un coffre (Ansible Vault, HashiCorp Vault) ou dans les variables masquées du pipeline ;
+- si un secret a été commité : **considérez-le comme compromis et changez-le**. Nettoyer l'historique ne suffit
+  pas, il a pu être cloné entre-temps.
+
+```text title=".gitignore (exemple pour un dépôt réseau)"
+.env
+.vault_pass
+*.tfstate
+*.tfstate.backup
+.terraform/
+.venv/
+__pycache__/
+```
+
+## Écrire un bon message de commit
+
+Le message sert à celui qui lira l'historique dans six mois, peut-être vous, pendant un incident. Une première ligne
+courte qui dit **ce que fait** le commit, à l'impératif, puis si besoin un paragraphe qui dit **pourquoi** :
+
+```text title="Un message utile"
+Passe la MTU des liens spine-leaf à 9214
+
+Le VXLAN ajoute 50 octets : avec une MTU de 1500 sur l'underlay,
+les trames de 1500 des serveurs étaient fragmentées ou perdues.
+Ticket : CHG-4521
+```
+
+« Modifs », « fix » ou « wip » ne disent rien. Un bon message vaut une ligne de documentation.
+
+## À vous de jouer
+
+Dans le dossier du lab [`netops`](/formations/automation/python) :
+
+1. `git init`, puis `git add .` et `git commit -m "Version initiale du lab"`. Regardez `git log --oneline`.
+2. Créez une branche `vlan-40` et ajoutez dans `ansible/vars/vlans.yml` un VLAN 40 `MANAGEMENT`. Comparez avec
+   `git diff`, puis commitez.
+3. Revenez sur `main` (`git switch main`) et ouvrez le fichier : le VLAN 40 n'y est pas. Revenez sur `vlan-40` :
+   il réapparaît.
+4. Sur `main`, créez une branche `renommage`, et renommez le VLAN 10 en `USERS-PARIS`. Commitez. Sur `vlan-40`,
+   renommez aussi le VLAN 10, en `USERS-LYON`, et commitez.
+5. Fusionnez `vlan-40` dans `main`, puis `renommage` dans `main` : un conflit apparaît sur le nom du VLAN 10.
+   Résolvez-le, commitez, et regardez le graphe avec `git log --oneline --graph --all`.
+6. Bonus : annulez le commit du VLAN 40 avec `git revert`, et observez le nouveau commit créé.
+
+## À retenir
+
+- Un **commit** est une photo de tous les fichiers, avec un auteur, un message et un parent.
+- Une **branche** est une étiquette qui avance de commit en commit : en créer une est instantané. Une branche par
+  changement.
+- La **fusion** se fait en avance rapide, ou par un commit à deux parents ; un **conflit** est une question à
+  laquelle un humain doit répondre.
+- En équipe : branche, push, **merge request**, pipeline, relecture, fusion. `main` est protégée.
+- Pour annuler un commit partagé : **`git revert`**. Et **jamais de secret** dans Git : s'il y est, on le change.
