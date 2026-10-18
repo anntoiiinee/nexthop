@@ -1,0 +1,292 @@
+---
+title: "LDAPS authentication on Arista switches"
+description: "Connecting Arista EOS switch authentication to an encrypted LDAP directory (LDAPS): search account, certificates, groups and roles, checks and pitfalls. And why, in production, a TACACS+ or RADIUS server remains preferable."
+pubDate: 2026-10-17
+level: intermediate
+tags: [aaa, ldap, security, eos, tacacs, radius]
+vendor: [arista]
+---
+
+{/* Output declared in JavaScript: MDX strips leading whitespace inside tags */}
+export const showLdap = `LDAP server: prod-dc-hq1.aristanetworks.com/389
+   Binds requested: 6
+   Binds successful: 6
+   Binds failed: 0
+   Binds timed out: 0
+   FIPS is ON
+
+Last time counters were cleared: 1:16:41 ago`;
+
+Engineers log into switches with their corporate directory account (Active Directory, OpenLDAP) rather than a shared
+local account: it is the basis of traceable administration, and the first step after removing the shared `admin`
+account (see [Break-glass account rotation](/en/courses/automation/breakglass-rotation)). Arista EOS can query a
+directory **directly**, over TLS-encrypted LDAP. This tutorial shows how, and explains why, in most companies, going
+through a **TACACS+** or **RADIUS** server is better.
+
+<Callout type="warning">
+**In production, prefer TACACS+ or RADIUS.** Direct LDAP authentication works, but it is limited to authentication
+and one role per group: no per-command authorization, no log of typed commands, no <Term id="mfa" />. A
+<Term id="tacacs" /> server (Cisco ISE, Aruba ClearPass, tac_plus) or a RADIUS server (Microsoft NPS, FreeRADIUS)
+**backed by the same directory** brings all of that, and switches only talk to it. Details are at the
+[end of this tutorial](#why-prefer-tacacs-or-radius). Direct LDAP remains useful for a small fleet, a lab, or while
+waiting for the <Term id="aaa" /> server.
+</Callout>
+
+## How LDAP authentication works on EOS
+
+On each login, the switch performs **two binds** with the directory:
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'u', label: 'Engineer', sub: 'ssh jdoe@leaf1' },
+    { id: 's', label: 'EOS switch', tone: 'emerald' },
+    { id: 'd', label: 'Directory', sub: 'LDAPS', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'u', to: 's', label: 'login jdoe + password', tone: 'sky' },
+    { note: 'TLS session: the switch checks the directory’s certificate', over: ['s', 'd'], tone: 'violet' },
+    { from: 's', to: 'd', label: '1. search account bind', sub: 'cn=svc-netauth,…', tone: 'emerald' },
+    { from: 's', to: 'd', label: 'search: cn=jdoe under the base-dn', tone: 'emerald' },
+    { from: 'd', to: 's', label: 'jdoe’s full DN', style: 'dashed', tone: 'violet' },
+    { from: 's', to: 'd', label: '2. bind with the DN and the typed password', tone: 'emerald' },
+    { from: 'd', to: 's', label: 'success or failure', style: 'dashed', tone: 'violet' },
+    { from: 's', to: 'd', label: 'jdoe’s groups (group policy)', tone: 'emerald' },
+    { from: 's', to: 'u', label: 'session opened with the group’s role', tone: 'sky' },
+  ]}
+  caption="The search account finds the user, then the switch checks their password with a second bind. The group policy assigns the EOS role."
+/>
+
+1. The switch opens a **TLS** session with the directory and checks its certificate (that is what turns LDAP into
+   LDAPS).
+2. It binds with a **search account**, a read-only service account, and looks for the user under the **base-dn**,
+   using the configured attribute (`cn`, or `sAMAccountName` in Active Directory).
+3. It binds again with the DN found and **the typed password**: if the directory accepts it, the user is
+   authenticated.
+4. The **group policy** looks up the user's groups and assigns the **EOS role** of the first matching group
+   (`network-admin`, `network-operator`, or a custom role).
+
+## Before you start
+
+| Item | Example | Note |
+|---|---|---|
+| Reachable LDAPS server | `dc1.example.com` | from the switch's management interface, in the right VRF |
+| Certificate of the authority that signed the directory's certificate | `internal-ca.pem` | so the switch trusts the server |
+| Read-only search account | `cn=svc-netauth,ou=Services,dc=example,dc=com` | a dedicated account, with no other right |
+| Directory groups | `GG-Network-Admins`, `GG-Network-ReadOnly` | one group per privilege level |
+| A local break-glass account | `nh-breakglass` | essential if the directory is unreachable |
+
+<Callout type="note">
+The examples use the syntax from Arista's documentation (EOS 4.36 manual). The LDAP configuration has evolved across
+versions: check each command with `?` on your switch before deploying it.
+</Callout>
+
+## Step 1: trust the directory's certificate
+
+The switch must be able to verify the certificate the directory presents (see
+[TLS, certificates and inspection](/en/courses/proxy/tls-pki)). Import the certificate authority's certificate, then
+create an **SSL profile** that trusts it:
+
+```text title="Importing the authority's certificate (adapt to your EOS version)"
+leaf1# copy flash:internal-ca.pem certificate:internal-ca.pem
+```
+
+```text title="SSL profile"
+management security
+   ssl profile LDAPS
+      trust certificate internal-ca.pem
+```
+
+```text title="Check the profile"
+leaf1# show management security ssl profile
+```
+
+The profile must show as `valid`. If it is invalid (certificate not found, incomplete chain), the switch **won't
+use** the LDAP server: the documentation states that a server that doesn't speak TLS or whose certificate fails X.509
+verification is skipped. If the directory's certificate is signed by an intermediate authority, add its certificate
+to the profile too.
+
+<Callout type="warning">
+The directory's certificate must contain, in its SAN, the **name** the switch uses to reach it (`dc1.example.com`).
+Configuring the server by IP address while the certificate only carries the name makes verification fail. The
+certificate decoder in the [tools](/en/tools/cert-decoder) lets you check the SANs.
+</Callout>
+
+## Step 2: declare the directory
+
+```text title="management ldap"
+management ldap
+   server host dc1.example.com vrf MGMT
+   server host dc2.example.com vrf MGMT
+   !
+   server defaults
+      base-dn ou=Users,dc=example,dc=com
+      rdn attribute user sAMAccountName
+      ssl-profile LDAPS
+      authorization group policy NETWORK-ROLES
+      search username cn=svc-netauth,ou=Services,dc=example,dc=com password 0 <password>
+      timeout 5
+```
+
+| Line | Role |
+|---|---|
+| `server host … vrf MGMT` | the directories, in order; two for redundancy, reached through the management VRF |
+| `base-dn` | the directory branch where users are searched |
+| `rdn attribute user` | the attribute holding the typed username: `sAMAccountName` in Active Directory, often `uid` in OpenLDAP |
+| `ssl-profile` | the profile from step 1: it is what enables TLS |
+| `search username … password` | the search account |
+| `authorization group policy` | the group policy from step 3 |
+
+<Callout type="tip">
+The search account's password is typed in clear text (`password 0`), but EOS stores it encrypted in the
+running-config. It is still present on **every** switch: give this account the bare minimum of rights (read-only on
+the users and groups branch), and rotate it like other secrets.
+</Callout>
+
+### Port 389 or 636?
+
+Arista's documentation gives port **389** by default, LDAP's port, and states that TLS is enabled by the SSL profile.
+It doesn't say explicitly whether the switch then uses StartTLS on port 389 or TLS directly. If your directory only
+accepts encrypted connections on port **636** ("classic" LDAPS), set it on each server:
+`server host dc1.example.com port 636 vrf MGMT`. Then check with `show management ldap` (step 5) that binds succeed,
+and with a capture that nothing travels in clear text.
+
+## Step 3: assign roles by group
+
+```text title="Group policy"
+management ldap
+   group policy NETWORK-ROLES
+      search filter objectclass group attribute member
+      group "GG-Network-Admins" role network-admin
+      group "GG-Network-ReadOnly" role network-operator
+```
+
+`search filter objectclass group attribute member` says how to find groups: objects of class `group`, whose `member`
+attribute contains the user's DN, which is Active Directory's schema. **The first matching group wins**: put the
+most powerful groups first, or use the `before` and `after` keywords to order them. An authenticated user who belongs
+to none of these groups gets no administration role.
+
+## Step 4: enable LDAP for login
+
+```text title="AAA methods"
+aaa authentication login default group ldap local
+aaa authorization exec default group ldap local
+```
+
+`group ldap local`: the directory first, then **local accounts** if no directory answers. That is what lets the
+[break-glass account](/en/courses/automation/breakglass-rotation) work during a directory or management network
+outage.
+
+<Callout type="warning">
+Before changing `aaa authentication login`, keep **an SSH session open** on the switch, and test login from a
+**second** session. A mistake in the authentication method can lock you out; the already open session lets you roll
+back. On a whole fleet, deploy to a single device first.
+</Callout>
+
+## Step 5: check
+
+```text title="Checks"
+show management ldap
+show management security ssl profile
+show users detail
+```
+
+`show management ldap` shows bind counters per server. The following example is the one from Arista's documentation:
+
+<CliOutput
+  title="show management ldap (example from Arista's documentation)"
+  output={showLdap}
+  notes={[
+    { line: 1, match: '/389', text: 'The server and port used.', tone: 'sky' },
+    { line: 2, match: 'Binds requested: 6', text: 'Two binds per login attempt: the search account’s, then the user’s.', tone: 'violet' },
+    { line: 4, match: 'Binds failed: 0', text: 'Failures here: wrong password, or search account rejected. Binds `timed out`: directory unreachable or TLS failing.', tone: 'rose' },
+  ]}
+/>
+
+`show users detail` confirms the method used for each session: the authentication column shows `group ldap` for a
+user authenticated by the directory.
+
+## With CloudVision (CVP)
+
+If the switches are managed by [CloudVision](/en/tutorials/cvp-deployment) and CVP also authenticates its users
+against the same LDAP directory, each switch needs one more setting.
+
+<Callout type="warning">
+**LDAP + CVP: add `-disableaaa` to TerminAttr.** LDAP authentication provides no command **authorization**. Yet
+when CVP pushes a configuration or an EOS upgrade, the TerminAttr agent submits these operations to the switch's AAA
+checks, which can't succeed: the deployment fails. The `-disableaaa` option disables these checks for operations
+received from CVP, which can then push configurations and upgrades with the LDAP account. That account must be
+**the same on CVP and on the switches**: same username, same directory.
+</Callout>
+
+```text title="TerminAttr with -disableaaa (same line as in the CVP tutorial, option added at the end)"
+daemon TerminAttr
+   exec /usr/bin/TerminAttr -cvaddr=192.0.2.51:9910,192.0.2.52:9910,192.0.2.53:9910 -cvauth=token,/tmp/token -cvvrf=MGMT -taillogs -disableaaa
+   no shutdown
+```
+
+The option can be written with one or two dashes (`-disableaaa` or `--disableaaa`), TerminAttr accepts both. After
+the change, check that the agent is still running (`show daemon TerminAttr`) and that the switch stays connected in
+CVP.
+
+A trade-off to keep in mind: with `-disableaaa`, what CVP does on the switch is no longer checked by the switch's
+AAA. Control then relies entirely on **CVP roles** and its **change controls**, which become the only safeguard:
+restrict who can approve and execute a deployment. With a TACACS+ server that authorizes commands, this option is
+usually not needed.
+
+## Common pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| No bind, or binds *timed out* | directory unreachable from the management VRF, port filtered, or wrong port (389 or 636) |
+| The server is ignored, local login used | invalid SSL profile, missing authority certificate, or server name missing from the certificate's SAN |
+| Binds fail for everyone | search account mistyped, password expired or account locked |
+| The user logs in, with no rights | no group in the policy matches, or wrong `search filter` |
+| Everything stops when the directory goes down | no `local` at the end of the method, or no break-glass account |
+| Sudden certificate errors | directory certificate renewed by another authority, or expired |
+| CVP can't push a configuration or an upgrade | TerminAttr without `-disableaaa`, or a different account between CVP and the switches |
+
+## Why prefer TACACS+ or RADIUS
+
+LDAP on the switch answers one question: "is this the right password, and which group is this person in?". A
+dedicated AAA server does much more:
+
+| Need | Direct LDAP | TACACS+ (or RADIUS) backed by the directory |
+|---|---|---|
+| Authenticate with the directory account | yes | yes |
+| Assign a role by group | yes | yes |
+| **Per-command authorization** | no | yes, with TACACS+ (`aaa authorization commands`) |
+| **Log every typed command** | no | yes, with TACACS+ (`aaa accounting commands`) |
+| Strong authentication (MFA) | no | yes (NPS with MFA extension, ISE, ClearPass…) |
+| Central policy (hours, allowed sources, device type) | no | yes |
+| Where the secrets are | a search account on every switch | one shared key per switch, or certificates (RadSec) |
+| What the directory sees | one connection per switch and per login | a single source: the AAA server |
+| Multi-vendor | varies by device | universal |
+
+<Topology
+  width={760}
+  height={240}
+  nodes={[
+    { id: 'u', type: 'host', x: 80, y: 120, label: 'Engineer' },
+    { id: 'sw', type: 'switch', x: 260, y: 120, label: 'Switches', sub: 'EOS, IOS, FortiOS…' },
+    { id: 'aaa', type: 'server', x: 470, y: 120, label: 'TACACS+ / RADIUS', sub: 'ISE, ClearPass, NPS', tone: 'emerald' },
+    { id: 'ad', type: 'server', x: 680, y: 120, label: 'Directory', sub: 'LDAPS', tone: 'violet' },
+  ]}
+  links={[{ from: 'u', to: 'sw', label: 'SSH' }, { from: 'sw', to: 'aaa', label: 'TACACS+' }, { from: 'aaa', to: 'ad', label: 'LDAPS' }]}
+  caption="The recommended architecture: devices only talk to the AAA server, which alone queries the directory. Command logs and fine-grained authorization are centralized."
+/>
+
+EOS's TACACS+ configuration, with fallback to the local break-glass account, is detailed in the
+[Break-glass account rotation](/en/courses/automation/breakglass-rotation) chapter. The directory remains the source of
+accounts and groups; only the intermediary changes.
+
+## Key takeaways
+
+- EOS can authenticate directly against an encrypted LDAP directory: **search account**, **base-dn**, username
+  **attribute**, **SSL profile** for TLS, and **group policy** for roles.
+- TLS relies on the **SSL profile** and the authority's certificate: an invalid profile or a SAN mismatch, and the
+  server is skipped.
+- Always `group ldap local` and a **break-glass account**, and an open session during the change.
+- Check with `show management ldap` (two binds per login) and `show users detail`.
+- **In production, prefer TACACS+ or RADIUS backed by the directory**: per-command authorization, command log, MFA
+  and central policy.

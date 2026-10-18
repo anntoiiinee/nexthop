@@ -1,9 +1,293 @@
 ---
 title: "Authentification LDAPS sur les switches Arista"
-description: "Connecter l'authentification des switches Arista EOS à un annuaire LDAP chiffré (LDAPS) : certificats, groupes, rôles et pièges rencontrés en production."
+description: "Connecter l'authentification des switches Arista EOS à un annuaire LDAP chiffré (LDAPS) : compte de recherche, certificats, groupes et rôles, vérifications et pièges. Et pourquoi, en production, un serveur TACACS+ ou RADIUS reste préférable."
 pubDate: 2026-10-17
 level: intermediate
-tags: [aaa, ldap, security, eos]
+tags: [aaa, ldap, security, eos, tacacs, radius]
 vendor: [arista]
-wip: true
 ---
+
+{/* Sortie déclarée en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const showLdap = `LDAP server: prod-dc-hq1.aristanetworks.com/389
+   Binds requested: 6
+   Binds successful: 6
+   Binds failed: 0
+   Binds timed out: 0
+   FIPS is ON
+
+Last time counters were cleared: 1:16:41 ago`;
+
+Les ingénieurs se connectent aux switches avec leur compte de l'annuaire d'entreprise (Active Directory, OpenLDAP)
+plutôt qu'avec un compte local partagé : c'est la base d'une administration traçable, et le premier pas après la
+suppression du compte `admin` partagé (voir [Rotation du compte de secours](/formations/automation/breakglass-rotation)).
+Arista EOS sait interroger un annuaire **directement**, en LDAP chiffré par TLS. Ce tutoriel montre comment, et
+explique pourquoi, dans la plupart des entreprises, il vaut mieux passer par un serveur **TACACS+** ou **RADIUS**.
+
+<Callout type="warning">
+**En production, préférez TACACS+ ou RADIUS.** L'authentification LDAP directe fonctionne, mais elle se limite à
+l'authentification et à un rôle par groupe : pas d'autorisation commande par commande, pas de journal des commandes
+tapées, pas de <Term id="mfa" />. Un serveur <Term id="tacacs" /> (Cisco ISE, Aruba ClearPass, tac_plus) ou RADIUS
+(Microsoft NPS, FreeRADIUS) **adossé au même annuaire** apporte tout cela, et les switches ne parlent plus qu'à lui.
+Le détail est en [fin de tutoriel](#pourquoi-préférer-tacacs-ou-radius). LDAP direct reste utile pour un petit parc,
+un lab, ou en attendant le serveur <Term id="aaa" />.
+</Callout>
+
+## Comment fonctionne l'authentification LDAP sur EOS
+
+À chaque connexion, le switch fait **deux liaisons** (*binds*) avec l'annuaire :
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'u', label: 'Ingénieur', sub: 'ssh jdupont@leaf1' },
+    { id: 's', label: 'Switch EOS', tone: 'emerald' },
+    { id: 'd', label: 'Annuaire', sub: 'LDAPS', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'u', to: 's', label: 'login jdupont + mot de passe', tone: 'sky' },
+    { note: 'Session TLS : le switch vérifie le certificat de l’annuaire', over: ['s', 'd'], tone: 'violet' },
+    { from: 's', to: 'd', label: '1. bind du compte de recherche', sub: 'cn=svc-netauth,…', tone: 'emerald' },
+    { from: 's', to: 'd', label: 'recherche : cn=jdupont sous la base-dn', tone: 'emerald' },
+    { from: 'd', to: 's', label: 'DN complet de jdupont', style: 'dashed', tone: 'violet' },
+    { from: 's', to: 'd', label: '2. bind avec le DN et le mot de passe saisi', tone: 'emerald' },
+    { from: 'd', to: 's', label: 'succès ou échec', style: 'dashed', tone: 'violet' },
+    { from: 's', to: 'd', label: 'groupes de jdupont (group policy)', tone: 'emerald' },
+    { from: 's', to: 'u', label: 'session ouverte avec le rôle du groupe', tone: 'sky' },
+  ]}
+  caption="Le compte de recherche trouve l'utilisateur, puis le switch vérifie son mot de passe par un second bind. La politique de groupes attribue le rôle EOS."
+/>
+
+1. Le switch ouvre une session **TLS** avec l'annuaire et vérifie son certificat (c'est ce qui fait de LDAP du
+   LDAPS).
+2. Il se connecte avec un **compte de recherche** (*search account*), un compte de service en lecture seule, et
+   cherche l'utilisateur sous la **base-dn**, par l'attribut indiqué (`cn` ou `sAMAccountName` en Active Directory).
+3. Il refait un bind avec le DN trouvé et **le mot de passe saisi** : si l'annuaire l'accepte, l'utilisateur est
+   authentifié.
+4. La **politique de groupes** (*group policy*) cherche les groupes de l'utilisateur et lui attribue le **rôle
+   EOS** du premier groupe qui correspond (`network-admin`, `network-operator`, ou un rôle personnalisé).
+
+## Avant de commencer
+
+| Élément | Exemple | Remarque |
+|---|---|---|
+| Serveur LDAPS joignable | `dc1.example.com` | depuis l'interface de management du switch, dans la bonne VRF |
+| Certificat de l'autorité qui a signé le certificat de l'annuaire | `ca-interne.pem` | pour que le switch fasse confiance au serveur |
+| Compte de recherche en lecture seule | `cn=svc-netauth,ou=Services,dc=example,dc=com` | un compte dédié, sans autre droit |
+| Groupes de l'annuaire | `GG-Network-Admins`, `GG-Network-ReadOnly` | un groupe par niveau de droits |
+| Un compte local de secours | `nh-breakglass` | indispensable si l'annuaire est injoignable |
+
+<Callout type="note">
+Les exemples utilisent la syntaxe de la documentation d'Arista (manuel EOS 4.36). La configuration LDAP a évolué
+selon les versions : vérifiez chaque commande avec `?` sur votre switch avant de la déployer.
+</Callout>
+
+## Étape 1 : faire confiance au certificat de l'annuaire
+
+Le switch doit pouvoir vérifier le certificat présenté par l'annuaire (voir [TLS, certificats et inspection](/formations/proxy/tls-pki)).
+On importe le certificat de l'autorité de certification, puis on crée un **profil SSL** qui lui fait confiance :
+
+```text title="Import du certificat de l'autorité (à adapter à votre version d'EOS)"
+leaf1# copy flash:ca-interne.pem certificate:ca-interne.pem
+```
+
+```text title="Profil SSL"
+management security
+   ssl profile LDAPS
+      trust certificate ca-interne.pem
+```
+
+```text title="Vérifier le profil"
+leaf1# show management security ssl profile
+```
+
+Le profil doit apparaître avec l'état `valid`. S'il est invalide (certificat introuvable, chaîne incomplète), le
+switch **n'utilisera pas** le serveur LDAP : la documentation précise qu'un serveur qui ne parle pas TLS ou dont le
+certificat échoue à la vérification X.509 est écarté. Si le certificat de l'annuaire est signé par une autorité
+intermédiaire, ajoutez aussi son certificat au profil.
+
+<Callout type="warning">
+Le certificat de l'annuaire doit contenir, dans son SAN, le **nom** que le switch utilise pour le joindre
+(`dc1.example.com`). Configurer le serveur par son adresse IP alors que le certificat ne porte que le nom fait
+échouer la vérification. Le décodeur de certificats des [outils](/outils/cert-decoder) permet de vérifier les SAN.
+</Callout>
+
+## Étape 2 : déclarer l'annuaire
+
+```text title="management ldap"
+management ldap
+   server host dc1.example.com vrf MGMT
+   server host dc2.example.com vrf MGMT
+   !
+   server defaults
+      base-dn ou=Utilisateurs,dc=example,dc=com
+      rdn attribute user sAMAccountName
+      ssl-profile LDAPS
+      authorization group policy NETWORK-ROLES
+      search username cn=svc-netauth,ou=Services,dc=example,dc=com password 0 <mot-de-passe>
+      timeout 5
+```
+
+| Ligne | Rôle |
+|---|---|
+| `server host … vrf MGMT` | les annuaires, dans l'ordre ; deux pour la redondance, joints par la VRF de management |
+| `base-dn` | la branche de l'annuaire où chercher les utilisateurs |
+| `rdn attribute user` | l'attribut qui porte l'identifiant saisi : `sAMAccountName` en Active Directory, souvent `uid` en OpenLDAP |
+| `ssl-profile` | le profil de l'étape 1 : c'est lui qui active TLS |
+| `search username … password` | le compte de recherche |
+| `authorization group policy` | la politique de groupes de l'étape 3 |
+
+<Callout type="tip">
+Le mot de passe du compte de recherche est saisi en clair (`password 0`), mais EOS le stocke chiffré dans la
+running-config. Il est pourtant présent sur **chaque** switch : donnez à ce compte le minimum de droits (lecture
+seule sur la branche des utilisateurs et des groupes), et faites-le tourner comme les autres secrets.
+</Callout>
+
+### Port 389 ou 636 ?
+
+La documentation d'Arista indique le port **389** par défaut, celui de LDAP, et précise que TLS est activé par le
+profil SSL. Elle ne dit pas explicitement si le switch utilise alors StartTLS sur le port 389 ou TLS directement.
+Si votre annuaire n'accepte les connexions chiffrées que sur le port **636** (LDAPS « historique »), indiquez-le
+sur chaque serveur : `server host dc1.example.com port 636 vrf MGMT`. Vérifiez ensuite avec
+`show management ldap` (étape 5) que les binds réussissent, et avec une capture que rien ne circule en clair.
+
+## Étape 3 : attribuer les rôles par groupe
+
+```text title="Politique de groupes"
+management ldap
+   group policy NETWORK-ROLES
+      search filter objectclass group attribute member
+      group "GG-Network-Admins" role network-admin
+      group "GG-Network-ReadOnly" role network-operator
+```
+
+`search filter objectclass group attribute member` indique comment trouver les groupes : des objets de classe
+`group`, dont l'attribut `member` contient le DN de l'utilisateur, c'est le schéma d'Active Directory. **Le premier
+groupe qui correspond l'emporte** : placez les groupes les plus puissants en premier, ou utilisez les mots-clés
+`before` et `after` pour les ordonner. Un utilisateur authentifié mais membre d'aucun de ces groupes n'obtient pas de
+rôle d'administration.
+
+## Étape 4 : activer LDAP pour la connexion
+
+```text title="Méthodes AAA"
+aaa authentication login default group ldap local
+aaa authorization exec default group ldap local
+```
+
+`group ldap local` : l'annuaire d'abord, puis les **comptes locaux** si aucun annuaire ne répond. C'est ce qui
+permet au [compte de secours](/formations/automation/breakglass-rotation) de fonctionner pendant une panne de
+l'annuaire ou du réseau de management.
+
+<Callout type="warning">
+Avant de modifier `aaa authentication login`, gardez **une session SSH ouverte** sur le switch, et testez la
+connexion depuis une **seconde** session. Une erreur dans la méthode d'authentification peut vous empêcher de vous
+reconnecter ; la session déjà ouverte permet de revenir en arrière. Sur un parc entier, déployez d'abord sur un seul
+équipement.
+</Callout>
+
+## Étape 5 : vérifier
+
+```text title="Vérifications"
+show management ldap
+show management security ssl profile
+show users detail
+```
+
+`show management ldap` affiche les compteurs de binds par serveur. L'exemple suivant est celui de la documentation
+d'Arista :
+
+<CliOutput
+  title="show management ldap (exemple de la documentation Arista)"
+  output={showLdap}
+  notes={[
+    { line: 1, match: '/389', text: 'Le serveur et le port utilisés.', tone: 'sky' },
+    { line: 2, match: 'Binds requested: 6', text: 'Deux binds par tentative de connexion : celui du compte de recherche, puis celui de l’utilisateur.', tone: 'violet' },
+    { line: 4, match: 'Binds failed: 0', text: 'Des échecs ici : mot de passe erroné, ou compte de recherche refusé. Des binds `timed out` : annuaire injoignable ou TLS qui échoue.', tone: 'rose' },
+  ]}
+/>
+
+`show users detail` confirme la méthode utilisée pour chaque session : la colonne d'authentification indique
+`group ldap` pour un utilisateur authentifié par l'annuaire.
+
+## Avec CloudVision (CVP)
+
+Si les switches sont gérés par [CloudVision](/tutoriels/cvp-deployment) et que CVP authentifie lui aussi ses
+utilisateurs sur le même annuaire LDAP, un réglage supplémentaire est nécessaire sur chaque switch.
+
+<Callout type="warning">
+**LDAP + CVP : ajoutez `-disableaaa` à TerminAttr.** L'authentification LDAP n'apporte pas d'**autorisation** des
+commandes. Or, quand CVP pousse une configuration ou une mise à jour d'EOS, l'agent TerminAttr soumet ces opérations
+aux contrôles AAA du switch, qui ne peuvent pas aboutir : le déploiement échoue. L'option `-disableaaa` désactive ces
+contrôles pour les opérations reçues de CVP, qui peut alors pousser configurations et mises à jour avec le compte
+LDAP. Ce compte doit être **le même sur CVP et sur les switches** : même identifiant, même annuaire.
+</Callout>
+
+```text title="TerminAttr avec -disableaaa (même ligne que dans le tutoriel CVP, option ajoutée à la fin)"
+daemon TerminAttr
+   exec /usr/bin/TerminAttr -cvaddr=192.0.2.51:9910,192.0.2.52:9910,192.0.2.53:9910 -cvauth=token,/tmp/token -cvvrf=MGMT -taillogs -disableaaa
+   no shutdown
+```
+
+L'option s'écrit avec un ou deux tirets (`-disableaaa` ou `--disableaaa`), TerminAttr accepte les deux. Après la
+modification, vérifiez que l'agent tourne toujours (`show daemon TerminAttr`) et que le switch reste connecté dans CVP.
+
+Contrepartie à garder en tête : avec `-disableaaa`, ce que CVP fait sur le switch n'est plus contrôlé par l'AAA du
+switch. Le contrôle repose alors entièrement sur les **rôles de CVP** et sur ses **change controls**, qui deviennent
+le seul garde-fou : limitez qui peut approuver et exécuter un déploiement. Avec un serveur TACACS+ qui autorise les
+commandes, cette option n'est en général pas nécessaire.
+
+## Les pièges courants
+
+| Symptôme | Cause probable |
+|---|---|
+| Aucun bind, ou binds en *timed out* | annuaire injoignable depuis la VRF de management, port filtré, ou mauvais port (389 ou 636) |
+| Le serveur est ignoré, connexion en local | profil SSL invalide, certificat de l'autorité absent, ou nom du serveur absent du SAN du certificat |
+| Binds échoués pour tout le monde | compte de recherche mal saisi, mot de passe expiré ou compte verrouillé |
+| L'utilisateur se connecte, sans droits | aucun groupe de la politique ne correspond, ou mauvais `search filter` |
+| Tout s'arrête quand l'annuaire tombe | pas de `local` en fin de méthode, ou pas de compte de secours |
+| Erreurs de certificat soudaines | certificat de l'annuaire renouvelé par une autre autorité, ou expiré |
+| CVP n'arrive pas à pousser une configuration ou une mise à jour | TerminAttr sans `-disableaaa`, ou compte différent entre CVP et les switches |
+
+## Pourquoi préférer TACACS+ ou RADIUS
+
+LDAP sur le switch répond à une question : « ce mot de passe est-il le bon, et dans quel groupe est cette
+personne ? ». Un serveur AAA dédié en fait beaucoup plus :
+
+| Besoin | LDAP direct | TACACS+ (ou RADIUS) adossé à l'annuaire |
+|---|---|---|
+| Authentifier avec le compte de l'annuaire | oui | oui |
+| Attribuer un rôle selon les groupes | oui | oui |
+| **Autoriser commande par commande** | non | oui, avec TACACS+ (`aaa authorization commands`) |
+| **Journaliser chaque commande tapée** | non | oui, avec TACACS+ (`aaa accounting commands`) |
+| Authentification forte (MFA) | non | oui (NPS avec extension MFA, ISE, ClearPass…) |
+| Politique centralisée (heures, sources autorisées, type d'équipement) | non | oui |
+| Où sont les secrets | un compte de recherche sur chaque switch | une clé partagée par switch, ou des certificats (RadSec) |
+| Ce que voit l'annuaire | une connexion par switch et par login | une seule source : le serveur AAA |
+| Multi-constructeur | variable selon les équipements | universel |
+
+<Topology
+  width={760}
+  height={240}
+  nodes={[
+    { id: 'u', type: 'host', x: 80, y: 120, label: 'Ingénieur' },
+    { id: 'sw', type: 'switch', x: 260, y: 120, label: 'Switches', sub: 'EOS, IOS, FortiOS…' },
+    { id: 'aaa', type: 'server', x: 470, y: 120, label: 'TACACS+ / RADIUS', sub: 'ISE, ClearPass, NPS', tone: 'emerald' },
+    { id: 'ad', type: 'server', x: 680, y: 120, label: 'Annuaire', sub: 'LDAPS', tone: 'violet' },
+  ]}
+  links={[{ from: 'u', to: 'sw', label: 'SSH' }, { from: 'sw', to: 'aaa', label: 'TACACS+' }, { from: 'aaa', to: 'ad', label: 'LDAPS' }]}
+  caption="L'architecture recommandée : les équipements ne parlent qu'au serveur AAA, qui seul interroge l'annuaire. Les journaux de commandes et l'autorisation fine sont centralisés."
+/>
+
+La configuration TACACS+ d'EOS, avec le repli sur le compte local de secours, est détaillée au chapitre
+[Rotation du compte de secours](/formations/automation/breakglass-rotation). L'annuaire reste la source des comptes et
+des groupes ; seul l'intermédiaire change.
+
+## À retenir
+
+- EOS sait authentifier directement contre un annuaire LDAP chiffré : **compte de recherche**, **base-dn**,
+  **attribut** de l'identifiant, **profil SSL** pour TLS, et **politique de groupes** pour les rôles.
+- TLS repose sur le **profil SSL** et le certificat de l'autorité : un profil invalide ou un SAN qui ne correspond pas,
+  et le serveur est ignoré.
+- Toujours `group ldap local` et un **compte de secours**, et une session ouverte pendant le changement.
+- Vérifiez avec `show management ldap` (deux binds par connexion) et `show users detail`.
+- **En production, préférez TACACS+ ou RADIUS adossé à l'annuaire** : autorisation par commande, journal des
+  commandes, MFA et politique centralisée.
