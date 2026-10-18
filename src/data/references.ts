@@ -176,6 +176,38 @@ export const references: Record<string, Reference[]> = {
     rfc(9136, 'IP Prefix Advertisement in Ethernet VPN (EVPN)'),
   ],
 
+  'courses/datacenter/pra-pca': [
+    ref('EUR-Lex', 'Regulation (EU) 2022/2554 on digital operational resilience for the financial sector (DORA)', 'https://eur-lex.europa.eu/eli/reg/2022/2554/oj'),
+    ref('CISA', 'Data Backup Options (the 3-2-1 rule)', 'https://www.cisa.gov/sites/default/files/publications/data_backup_options.pdf'),
+  ],
+  'courses/datacenter/dci': [
+    rfc(9014, 'Interconnect Solution for Ethernet VPN (EVPN) Overlay Networks'),
+    rfc(7432, 'BGP MPLS-Based Ethernet VPN'),
+    rfc(8365, 'A Network Virtualization Overlay Solution Using Ethernet VPN (EVPN)'),
+    ref('Arista', 'EOS User Manual · Configuring EVPN (DCI gateway, multi-domain)', 'https://www.arista.com/en/um-eos/eos-configuring-evpn'),
+  ],
+  'courses/datacenter/qos': [
+    rfc(2474, 'Definition of the Differentiated Services Field (DS Field) in the IPv4 and IPv6 Headers'),
+    rfc(4594, 'Configuration Guidelines for DiffServ Service Classes'),
+    rfc(3168, 'The Addition of Explicit Congestion Notification (ECN) to IP'),
+    rfc(8257, 'Data Center TCP (DCTCP): TCP Congestion Control for Data Centers'),
+    ref('IEEE', 'IEEE 802.1 Data Center Bridging (802.1Qbb PFC, 802.1Qaz ETS)', 'https://1.ieee802.org/dcb/'),
+    ref('Arista', 'EOS User Manual · Quality of Service', 'https://www.arista.com/en/um-eos/eos-quality-of-service'),
+    ref('Arista', 'EOS User Manual · DCBX and Flow Control', 'https://www.arista.com/en/um-eos/eos-dcbx-and-flow-control'),
+  ],
+  'courses/datacenter/storage': [
+    ref('IANA', 'Service Name and Transport Protocol Port Number Registry (iscsi-target 3260, nvme 4420, nvme-disc 8009)', 'https://www.iana.org/assignments/service-names-port-numbers'),
+    rfc(7143, 'Internet Small Computer System Interface (iSCSI) Protocol (Consolidated)'),
+    ref('NVM Express', 'NVM Express specifications (NVMe over Fabrics, NVMe/TCP)', 'https://nvmexpress.org/specifications/'),
+  ],
+  'courses/datacenter/ai-networking': [
+    ref('IANA', 'Service Name and Transport Protocol Port Number Registry (roce 4791, uet 4793)', 'https://www.iana.org/assignments/service-names-port-numbers'),
+    ref('UEC', 'Ultra Ethernet Consortium · Specification 1.0 announcement', 'https://ultraethernet.org/ultra-ethernet-consortium-uec-launches-specification-1-0-transforming-ethernet-for-ai-and-hpc-at-scale/'),
+    ref('UEC', 'Ultra Ethernet Consortium · Specification 1.1 announcement', 'https://ultraethernet.org/ultra-ethernet-consortium-releases-specification-1-1-advancing-ai-and-hpc-networking/'),
+    ref('IEEE', 'IEEE 802.1 Data Center Bridging (802.1Qbb PFC, 802.1Qaz ETS)', 'https://1.ieee802.org/dcb/'),
+    ref('Arista', 'EOS User Manual · DCBX and Flow Control', 'https://www.arista.com/en/um-eos/eos-dcbx-and-flow-control'),
+  ],
+
   // Automatisation
   'courses/automation/python': [
     ref('Python', 'venv · Creation of virtual environments', 'https://docs.python.org/3/library/venv.html'),

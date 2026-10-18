@@ -1,9 +1,9 @@
 ---
 title: "Le data center"
-description: "Les architectures des data centers modernes : VRF, fabric spine/leaf et underlay eBGP, VXLAN, puis BGP EVPN comme plan de contrôle, avec passerelle anycast et routage entre VRF. Lab Arista cEOS à deux spines et trois leafs."
+description: "Les architectures des data centers modernes : VRF, fabric spine/leaf et underlay eBGP, VXLAN, puis BGP EVPN comme plan de contrôle, avec passerelle anycast et routage entre VRF, puis PRA et PCA, interconnexion de data centers, QoS, réseau du stockage et réseaux pour l'IA. Lab Arista cEOS à deux spines et trois leafs."
 pubDate: 2026-10-17
 level: advanced
-tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp]
+tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, dci, qos, storage, ai]
 vendor: [arista, cisco]
 order: 0
 ---
@@ -30,6 +30,11 @@ séparer les environnements. C'est l'architecture que génère [Arista AVD](/for
 | **Les buffers des switches** | Comprendre l'incast et les micro-rafales, choisir entre petits et gros buffers, utiliser ECN, DCTCP et PFC, repérer les pertes en sortie |
 | **VXLAN** | Transporter un VLAN à travers une fabric routée, lire un paquet VXLAN, comprendre les limites du *flood and learn* |
 | **EVPN, le control plane** | Distribuer les adresses MAC et IP par BGP, configurer la passerelle anycast et le routage symétrique entre VLAN et entre leafs |
+| **PRA et PCA** | Fixer RTO et RPO avec les métiers, choisir une stratégie de secours, préparer le réseau du site de secours et tester la bascule |
+| **Interconnecter deux data centers (DCI)** | Choisir le lien et le mode d'interconnexion, mesurer les risques d'un VLAN étendu, déployer EVPN entre sites avec des gateways |
+| **La QoS dans le data center** | Classer et marquer le trafic, configurer files, ECN et PFC, bâtir un plan de QoS simple et cohérent |
+| **Le réseau du stockage** | Distinguer FC, iSCSI et NVMe-oF, concevoir deux chemins avec multipathing, aligner le MTU 9000 de bout en bout |
+| **Les réseaux pour l'IA** | Comprendre le trafic d'un cluster de GPU, dimensionner une fabric rail-optimized, configurer un réseau RoCE sans perte |
 
 Les chapitres se suivent : chacun s'appuie sur le précédent.
 

@@ -1,0 +1,198 @@
+---
+title: "Le réseau du stockage"
+description: "Ce que le réseau doit au stockage : bloc, fichier et objet, Fibre Channel et ses deux fabrics, iSCSI, NVMe over Fabrics (TCP, RoCE), NFS et SMB, puis la conception d'un réseau de stockage sur Ethernet : chemins A et B et multipathing, VLAN dédiés sans passerelle, MTU 9000 de bout en bout, QoS, et les pièges classiques."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, storage, iscsi, nvme, fibre-channel, mtu, multipathing]
+vendor: [arista, cisco]
+order: 12
+---
+
+Une base de données, une machine virtuelle, une boîte aux lettres : tout finit par écrire sur des disques. Dans un
+data center, ces disques sont rarement dans le serveur lui-même : ils sont dans des **baies de stockage**,
+partagées par des centaines de serveurs, et joints **par le réseau**. Pour le stockage, le réseau n'est pas un
+service parmi d'autres : une perte de paquets, c'est une écriture qui attend ; une coupure de quelques secondes, ce
+sont des systèmes de fichiers qui passent en lecture seule et des bases de données qui s'arrêtent. Ce chapitre
+présente les protocoles du stockage et la façon de construire un réseau qui les sert bien.
+
+## Bloc, fichier, objet
+
+| Type | Ce que voit le serveur | Protocoles | Exemples |
+|---|---|---|---|
+| **Bloc** | un disque brut (un **LUN** ou un *namespace*), qu'il formate lui-même | Fibre Channel, iSCSI, NVMe over Fabrics | disques des machines virtuelles, bases de données |
+| **Fichier** | un système de fichiers partagé, avec des dossiers et des droits | **NFS** (TCP 2049), **SMB** (TCP 445) | partages de fichiers, répertoires personnels, sauvegardes |
+| **Objet** | des objets dans des *buckets*, via une API HTTP | **S3** et compatibles, sur HTTPS | archives, sauvegardes, données d'applications, lacs de données |
+
+Le stockage en **bloc** est le plus exigeant pour le réseau : chaque lecture ou écriture du système de fichiers du
+serveur devient une requête réseau, et la latence de l'application dépend directement de celle du réseau.
+
+## Fibre Channel : le réseau dédié historique
+
+Pendant vingt ans, le stockage en bloc a eu **son propre réseau** : le **SAN** (*Storage Area Network*) en **Fibre
+Channel** (FC), avec ses switches, ses cartes (HBA) et ses règles.
+
+- **Sans perte par conception** : un équipement n'envoie une trame que si le voisin lui a accordé un **crédit**
+  (*buffer-to-buffer credit*), c'est-à-dire de la place pour la recevoir. Rien n'est jamais jeté par congestion.
+- **Deux fabrics séparées, A et B** : chaque serveur et chaque baie a une carte sur chacune, sans aucun lien entre
+  elles. Une erreur sur la fabric A ne peut pas toucher la fabric B.
+- **Le zonage** : on déclare quels serveurs (identifiés par leur **WWN**, l'équivalent d'une adresse MAC) ont le
+  droit de voir quelles baies.
+- Des débits propres : 32, 64, puis 128 Gb/s FC.
+
+Fibre Channel reste très présent dans les grandes entreprises pour les applications critiques. Mais un réseau dédié
+coûte cher (équipements, compétences), et la tendance est de faire passer le stockage sur **Ethernet**. **FCoE**
+(Fibre Channel sur Ethernet), qui devait faire la transition, est resté marginal.
+
+## Le stockage en bloc sur Ethernet
+
+### iSCSI
+
+**iSCSI** transporte les commandes **SCSI** (le langage historique des disques) dans **TCP**, port **3260**.
+
+- Le serveur est l'**initiateur**, la baie la **cible** (*target*). Chacun est identifié par un nom **IQN**
+  (`iqn.2001-05.com.exemple:baie01`).
+- Il fonctionne sur n'importe quel réseau IP, avec des cartes Ethernet ordinaires : c'est sa force.
+- TCP gère les pertes en retransmettant : iSCSI tolère un réseau imparfait, mais chaque retransmission se paie en
+  latence.
+
+### NVMe over Fabrics
+
+Les disques **NVMe** (SSD en flash) sont si rapides que le vieux protocole SCSI devenait le goulet d'étranglement.
+**NVMe over Fabrics** (NVMe-oF) transporte directement les commandes NVMe sur le réseau, avec bien moins de
+surcharge :
+
+| Variante | Transport | Particularité |
+|---|---|---|
+| **NVMe/TCP** | TCP, port **4420** (et **8009** pour la découverte) | fonctionne sur tout réseau Ethernet ordinaire, le successeur naturel d'iSCSI |
+| **NVMe/RoCE** | RDMA sur Ethernet (RoCEv2) | la plus faible latence, mais exige un réseau **sans perte** (PFC, ECN) |
+| **NVMe/FC** | Fibre Channel | pour réutiliser un SAN FC existant |
+
+NVMe/TCP est aujourd'hui le choix le plus courant pour un nouveau déploiement sur Ethernet : presque les
+performances de RoCE, sans la complexité d'un réseau sans perte.
+
+### Les solutions hyperconvergées et distribuées
+
+**vSAN**, **Ceph**, **Nutanix** : ici, il n'y a pas de baie, les disques sont dans les serveurs, et le logiciel
+réplique chaque écriture sur plusieurs serveurs **à travers le réseau**. Le trafic de stockage devient alors du
+trafic **est-ouest** massif entre serveurs, avec de l'[incast](/formations/datacenter/buffers) lors des
+reconstructions. Ceph recommande d'ailleurs un réseau séparé pour cette réplication interne (*cluster network*).
+
+## Concevoir un réseau de stockage sur Ethernet
+
+### Deux chemins, A et B
+
+On reprend le principe de Fibre Channel : **deux chemins indépendants**. Chaque serveur a deux cartes (ou deux
+ports), chacune sur un réseau différent ; la baie a deux contrôleurs, chacun joignable par les deux réseaux.
+
+<Topology
+  width={760}
+  height={360}
+  nodes={[
+    { id: 'srv', type: 'server', x: 380, y: 45, label: 'Serveur', sub: 'deux ports de stockage' },
+    { id: 'la', type: 'switch', x: 180, y: 170, label: 'leaf A · chemin A', sub: 'VLAN 501 · 10.50.1.0/24', tone: 'sky' },
+    { id: 'lb', type: 'switch', x: 580, y: 170, label: 'leaf B · chemin B', sub: 'VLAN 502 · 10.50.2.0/24', tone: 'violet' },
+    { id: 'c1', type: 'server', x: 260, y: 295, label: 'Contrôleur 1', sub: 'baie de stockage', tone: 'emerald' },
+    { id: 'c2', type: 'server', x: 500, y: 295, label: 'Contrôleur 2', sub: 'baie de stockage', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'srv', to: 'la', tone: 'sky' },
+    { from: 'srv', to: 'lb', tone: 'violet' },
+    { from: 'la', to: 'c1', tone: 'sky' }, { from: 'la', to: 'c2', tone: 'sky' },
+    { from: 'lb', to: 'c1', tone: 'violet' }, { from: 'lb', to: 'c2', tone: 'violet' },
+  ]}
+  caption="Deux chemins indépendants : deux sous-réseaux, deux switches. Le serveur voit quatre chemins vers son disque (deux réseaux × deux contrôleurs) et les utilise tous."
+/>
+
+C'est le **multipathing** du système (MPIO sous Windows, `dm-multipath` sous Linux, le natif de VMware) qui gère
+les chemins : il répartit les entrées-sorties et bascule si un chemin disparaît, en quelques secondes au plus.
+
+<Callout type="warning">
+Pour iSCSI et NVMe/TCP, **pas d'agrégation de liens (LACP) entre les deux ports de stockage** : le multipathing a
+besoin de voir des chemins distincts, chacun avec son adresse IP, pour répartir et basculer lui-même. Une agrégation
+cacherait les chemins derrière une seule adresse, et un seul flux TCP n'utiliserait qu'un seul lien. Les deux
+chemins sont deux **sous-réseaux séparés**.
+</Callout>
+
+### Un réseau dédié, sans passerelle
+
+- **Des VLAN dédiés au stockage** (ou une VRF dédiée dans une fabric EVPN), séparés du trafic des utilisateurs.
+- **Pas de routage, ou le moins possible** : serveurs et baies dans les mêmes sous-réseaux. Chaque saut de routage
+  ajoute de la latence et une dépendance.
+- **Aucun firewall sur le chemin** : un firewall ajoute de la latence, a ses propres limites de sessions, et coupe les
+  sessions longues lors d'une bascule. Le stockage se protège par sa segmentation et par l'authentification de ses
+  protocoles (CHAP pour iSCSI, listes d'accès de la baie).
+- **Pas de passerelle par défaut sur les interfaces de stockage** des serveurs : sinon, le système risque d'envoyer
+  son trafic de stockage par la mauvaise carte.
+
+### MTU 9000, de bout en bout
+
+Le stockage déplace de gros blocs. Avec des **trames jumbo** (MTU 9000 au lieu de 1500), il faut six fois moins de
+paquets pour le même volume : moins de traitement pour les serveurs et les baies. Mais le MTU doit être **identique
+sur tout le chemin** : carte du serveur, ports des switches, liens entre switches, ports de la baie.
+
+```text title="Arista EOS : un port de stockage"
+interface Ethernet12
+   description srv-db01 stockage A
+   mtu 9214
+   switchport access vlan 501
+   spanning-tree portfast
+```
+
+Les switches sont souvent configurés au maximum qu'ils acceptent (9214 sur Arista), un peu au-dessus des serveurs
+(9000) : le switch ne doit jamais être le maillon le plus petit. Pour vérifier, depuis un serveur Linux, on envoie un
+ping de la taille maximale **en interdisant la fragmentation** :
+
+```bash
+ping -M do -s 8972 -c 3 10.50.1.20    # 8972 octets + 28 d'en-têtes IP et ICMP = 9000
+```
+
+S'il échoue alors qu'un ping normal passe, un élément du chemin a un MTU plus petit.
+
+<Callout type="field">
+Le piège classique d'un MTU mal aligné : la découverte et la connexion iSCSI fonctionnent (petits paquets), le disque
+apparaît, puis les grosses lectures et écritures **se figent**. Tout semble configuré, rien ne marche vraiment.
+Testez toujours le MTU avec un ping à la taille maximale avant de mettre en service.
+</Callout>
+
+### Pertes, buffers et QoS
+
+- **iSCSI et NVMe/TCP** supportent les pertes grâce à TCP, mais chaque perte coûte une retransmission : surveillez les
+  [pertes en sortie](/formations/datacenter/buffers) des ports de stockage, en particulier vers les baies, où l'incast
+  est fréquent.
+- **NVMe/RoCE** exige un réseau **sans perte** : <Term id="pfc" /> sur la classe du stockage, et <Term id="ecn" /> pour ralentir les émetteurs
+  avant d'en arriver là. C'est l'objet du [chapitre QoS](/formations/datacenter/qos).
+- Si le stockage partage des liens avec d'autres trafics, une **classe de QoS** dédiée lui garantit une part de la bande
+  passante lors des congestions.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Le disque apparaît, puis les transferts se figent | MTU différent sur un élément du chemin |
+| Un seul lien utilisé sur les deux, pas de bascule | LACP entre les ports de stockage au lieu de deux chemins en multipathing |
+| Latence de stockage qui grimpe aux heures de sauvegarde | stockage et sauvegardes sur les mêmes liens, sans QoS ; incast vers la baie |
+| Perte d'accès aux disques pendant une maintenance de switch | un seul chemin, ou les deux chemins sur le même switch |
+| Trafic de stockage qui part par la carte de production | passerelle par défaut sur l'interface de stockage, ou sous-réseaux qui se chevauchent |
+| Coupures de sessions iSCSI lors d'une bascule de firewall | firewall sur le chemin du stockage |
+| NVMe/RoCE très lent, puis blocages | réseau qui n'est pas sans perte : PFC ou ECN absents ou mal configurés |
+
+## À vous de jouer
+
+1. Un serveur a deux ports 25 Gb/s pour iSCSI. Faut-il les agréger en LACP ? Proposez l'adressage et le câblage.
+2. Quelle commande lancez-vous pour vérifier qu'un chemin de stockage accepte des trames de 9 000 octets ? Pourquoi
+   `-s 8972` ?
+3. Quelle différence fondamentale entre la façon dont Fibre Channel et iSCSI évitent ou gèrent les pertes ?
+4. Pour un nouveau stockage flash sur une fabric Ethernet existante, choisiriez-vous NVMe/TCP ou NVMe/RoCE ?
+   Pourquoi ?
+
+## À retenir
+
+- **Bloc** (FC, iSCSI, NVMe-oF), **fichier** (NFS, SMB), **objet** (S3) : le bloc est le plus exigeant pour le réseau.
+- **Fibre Channel** est sans perte par crédits, en **deux fabrics A et B** séparées ; le stockage migre vers Ethernet.
+- Sur Ethernet : **iSCSI** (TCP 3260), et son successeur **NVMe/TCP** (4420) ; **NVMe/RoCE** pour la plus faible
+  latence, au prix d'un réseau sans perte.
+- **Deux chemins** indépendants et du **multipathing**, pas de LACP ; des **VLAN dédiés**, sans passerelle ni firewall.
+- **MTU 9000 de bout en bout**, vérifié avec `ping -M do -s 8972` ; surveillez les pertes vers les baies.
+
+Prochain chapitre : **les réseaux pour l'IA**, où le stockage, le RDMA et le réseau sans perte prennent une tout autre
+échelle.

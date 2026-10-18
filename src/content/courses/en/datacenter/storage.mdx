@@ -1,0 +1,191 @@
+---
+title: "The storage network"
+description: "What the network owes storage: block, file and object, Fibre Channel and its two fabrics, iSCSI, NVMe over Fabrics (TCP, RoCE), NFS and SMB, then designing a storage network over Ethernet: A and B paths and multipathing, dedicated VLANs with no gateway, MTU 9000 end to end, QoS, and the classic pitfalls."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, storage, iscsi, nvme, fibre-channel, mtu, multipathing]
+vendor: [arista, cisco]
+order: 12
+---
+
+A database, a virtual machine, a mailbox: everything ends up writing to disks. In a data center, those disks are
+rarely in the server itself: they are in **storage arrays**, shared by hundreds of servers, and reached **over the
+network**. For storage, the network isn't one service among others: a lost packet is a write that waits; a cut of a
+few seconds means file systems going read-only and databases stopping. This chapter presents storage protocols and
+how to build a network that serves them well.
+
+## Block, file, object
+
+| Type | What the server sees | Protocols | Examples |
+|---|---|---|---|
+| **Block** | a raw disk (a **LUN** or a *namespace*), which it formats itself | Fibre Channel, iSCSI, NVMe over Fabrics | virtual machine disks, databases |
+| **File** | a shared file system, with folders and permissions | **NFS** (TCP 2049), **SMB** (TCP 445) | file shares, home directories, backups |
+| **Object** | objects in *buckets*, through an HTTP API | **S3** and compatibles, over HTTPS | archives, backups, application data, data lakes |
+
+**Block** storage is the most demanding for the network: every read or write by the server's file system becomes a
+network request, and the application's latency directly depends on the network's.
+
+## Fibre Channel: the historical dedicated network
+
+For twenty years, block storage had **its own network**: the **SAN** (*Storage Area Network*) in **Fibre Channel**
+(FC), with its switches, its cards (HBAs) and its rules.
+
+- **Lossless by design**: a device only sends a frame if the neighbor has granted it a **credit**
+  (*buffer-to-buffer credit*), i.e. room to receive it. Nothing is ever dropped through congestion.
+- **Two separate fabrics, A and B**: each server and each array has a card on each, with no link between them. An
+  error on fabric A can't affect fabric B.
+- **Zoning**: you declare which servers (identified by their **WWN**, the equivalent of a MAC address) may see which
+  arrays.
+- Speeds of its own: 32, 64, then 128 Gb/s FC.
+
+Fibre Channel is still very present in large companies for critical applications. But a dedicated network is
+expensive (equipment, skills), and the trend is to run storage over **Ethernet**. **FCoE** (Fibre Channel over
+Ethernet), which was meant to bridge the gap, stayed marginal.
+
+## Block storage over Ethernet
+
+### iSCSI
+
+**iSCSI** carries **SCSI** commands (the historical language of disks) inside **TCP**, port **3260**.
+
+- The server is the **initiator**, the array the **target**. Each is identified by an **IQN** name
+  (`iqn.2001-05.com.example:array01`).
+- It runs on any IP network, with ordinary Ethernet cards: that's its strength.
+- TCP handles losses by retransmitting: iSCSI tolerates an imperfect network, but every retransmission costs latency.
+
+### NVMe over Fabrics
+
+**NVMe** disks (flash SSDs) are so fast that the old SCSI protocol became the bottleneck. **NVMe over Fabrics**
+(NVMe-oF) carries NVMe commands directly over the network, with far less overhead:
+
+| Variant | Transport | Specifics |
+|---|---|---|
+| **NVMe/TCP** | TCP, port **4420** (and **8009** for discovery) | runs on any ordinary Ethernet network, iSCSI's natural successor |
+| **NVMe/RoCE** | RDMA over Ethernet (RoCEv2) | the lowest latency, but requires a **lossless** network (PFC, ECN) |
+| **NVMe/FC** | Fibre Channel | to reuse an existing FC SAN |
+
+NVMe/TCP is today the most common choice for a new deployment over Ethernet: nearly RoCE's performance, without the
+complexity of a lossless network.
+
+### Hyperconverged and distributed solutions
+
+**vSAN**, **Ceph**, **Nutanix**: here there is no array, the disks are in the servers, and the software replicates
+every write to several servers **across the network**. Storage traffic then becomes massive **east-west** traffic
+between servers, with [incast](/en/courses/datacenter/buffers) during rebuilds. Ceph actually recommends a separate
+network for this internal replication (*cluster network*).
+
+## Designing a storage network over Ethernet
+
+### Two paths, A and B
+
+We borrow Fibre Channel's principle: **two independent paths**. Each server has two cards (or two ports), each on a
+different network; the array has two controllers, each reachable through both networks.
+
+<Topology
+  width={760}
+  height={360}
+  nodes={[
+    { id: 'srv', type: 'server', x: 380, y: 45, label: 'Server', sub: 'two storage ports' },
+    { id: 'la', type: 'switch', x: 180, y: 170, label: 'leaf A · path A', sub: 'VLAN 501 · 10.50.1.0/24', tone: 'sky' },
+    { id: 'lb', type: 'switch', x: 580, y: 170, label: 'leaf B · path B', sub: 'VLAN 502 · 10.50.2.0/24', tone: 'violet' },
+    { id: 'c1', type: 'server', x: 260, y: 295, label: 'Controller 1', sub: 'storage array', tone: 'emerald' },
+    { id: 'c2', type: 'server', x: 500, y: 295, label: 'Controller 2', sub: 'storage array', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'srv', to: 'la', tone: 'sky' },
+    { from: 'srv', to: 'lb', tone: 'violet' },
+    { from: 'la', to: 'c1', tone: 'sky' }, { from: 'la', to: 'c2', tone: 'sky' },
+    { from: 'lb', to: 'c1', tone: 'violet' }, { from: 'lb', to: 'c2', tone: 'violet' },
+  ]}
+  caption="Two independent paths: two subnets, two switches. The server sees four paths to its disk (two networks × two controllers) and uses them all."
+/>
+
+The system's **multipathing** (MPIO on Windows, `dm-multipath` on Linux, VMware's native one) manages the paths: it
+spreads I/O and fails over if a path disappears, within a few seconds at most.
+
+<Callout type="warning">
+For iSCSI and NVMe/TCP, **no link aggregation (LACP) between the two storage ports**: multipathing needs to see
+distinct paths, each with its own IP address, to spread and fail over by itself. Aggregation would hide the paths
+behind a single address, and a single TCP flow would only use one link. The two paths are two **separate subnets**.
+</Callout>
+
+### A dedicated network, with no gateway
+
+- **Dedicated storage VLANs** (or a dedicated VRF in an EVPN fabric), separate from user traffic.
+- **No routing, or as little as possible**: servers and arrays in the same subnets. Every routing hop adds latency and
+  a dependency.
+- **No firewall on the path**: a firewall adds latency, has its own session limits, and cuts long sessions during a
+  failover. Storage is protected by its segmentation and by its protocols' authentication (CHAP for iSCSI, the
+  array's access lists).
+- **No default gateway on the servers' storage interfaces**: otherwise the system may send its storage traffic through
+  the wrong card.
+
+### MTU 9000, end to end
+
+Storage moves large blocks. With **jumbo frames** (MTU 9000 instead of 1500), six times fewer packets are needed for
+the same volume: less processing for servers and arrays. But the MTU must be **identical along the whole path**:
+server card, switch ports, links between switches, array ports.
+
+```text title="Arista EOS: a storage port"
+interface Ethernet12
+   description srv-db01 storage A
+   mtu 9214
+   switchport access vlan 501
+   spanning-tree portfast
+```
+
+Switches are often set to the maximum they accept (9214 on Arista), slightly above the servers (9000): the switch must
+never be the smallest link. To check, from a Linux server, send a ping of the maximum size **with fragmentation
+forbidden**:
+
+```bash
+ping -M do -s 8972 -c 3 10.50.1.20    # 8972 bytes + 28 bytes of IP and ICMP headers = 9000
+```
+
+If it fails while a normal ping works, an element on the path has a smaller MTU.
+
+<Callout type="field">
+The classic misaligned MTU trap: iSCSI discovery and login work (small packets), the disk shows up, then large reads
+and writes **freeze**. Everything looks configured, nothing really works. Always test the MTU with a maximum-size ping
+before going live.
+</Callout>
+
+### Loss, buffers and QoS
+
+- **iSCSI and NVMe/TCP** survive losses thanks to TCP, but each loss costs a retransmission: watch the
+  [output drops](/en/courses/datacenter/buffers) on storage ports, especially towards the arrays, where incast is
+  common.
+- **NVMe/RoCE** requires a **lossless** network: <Term id="pfc" /> on the storage class, and <Term id="ecn" /> to slow
+  senders down before getting there. That's the subject of the [QoS chapter](/en/courses/datacenter/qos).
+- If storage shares links with other traffic, a dedicated **QoS class** guarantees it a share of bandwidth during
+  congestion.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| The disk shows up, then transfers freeze | different MTU on an element of the path |
+| Only one link of the two used, no failover | LACP between the storage ports instead of two paths with multipathing |
+| Storage latency climbing during backup hours | storage and backups on the same links, without QoS; incast towards the array |
+| Loss of disk access during a switch maintenance | a single path, or both paths on the same switch |
+| Storage traffic leaving through the production card | default gateway on the storage interface, or overlapping subnets |
+| iSCSI sessions cut during a firewall failover | a firewall on the storage path |
+| NVMe/RoCE very slow, then hangs | a network that isn't lossless: PFC or ECN missing or misconfigured |
+
+## Your turn
+
+1. A server has two 25 Gb/s ports for iSCSI. Should they be aggregated with LACP? Propose the addressing and cabling.
+2. Which command do you run to check that a storage path accepts 9,000-byte frames? Why `-s 8972`?
+3. What is the fundamental difference between how Fibre Channel and iSCSI avoid or handle losses?
+4. For new flash storage on an existing Ethernet fabric, would you choose NVMe/TCP or NVMe/RoCE? Why?
+
+## Key takeaways
+
+- **Block** (FC, iSCSI, NVMe-oF), **file** (NFS, SMB), **object** (S3): block is the most demanding for the network.
+- **Fibre Channel** is lossless through credits, in **two separate fabrics, A and B**; storage is moving to Ethernet.
+- Over Ethernet: **iSCSI** (TCP 3260), and its successor **NVMe/TCP** (4420); **NVMe/RoCE** for the lowest latency,
+  at the cost of a lossless network.
+- **Two independent paths** and **multipathing**, no LACP; **dedicated VLANs**, with no gateway or firewall.
+- **MTU 9000 end to end**, checked with `ping -M do -s 8972`; watch drops towards the arrays.
+
+Next chapter: **networks for AI**, where storage, RDMA and lossless networking reach a whole new scale.

@@ -1,0 +1,261 @@
+---
+title: "La QoS dans le data center"
+description: "Décider quel trafic passe en premier quand un lien se remplit : classification et marquage (DSCP, CoS), frontière de confiance, classes de trafic et files, ordonnancement strict ou pondéré, ECN et ses seuils, PFC pour une classe sans perte et son watchdog, ETS et DCBX, un plan de QoS type pour le data center, et la configuration Arista EOS."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, qos, dscp, ecn, pfc, dcb, congestion]
+vendor: [arista]
+order: 11
+---
+
+export const dscpDefault = `DSCP           0-7   8-15  16-23  24-31  32-39  40-47  48-55  56-63
+Traffic class    1     0      2      3      4      5      6      7`;
+
+Dans un data center, les liens sont rapides et la bande passante abondante : pourquoi s'embarrasser de **qualité de
+service** (<Term id="qos" />) ? Parce qu'une congestion n'a pas besoin de durer pour faire mal. Le chapitre
+[Les buffers des switches](/formations/datacenter/buffers) l'a montré : un incast de quelques centaines de
+microsecondes suffit à remplir un buffer et à perdre des paquets. La QoS ne crée pas de bande passante ; elle décide
+**qui passe en premier**, **qui attend** et **qui est jeté** pendant ces instants. Pour le contrôle du réseau, le
+stockage et l'IA, c'est ce qui fait la différence entre un incident et rien du tout.
+
+## Ce que la QoS doit protéger
+
+| Trafic | Ce qu'il supporte mal | Ce qu'on lui donne |
+|---|---|---|
+| **Contrôle du réseau** (BGP, BFD, LACP) | la moindre perte : une session qui tombe fait basculer le routage | une classe prioritaire, toujours servie |
+| **Stockage** (iSCSI, NVMe/TCP) | les pertes et la latence : chaque écriture attend | une part de bande passante garantie |
+| **RDMA** (RoCE, NVMe/RoCE, IA) | **toute** perte : les performances s'effondrent | une classe **sans perte** (PFC) et ECN |
+| **Applications** | une latence variable | le service par défaut |
+| **Sauvegardes, réplications en masse** | rien de particulier : elles peuvent attendre | une classe « moins que le défaut » |
+
+## Le chemin d'un paquet dans un switch
+
+<PacketFormat
+  cols={10}
+  rows={[
+    { fields: [
+      { label: '1. Classer', sub: 'DSCP, CoS, ACL', span: 2, tone: 'violet' },
+      { label: '2. Marquer', sub: 'réécrire DSCP ou CoS', span: 2, tone: 'violet' },
+      { label: '3. Mettre en file', sub: 'classe → file de sortie', span: 2, tone: 'sky' },
+      { label: '4. Gérer la congestion', sub: 'ECN, PFC, rejet', span: 2, tone: 'amber' },
+      { label: '5. Ordonnancer', sub: 'strict ou pondéré', span: 2, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="À l'entrée, le switch décide à quelle classe appartient le paquet ; à la sortie, chaque classe a sa file, et l'ordonnanceur choisit quelle file servir."
+/>
+
+## Classer et marquer
+
+### DSCP et CoS
+
+Le paquet porte lui-même sa classe, dans deux champs possibles :
+
+- <Term id="dscp" /> (*Differentiated Services Code Point*) : 6 bits de l'en-tête **IP**, soit 64 valeurs. Il survit au routage :
+  c'est le marquage de référence.
+- **CoS** (*Class of Service*, ou PCP, norme 802.1p) : 3 bits dans l'**étiquette 802.1Q** d'une trame, soit 8 valeurs.
+  Il n'existe que sur les liens étiquetés, et disparaît au premier routeur.
+
+Les valeurs DSCP ont des noms, issus des recommandations de l'IETF (RFC 4594) :
+
+| Nom | DSCP | Usage habituel |
+|---|---|---|
+| **CS6** | 48 | contrôle du réseau (BGP, OSPF, BFD) |
+| **EF** | 46 | voix, temps réel |
+| **AF41** | 34 | vidéo interactive |
+| **AF31** / **CS3** | 26 / 24 | données importantes ; souvent le stockage ou le RDMA dans un data center |
+| **AF21** | 18 | données à faible latence |
+| **Défaut** (CS0) | 0 | tout le reste |
+| **CS1** | 8 | « moins que le défaut » : sauvegardes, transferts en masse |
+
+### La frontière de confiance
+
+Un serveur peut marquer ses paquets comme il veut, y compris en CS6 pour passer devant tout le monde. La **frontière
+de confiance** (*trust boundary*) est l'endroit où le réseau décide de croire, ou non, le marquage reçu :
+
+- sur les **ports serveurs**, on ne fait confiance qu'aux serveurs qui doivent marquer (stockage, RDMA), ou on
+  **remarque** soi-même selon le port, le VLAN ou une liste d'accès ;
+- **entre les switches de la fabric**, on fait confiance au DSCP : il a déjà été contrôlé à l'entrée.
+
+Sur Arista EOS, un port fait confiance au **CoS** par défaut s'il est en mode switch, et au **DSCP** s'il est routé.
+`qos trust dscp` le force à lire le DSCP, `no qos trust` à ignorer tout marquage.
+
+### Des classes de trafic aux files
+
+Le switch traduit le marquage en une **classe de trafic** interne (*traffic class*, de 0 à 7), puis chaque classe en
+une **file de sortie** (*tx-queue*). La correspondance par défaut d'EOS, d'après sa documentation :
+
+<CliOutput
+  title="Correspondance par défaut DSCP → classe de trafic (Arista EOS)"
+  output={dscpDefault}
+  notes={[
+    { line: 2, text: 'DSCP 0 à 7 (le trafic par défaut) va en classe 1, et DSCP 8 à 15 (CS1) en classe 0 : le « moins que le défaut » est bien en dessous du défaut.', match: '1     0', tone: 'amber' },
+    { line: 2, text: 'AF31 et CS3 (24 à 31) tombent en classe 3, CS6 (48) en classe 6.', match: '3      4', tone: 'sky' },
+  ]}
+/>
+
+Les classes vont ensuite, par défaut, dans la file de même numéro. Les deux correspondances se modifient
+(`qos map dscp … to traffic-class …`, `qos map traffic-class … to tx-queue …`), mais partir du défaut et
+marquer en conséquence est souvent le plus simple.
+
+## Servir les files : l'ordonnancement
+
+Chaque port a jusqu'à **huit files** en sortie. L'ordonnanceur choisit laquelle servir :
+
+- **Priorité stricte** : une file prioritaire est toujours servie d'abord. Idéal pour un trafic **faible et vital**
+  (contrôle du réseau), dangereux pour un trafic volumineux : il peut **affamer** toutes les autres files.
+- **Partage pondéré** (*round robin* pondéré, DWRR) : chaque file reçoit une **part garantie** de la bande passante
+  quand le lien est saturé, et peut prendre davantage s'il ne l'est pas.
+
+```text title="Arista EOS : une part garantie pour la file 3 (plateformes Jericho, syntaxe tx-queue)"
+interface Ethernet3/5/1
+   tx-queue 3
+      no priority
+      bandwidth percent 30
+   tx-queue 2
+      bandwidth percent 10
+```
+
+`no priority` fait passer la file en partage pondéré (et, d'après la documentation, toutes les files de priorité
+inférieure avec elle). Le **lissage** (`shape rate`, en kb/s) plafonne une file ou un port, par exemple vers un lien
+plus lent.
+
+<Callout type="note">
+La syntaxe dépend de la puce du switch. Sur les plateformes Trident et Tomahawk, les files unicast et multicast sont
+séparées (`uc-tx-queue`, `mc-tx-queue`), certains réglages diffèrent, et les seuils ECN acceptent d'autres unités.
+Vérifiez toujours la documentation de votre modèle.
+</Callout>
+
+## Gérer la congestion : ECN
+
+Quand une file se remplit, plutôt que d'attendre qu'elle déborde et de jeter des paquets, le switch peut **marquer**
+les paquets avec **ECN** (*Explicit Congestion Notification*, RFC 3168) : deux bits de l'en-tête IP signalent la
+congestion au destinataire, qui prévient l'émetteur, qui ralentit. Aucune perte, et une file qui reste courte.
+
+Le marquage suit deux **seuils** :
+
+- en dessous du **seuil minimal**, rien n'est marqué ;
+- entre les deux seuils, une proportion croissante de paquets est marquée ;
+- au-dessus du **seuil maximal**, tous les paquets sont marqués.
+
+```text title="Arista EOS : ECN sur la file 3 (d'après la documentation Arista)"
+interface Ethernet3/5/1
+   tx-queue 3
+      random-detect ecn minimum-threshold 128 kbytes maximum-threshold 1280 kbytes
+```
+
+Les bons seuils dépendent du débit du port, de la mémoire de la puce et du trafic : partez des recommandations du
+constructeur pour votre cas (stockage, RoCE), puis ajustez en observant les compteurs. Des seuils trop bas freinent
+les émetteurs sans raison ; trop hauts, la file déborde avant que le ralentissement agisse. ECN ne fonctionne que si
+les **deux extrémités** le prennent en charge : DCTCP pour TCP, DCQCN pour RoCE.
+
+## Une classe sans perte : PFC
+
+Pour le RDMA, ralentir ne suffit pas : **aucun** paquet ne doit être perdu. **PFC** (*Priority-based Flow Control*,
+IEEE 802.1Qbb) envoie au voisin une **pause** pour une seule classe quand sa file atteint un seuil ; le voisin cesse
+d'émettre cette classe, et seulement elle, jusqu'à ce que la place revienne. Les autres classes continuent.
+
+```text title="Arista EOS : PFC sur la priorité 3, avec watchdog (d'après la documentation Arista)"
+interface Ethernet1/1
+   priority-flow-control on
+   priority-flow-control priority 3 no-drop
+   tx-queue 3
+      bandwidth guaranteed 100
+!
+priority-flow-control pause watchdog default timeout 10
+priority-flow-control pause watchdog action drop
+```
+
+- `priority-flow-control on` active PFC sur le port ; `priority 3 no-drop` rend la priorité 3 **sans perte**.
+- Le **watchdog** surveille les files bloquées par des pauses : au-delà du délai, il agit (`drop`, `errdisable` ou
+  simple notification). La documentation précise qu'il faut une bande passante garantie sur la file surveillée.
+- PFC remplace le contrôle de flux Ethernet classique (802.3x) sur le port : les deux sont incompatibles.
+
+<Callout type="warning">
+PFC est puissant et dangereux, comme le chapitre sur les buffers l'a montré : une pause se propage de voisin en
+voisin, un serveur lent peut bloquer des flux qui ne le concernent pas, et une **tempête de pauses** peut figer une
+partie de la fabric. Règles d'or : PFC sur **une seule classe** (celle du RDMA), **ECN** sur la même classe pour
+ralentir les émetteurs avant d'atteindre les seuils de pause, et un **watchdog** partout.
+</Callout>
+
+## ETS et DCBX
+
+PFC fait partie d'un ensemble de normes appelé **DCB** (*Data Center Bridging*) :
+
+- **ETS** (*Enhanced Transmission Selection*, IEEE 802.1Qaz) répartit la bande passante entre groupes de classes,
+  comme le partage pondéré vu plus haut.
+- **DCBX** est le protocole d'échange qui transporte ces réglages par LLDP, pour que le switch annonce à la carte du
+  serveur quelles priorités sont sans perte et comment la bande passante est partagée. Sur EOS : `dcbx mode ieee`
+  sur le port, avec LLDP actif.
+
+Configurer la QoS des deux côtés à la main (switch et serveur) ou laisser DCBX la propager : l'important est que les
+deux côtés soient **d'accord**, faute de quoi le serveur émet du RoCE dans une classe que le switch traite avec
+pertes.
+
+## Un plan de QoS type pour le data center
+
+| Classe | Marquage | Traitement |
+|---|---|---|
+| Contrôle du réseau | CS6 (48) | priorité stricte, faible volume |
+| RDMA (RoCE, NVMe/RoCE) | AF31 (26) | **sans perte** : PFC, ECN, part garantie |
+| Notifications de congestion RoCE (CNP) | CS6 (48), selon le constructeur | prioritaire, pour que le ralentissement arrive vite |
+| Stockage TCP (iSCSI, NVMe/TCP) | CS3 ou AF21 | part garantie, ECN si les serveurs l'utilisent |
+| Défaut | 0 | le reste de la bande passante |
+| Sauvegardes, masse | CS1 (8) | « moins que le défaut » |
+
+Moins il y a de classes, mieux c'est : chaque classe supplémentaire se configure, se documente et se dépanne sur
+chaque port de la fabric. Trois à cinq classes suffisent presque toujours.
+
+<Callout type="field">
+La QoS se déploie **partout ou nulle part** : un seul switch de la fabric oublié, et la classe sans perte ne l'est
+plus sur tous les chemins qui le traversent. C'est un cas d'école pour l'automatisation : générez la QoS depuis un
+modèle (AVD), et vérifiez-la avec des tests (ANTA) sur chaque port.
+</Callout>
+
+## Observer
+
+| Ce que vous cherchez | Commande Arista EOS |
+|---|---|
+| Les marquages acceptés par un port | `show qos interfaces ethernet 1/1 trust` |
+| Les correspondances DSCP, classes et files | `show qos maps` |
+| La configuration de chaque file (part, priorité, ECN) | `show qos interfaces ethernet 1/1` |
+| PFC : état et compteurs de pauses | `show priority-flow-control status`, `show priority-flow-control counters` |
+| Le watchdog PFC | `show priority-flow-control counters watchdog` |
+| L'échange DCBX avec le serveur | `show dcbx ethernet 1/1` |
+
+Des **pauses PFC** en continu sur un port signalent un destinataire qui ne suit pas : c'est un symptôme à traiter,
+pas un fonctionnement normal.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| La classe prioritaire affame tout le reste | trop de trafic en priorité stricte |
+| Un serveur passe devant tout le monde | frontière de confiance absente : son marquage est cru tel quel |
+| Le RoCE perd des paquets malgré PFC | un switch du chemin sans la configuration, ou le serveur qui émet dans une autre priorité que celle déclarée sans perte |
+| Une partie de la fabric se fige | tempête de pauses PFC, watchdog absent |
+| ECN configuré, aucun effet | les serveurs ne le prennent pas en charge (pas de DCTCP ou DCQCN) |
+| Les sessions BGP tombent lors des congestions | contrôle du réseau dans la classe par défaut |
+| Le marquage disparaît après un routeur | marquage en CoS seulement, au lieu de DSCP |
+
+## À vous de jouer
+
+1. Pourquoi ne faut-il pas mettre le stockage en priorité stricte ?
+2. Un port serveur reçoit des paquets marqués CS6 par une application. Que se passe-t-il avec et sans
+   `qos trust dscp` ? Que proposez-vous ?
+3. Avec la correspondance par défaut d'EOS, dans quelle classe tombe un paquet marqué AF31 ? Et un paquet CS1 ?
+4. Expliquez à un collègue pourquoi on configure ECN **et** PFC sur la classe RoCE, et pas seulement PFC.
+
+## À retenir
+
+- La QoS décide **qui passe, qui attend, qui est jeté** pendant les congestions, même très courtes.
+- **DSCP** (6 bits, survit au routage) est le marquage de référence ; **CoS** (802.1p) disparaît au premier routeur. La
+  **frontière de confiance** décide quels marquages croire.
+- Marquage → **classe de trafic** → **file de sortie** ; **priorité stricte** pour le contrôle, **parts garanties**
+  pour le reste.
+- **ECN** marque au lieu de jeter, entre deux seuils ; il exige DCTCP ou DCQCN aux extrémités.
+- **PFC** rend **une** classe sans perte par des pauses ; toujours avec ECN et un **watchdog**. DCBX et ETS
+  alignent switch et serveur.
+- Peu de classes, configurées **partout**, de préférence générées et testées automatiquement.
+
+Prochain chapitre : **le réseau du stockage**, premier grand client de ces classes de service.

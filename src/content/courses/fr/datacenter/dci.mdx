@@ -1,0 +1,301 @@
+---
+title: "Interconnecter deux data centers (DCI)"
+description: "Relier deux data centers : les liens (fibre noire et WDM, services opérateur, IPsec), la latence, l'interconnexion de niveau 3 à privilégier, les risques d'un VLAN étendu entre sites, puis EVPN-VXLAN entre sites : fabric étirée ou multi-site avec gateways, ce qu'il faut étendre, l'optimisation des flux, le split-brain et les pièges classiques."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, dci, evpn, vxlan, multi-site, wdm, bgp]
+vendor: [arista, cisco]
+order: 10
+---
+
+Une entreprise qui dépend de son informatique ne s'appuie pas sur un seul data center : un incendie, une coupure
+électrique longue ou une inondation, et tout s'arrête. Elle en exploite donc **deux**, parfois trois, qu'il faut
+relier : c'est l'**interconnexion de data centers**, ou <Term id="dci" /> (*Data Center Interconnect*). La question n'est pas
+seulement « quel câble ? », mais surtout « **quoi** faire passer, et à quel prix pour la résilience ? ». Ce chapitre
+y répond, en partant du lien physique jusqu'à EVPN entre sites.
+
+## Pourquoi deux sites
+
+Le [chapitre PRA et PCA](/formations/datacenter/pra-pca) a posé les objectifs (RTO, RPO, stratégies de secours).
+Côté réseau, ils se traduisent en deux grands modèles :
+
+| Modèle | Principe | Exigence réseau |
+|---|---|---|
+| **Actif / secours** (PRA, plan de reprise d'activité) | le site B attend, les données y sont répliquées ; il prend le relais après une bascule, en quelques minutes ou heures | répliquer les données, rediriger les utilisateurs vers B |
+| **Actif / actif** (PCA, plan de continuité d'activité) | les deux sites servent en même temps ; la perte d'un site est absorbée par l'autre | des applications réparties, souvent des réseaux ou des adresses communs aux deux sites |
+
+Ce qui traverse l'interconnexion : des **routes** (chaque site joint les réseaux de l'autre), parfois des **VLAN
+étendus** (une même adresse IP utilisable dans les deux sites), et la **réplication du stockage**, souvent le plus
+gros consommateur de bande passante.
+
+## Le lien physique et la latence
+
+| Lien | Principe | Pour |
+|---|---|---|
+| **Fibre noire et WDM** | des paires de fibres louées ou posées, multipliées par le [multiplexage WDM](/formations/datacenter/wdm) | deux sites proches (jusqu'à quelques dizaines de km), grande capacité, maîtrise totale |
+| **Service opérateur de niveau 2** | une liaison point à point ou une longueur d'onde fournie par un opérateur | quand on ne peut pas poser sa fibre |
+| **Service opérateur de niveau 3** (MPLS L3VPN) | l'opérateur route entre les sites | sites éloignés, interconnexion en niveau 3 seulement |
+| **Internet avec IPsec** | un tunnel chiffré sur des accès Internet | secours, petits volumes |
+
+La **latence** est imposée par la physique : la lumière parcourt environ **200 000 km/s** dans la fibre, soit
+**5 µs par kilomètre**. Entre deux sites à 100 km de fibre, un aller-retour coûte donc au moins **1 ms**, sans compter
+les équipements. C'est ce qui limite la **réplication synchrone** du stockage (chaque écriture attend la
+confirmation de l'autre site) et les clusters d'applications qui se parlent beaucoup : au-delà de quelques
+dizaines de kilomètres, il faut passer en asynchrone.
+
+<Callout type="note">
+Le chemin de la fibre n'est pas la ligne droite : 40 km à vol d'oiseau font souvent 60 km de fibre, qui longe routes
+et voies ferrées. Demandez à l'opérateur la longueur réelle, et pour la résilience, **deux chemins physiquement
+séparés**, comme dans le cas concret du chapitre WDM.
+</Callout>
+
+## L'interconnexion de niveau 3 : le choix par défaut
+
+La solution la plus simple et la plus robuste : **chaque site a ses propres réseaux**, et les deux sites
+s'échangent des **routes** (eBGP entre les border leafs, ou à travers le réseau de l'opérateur). Une application
+qui bascule d'un site à l'autre change d'adresse IP, et les utilisateurs suivent grâce au DNS, à un
+[load balancer global](/formations/proxy/load-balancing) (GSLB) ou à une adresse anycast.
+
+- **Une panne reste dans son site** : une tempête de broadcast ou une boucle dans le site A ne traverse pas le
+  routage.
+- **Rien de spécial à opérer** : du BGP, des filtres de routes, des liens redondants.
+- **La contrainte est côté applications** : elles doivent accepter de changer d'adresse, ou être derrière un
+  équipement qui le cache.
+
+Les applications modernes (conteneurs, services sans état derrière des load balancers, bases de données répliquées
+par l'application) s'en accommodent très bien. C'est pour les autres qu'on étend des VLAN.
+
+## Étendre un VLAN entre deux sites : pourquoi c'est risqué
+
+Le besoin est réel : déplacer une machine virtuelle à chaud d'un site à l'autre sans changer son adresse, faire
+tourner un cluster qui partage une adresse IP virtuelle, migrer un data center sans tout renuméroter. La solution
+semble évidente : étendre le VLAN. Mais un VLAN, c'est un **domaine de diffusion**, donc un **domaine de panne**.
+
+<Topology
+  width={760}
+  height={300}
+  groups={[
+    { x: 16, y: 20, w: 300, h: 250, label: 'Site A', tone: 'sky' },
+    { x: 444, y: 20, w: 300, h: 250, label: 'Site B', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'a1', type: 'switch', x: 110, y: 90, label: 'leaf-a1' },
+    { id: 'a2', type: 'switch', x: 240, y: 90, label: 'border-a', tone: 'amber' },
+    { id: 'va', type: 'server', x: 110, y: 210, label: 'VM 10.1.1.10', sub: 'VLAN 100' },
+    { id: 'b2', type: 'switch', x: 520, y: 90, label: 'border-b', tone: 'amber' },
+    { id: 'b1', type: 'switch', x: 650, y: 90, label: 'leaf-b1' },
+    { id: 'vb', type: 'server', x: 650, y: 210, label: 'VM 10.1.1.20', sub: 'VLAN 100' },
+  ]}
+  links={[
+    { from: 'a1', to: 'a2' }, { from: 'va', to: 'a1' },
+    { from: 'a2', to: 'b2', label: 'DCI', tone: 'rose' },
+    { from: 'b2', to: 'b1' }, { from: 'vb', to: 'b1' },
+  ]}
+  notes={[{ x: 380, y: 150, text: 'le même VLAN 100, donc la même panne', tone: 'rose' }]}
+  caption="Un VLAN étendu : les deux sites partagent un domaine de diffusion. Ce qui le perturbe d'un côté le perturbe de l'autre."
+/>
+
+Les risques :
+
+- **Un seul domaine de panne.** Une boucle, une tempête de broadcast, une carte réseau qui inonde le VLAN : le
+  problème traverse l'interconnexion et frappe **les deux sites en même temps**. Le site de secours tombe avec le
+  site principal, exactement ce qu'il devait éviter.
+- **Le split-brain.** Si l'interconnexion est coupée, chaque moitié d'un cluster croit que l'autre est morte, et
+  les deux se déclarent actives avec la même adresse. À la reconnexion, les données divergent. Il faut un **témoin**
+  (*quorum*) dans un troisième site pour départager.
+- **Les flux en « trombone ».** Une machine du site B dont la passerelle est dans le site A envoie tout son trafic
+  routé à travers l'interconnexion, puis il revient. Même chose pour un client du site B qui entre par le site A.
+  Latence doublée, lien DCI saturé.
+- **Le trafic de diffusion sur le WAN.** ARP, multicast, trames inconnues : tout le bruit d'un VLAN traverse
+  l'interconnexion, qui est le lien le plus cher et le plus lent.
+- **L'application n'est pas faite pour ça.** Un serveur web dans le site B et sa base de données dans le site A,
+  « parce que le VLAN le permet » : chaque requête paie l'aller-retour inter-sites.
+
+<Callout type="warning">
+Étendre un VLAN entre deux sites ne rend pas une application résiliente : cela relie leurs pannes. Ne le faites que
+pour un besoin précis (migration, cluster qui l'exige), sur **le moins de VLAN possible**, avec une protection contre
+les tempêtes, et un plan pour le supprimer quand le besoin disparaît.
+</Callout>
+
+## Les technologies d'extension
+
+Les anciennes méthodes ont toutes un point faible :
+
+- **Un trunk sur la fibre noire**, avec Spanning Tree ou un MLAG de chaque côté (*back-to-back*) : simple, mais
+  Spanning Tree s'étend aux deux sites, avec ses convergences et ses boucles possibles.
+- **VPLS** (un VLAN émulé par un opérateur MPLS) et **OTV** (une solution propriétaire Cisco, aujourd'hui en fin de
+  vie) : ils limitaient la diffusion, mais avec des protocoles dédiés au DCI.
+
+Aujourd'hui, la réponse standard est **EVPN-VXLAN**, la même technologie que dans la fabric
+([chapitre EVPN](/formations/datacenter/evpn)). Il y a deux façons de l'utiliser entre deux sites.
+
+### Une fabric étirée
+
+On considère les deux sites comme **une seule fabric** : un seul domaine EVPN, des sessions BGP EVPN entre tous les
+sites, et des tunnels VXLAN directs entre n'importe quels leafs des deux sites.
+
+- **Simple** : pas d'équipement ni de configuration spécifiques.
+- **Mais** : un seul plan de contrôle pour les deux sites (une erreur de configuration se propage partout), des
+  tunnels entre tous les leafs à travers le DCI, et toutes les routes de chaque site dans l'autre. Acceptable pour
+  deux sites très proches et une petite fabric.
+
+### Le multi-site avec des gateways
+
+Chaque site garde **sa propre fabric**, son propre domaine EVPN. Aux frontières, des **gateways** (ou *border
+gateways*) relient les domaines :
+
+<Topology
+  width={760}
+  height={340}
+  groups={[
+    { x: 16, y: 20, w: 330, h: 300, label: 'Fabric du site A', tone: 'sky' },
+    { x: 414, y: 20, w: 330, h: 300, label: 'Fabric du site B', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'la1', type: 'switch', x: 90, y: 240, label: 'leaf-a1' },
+    { id: 'la2', type: 'switch', x: 200, y: 240, label: 'leaf-a2' },
+    { id: 'sa', type: 'switch', x: 145, y: 120, label: 'spines A' },
+    { id: 'ga', type: 'router', x: 290, y: 120, label: 'gateway-a', tone: 'amber' },
+    { id: 'gb', type: 'router', x: 470, y: 120, label: 'gateway-b', tone: 'amber' },
+    { id: 'sb', type: 'switch', x: 615, y: 120, label: 'spines B' },
+    { id: 'lb1', type: 'switch', x: 560, y: 240, label: 'leaf-b1' },
+    { id: 'lb2', type: 'switch', x: 670, y: 240, label: 'leaf-b2' },
+  ]}
+  links={[
+    { from: 'la1', to: 'sa' }, { from: 'la2', to: 'sa' }, { from: 'sa', to: 'ga' },
+    { from: 'ga', to: 'gb', label: 'DCI', tone: 'rose' },
+    { from: 'gb', to: 'sb' }, { from: 'sb', to: 'lb1' }, { from: 'sb', to: 'lb2' },
+  ]}
+  flows={[
+    { from: 'ga', to: 'gb', label: 'tunnel inter-sites', tone: 'amber', offset: -18 },
+  ]}
+  notes={[
+    { x: 265, y: 200, text: 'tunnel VXLAN local', tone: 'sky' },
+    { x: 495, y: 200, text: 'tunnel VXLAN local', tone: 'violet' },
+  ]}
+  caption="Le multi-site : un leaf du site A envoie au gateway de son site, qui renvoie par un tunnel inter-sites vers le gateway B, qui livre au leaf de destination. Chaque site ignore les leafs de l'autre."
+/>
+
+Le gateway **réannonce** les routes EVPN d'un domaine vers l'autre **en se mettant comme prochain saut**. Les leafs
+du site A ne voient qu'un seul VTEP pour tout le site B : celui de leur gateway. Le trafic suit trois tunnels
+successifs (leaf A vers gateway A, gateway A vers gateway B, gateway B vers leaf B) au lieu d'un seul. Le principe
+est normalisé par la RFC 9014 ; Cisco l'appelle *VXLAN EVPN Multi-Site* (avec des *Border Gateways*), Arista
+*EVPN Gateway* ou multi-domaine.
+
+Ce que l'on y gagne :
+
+- **Le confinement des pannes** : chaque site a son plan de contrôle. Le gateway est le seul point de passage, où
+  l'on choisit **quelles** VRF et **quels** VLAN traversent, et où l'on peut limiter le trafic de diffusion.
+- **L'échelle** : pas de tunnels entre tous les leafs de tous les sites.
+- **L'indépendance** : chaque site peut avoir son plan d'adressage de l'underlay, ses AS, ses évolutions.
+
+### Sur Arista EOS : une gateway de niveau 3
+
+La documentation d'Arista décrit une **gateway EVPN de niveau 3** : elle reçoit les routes de **type 5** (préfixes
+IP) d'un domaine et les **réannonce** dans l'autre, en se mettant comme prochain saut. Voici son exemple, réduit à
+l'IPv4 :
+
+```text title="Arista EOS : gateway entre la fabric locale et le domaine distant (d'après la documentation Arista)"
+router bgp 65536
+   bgp bestpath d-path
+   address-family evpn
+      neighbor DC_LEAF_PEER_Group activate
+      neighbor DCI_REMOTE_GW_Group activate
+      neighbor DCI_REMOTE_GW_Group domain remote
+      domain identifier 1:1
+      domain identifier 2:2 remote
+   vrf red
+      rd 10.255.1.1:10
+      rd evpn domain remote 10.255.1.1:1010
+      address-family ipv4
+         route-target import evpn 10000:10000
+         route-target export evpn 10000:10000
+         route-target import evpn domain remote 20000:20000
+         route-target export evpn domain remote 20000:20000
+      aggregate-address 10.0.0.0/8 summary-only
+```
+
+- `neighbor … domain remote` : ces voisins (les gateways de l'autre site, ou le WAN) forment le domaine **distant** ;
+  les autres voisins EVPN, ceux de la fabric, forment le domaine **local**.
+- `rd evpn domain remote` et `route-target … domain remote` : la VRF peut avoir un RD et des RT **différents** de
+  chaque côté. Les deux sites n'ont pas besoin de s'être mis d'accord sur leurs valeurs internes.
+- `domain identifier` et `bgp bestpath d-path` : chaque domaine a un identifiant, ajouté aux routes qui le
+  traversent (le *D-path*). Une route qui revient dans un domaine qu'elle a déjà traversé est écartée : c'est la
+  protection contre les boucles entre gateways.
+- `aggregate-address … summary-only` : la gateway peut **résumer** les préfixes d'un site, et n'en annoncer qu'un
+  seul à l'autre. Moins de routes, et une instabilité locale qui ne se propage pas.
+
+L'extension de **VLAN** entre domaines (routes de type 2, multihoming des gateways) existe aussi, avec davantage de
+configuration : référez-vous à la documentation de votre constructeur et de votre version.
+
+## Ce qu'il faut étendre, et comment
+
+- **Les VRF d'abord** : avec les routes EVPN de **type 5** (préfixes IP), une VRF existe dans les deux sites et route
+  de l'un à l'autre, **sans** domaine de diffusion commun. C'est l'interconnexion de niveau 3, transportée par EVPN.
+- **Les VLAN ensuite, au cas par cas** : seulement les VLAN qui en ont réellement besoin, listés et justifiés.
+- **La suppression d'ARP** (les leafs répondent eux-mêmes aux requêtes ARP grâce aux routes de type 2) limite le
+  trafic de diffusion qui traverse.
+- **La protection contre les tempêtes** (*storm control*) sur les gateways et les ports serveurs, pour qu'un
+  emballement d'un côté reste contenu.
+- **La mobilité** est gérée par EVPN : quand une machine change de site, sa MAC est réannoncée avec un **numéro de
+  séquence** plus élevé, et tout le monde met à jour. Si une MAC bouge trop souvent (deux machines avec la même
+  adresse, ou une boucle), EVPN la déclare **dupliquée** et cesse de la suivre.
+
+## Optimiser les flux entre les sites
+
+- **En sortie** : la [passerelle anycast](/formations/datacenter/evpn#la-passerelle-anycast) existe sur tous les
+  leafs des **deux** sites, avec la même adresse et la même MAC. Une machine sort toujours par son leaf local, même
+  après avoir changé de site : plus de trombone en sortie.
+- **En entrée** : le reste d'Internet ou du WAN ne sait pas dans quel site se trouve une machine d'un VLAN étendu.
+  On annonce des routes plus précises (une route /32 par machine, côté site où elle se trouve), ou on confie le
+  choix à un GSLB.
+- **Le trafic entre les deux sites** reste coûteux : placez ensemble les machines qui se parlent beaucoup.
+
+## L'interconnexion elle-même
+
+- **Redondance** : deux gateways par site, deux liens sur deux chemins physiques séparés.
+- **MTU** : VXLAN ajoute 50 octets à chaque paquet. Le lien DCI, surtout s'il est fourni par un opérateur, doit
+  accepter des trames plus grandes (9 000 octets si possible), sinon les gros paquets disparaissent. Le
+  [calculateur MTU](/outils/mtu-calculator) donne le compte exact.
+- **Chiffrement** : sur une fibre qui sort du bâtiment, **MACsec** chiffre au niveau 2, ligne par ligne, à pleine
+  vitesse ; IPsec est l'alternative sur un réseau routé.
+- **Détection rapide des pannes** : BFD sur les sessions BGP entre gateways, pour basculer en moins d'une seconde.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Une boucle dans un site fait tomber les deux | VLAN étendu sans protection contre les tempêtes, ou fabric étirée sur un seul domaine de panne |
+| Après une coupure du lien DCI, deux nœuds d'un cluster sont actifs | pas de témoin dans un troisième site : split-brain |
+| Le lien DCI est saturé alors que les sites sont peu chargés | flux en trombone (passerelle ou entrée dans l'autre site), ou tiers d'une même application répartis sur les deux sites |
+| Les petits paquets passent, les gros disparaissent entre les sites | MTU du lien DCI trop petit pour VXLAN |
+| Une MAC « oscille » entre les sites puis est bloquée | boucle, ou adresse dupliquée : EVPN l'a déclarée dupliquée |
+| La réplication synchrone ralentit toutes les écritures | latence de l'aller-retour inter-sites : distance trop grande pour le synchrone |
+| La bascule ne fonctionne pas le jour J | jamais testée : testez régulièrement la perte d'un site entier |
+
+## À vous de jouer
+
+1. Deux sites sont à 80 km de fibre l'un de l'autre. Quelle est la latence minimale d'un aller-retour ? Une
+   réplication synchrone vous paraît-elle raisonnable ?
+2. Votre direction demande « que tous les VLAN existent dans les deux sites, pour pouvoir tout basculer ». Que
+   répondez-vous, et que proposez-vous à la place ?
+3. Dans une architecture multi-site, combien de VTEP du site B un leaf du site A voit-il ? Pourquoi est-ce un
+   avantage ?
+4. Une machine virtuelle migrée du site A vers le site B continue d'envoyer son trafic vers Internet par le site A.
+   Quelle fonction manque ?
+
+## À retenir
+
+- Le **DCI** relie deux data centers pour la reprise ou la continuité d'activité. La lumière coûte **5 µs/km** :
+  100 km de fibre font au moins 1 ms d'aller-retour.
+- **Par défaut, interconnectez en niveau 3** : chaque site ses réseaux, des routes échangées, et une panne qui reste
+  dans son site.
+- **Étendre un VLAN relie les pannes des deux sites** : boucles et tempêtes partagées, split-brain, flux en trombone.
+  Seulement pour un besoin précis, sur peu de VLAN, avec un témoin dans un troisième site.
+- **EVPN-VXLAN** est la technologie actuelle : en **fabric étirée** (simple, un seul domaine de panne) ou en
+  **multi-site** avec des **gateways** qui réannoncent les routes et confinent chaque site.
+- Étendez les **VRF** (type 5) d'abord, les VLAN au cas par cas ; passerelle anycast dans les deux sites, MTU adapté à
+  VXLAN, MACsec sur la fibre, et des bascules **testées**.
+
+Prochain chapitre : **la QoS dans le data center**, pour décider quel trafic passe en premier quand les liens se
+remplissent.

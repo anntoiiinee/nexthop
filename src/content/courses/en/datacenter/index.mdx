@@ -1,9 +1,9 @@
 ---
 title: "The data center"
-description: "How modern data centers are built: VRFs, spine/leaf fabric and eBGP underlay, VXLAN, then BGP EVPN as the control plane, with anycast gateway and inter-VRF routing. Arista cEOS lab with two spines and three leaves."
+description: "How modern data centers are built: VRFs, spine/leaf fabric and eBGP underlay, VXLAN, then BGP EVPN as the control plane, with anycast gateway and inter-VRF routing, then disaster recovery, data center interconnect, QoS, the storage network and networks for AI. Arista cEOS lab with two spines and three leaves."
 pubDate: 2026-10-17
 level: advanced
-tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp]
+tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, dci, qos, storage, ai]
 vendor: [arista, cisco]
 order: 0
 ---
@@ -30,6 +30,11 @@ architecture that tools such as Arista AVD generate.
 | **Switch buffers** | Understand incast and microbursts, choose between shallow and deep buffers, use ECN, DCTCP and PFC, spot output discards |
 | **VxLAN** | Carry a VLAN across a routed fabric, read a VXLAN packet, understand the limits of *flood and learn* |
 | **EVPN, the control plane** | Distribute MAC and IP addresses over BGP, configure the anycast gateway and symmetric routing between VLANs and leaves |
+| **Disaster recovery and business continuity** | Set RTO and RPO with the business, choose a recovery strategy, prepare the recovery site's network and test the failover |
+| **Data center interconnect (DCI)** | Choose the link and the interconnect mode, weigh the risks of a stretched VLAN, deploy EVPN between sites with gateways |
+| **QoS in the data center** | Classify and mark traffic, configure queues, ECN and PFC, build a simple, consistent QoS plan |
+| **The storage network** | Tell FC, iSCSI and NVMe-oF apart, design two paths with multipathing, align MTU 9000 end to end |
+| **Networks for AI** | Understand a GPU cluster's traffic, size a rail-optimized fabric, configure a lossless RoCE network |
 
 The chapters build on each other.
 
