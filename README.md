@@ -152,6 +152,7 @@ src/
   - `<GitGraph branches commits />` : graphe de commits Git (une ligne par branche, parents pour les fusions) ;
   - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé) ;
   - `<CliOutput title output notes />` : sortie CLI annotée (lignes surlignées, repères numérotés et légende). Chaque note : `{ line, text, match?, tone? }`, `line` commence à 1, `match` surligne un passage, `` `code` `` est mis en forme dans `text`. MDX retire les espaces de début de ligne à l'intérieur des balises : déclarer la sortie dans un ``export const maSortie = `…`;`` en haut du fichier (après le frontmatter), puis `output={maSortie}` (voir `fundamentals/stp.mdx`).
+- **Documentation officielle** : chaque nouveau chapitre ou tutoriel ajoute ses sources dans `src/data/references.ts` (clé `courses/<formation>/<chapitre>` ou `tutorials/<slug>`), de préférence des sources primaires (RFC, normes, documentation du constructeur). Ouvrir chaque URL avant de l'ajouter : pas de lien non vérifié.
 - **Schémas** : un maximum de schémas dans chaque article. Les couleurs ont un sens constant : ambre = couche 2 / MAC, vert = couche 3 / IP, violet = données ou siège, rouge = erreur ou blocage.
 - **Classes Tailwind écrites en entier** (jamais `bg-${color}-50`). Mode sombre : variante `dark:`, pilotée par la classe `.dark` sur `<html>`.
 - **Alias** `@/` → `src/` (défini dans `tsconfig.json`) : `import Lab from '@/components/Lab.astro'`, quel que soit l'emplacement du fichier. Pas de `../`.
@@ -216,7 +217,7 @@ Mise en route (une seule fois) :
 - [x] Logos Arista, NetBox, Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
-- [x] Formation Fondamentaux complète en FR (11 chapitres illustrés, dont ARP, LLDP/CDP, agrégation de liens, TCP/UDP et le chiffrement, + lab `static-routing`)
+- [x] Formation Fondamentaux complète en FR (12 chapitres illustrés, dont ARP, IPv6, LLDP/CDP, agrégation de liens, TCP/UDP et le chiffrement, + lab `static-routing`)
 - [x] Composant `<CliOutput>` (sortie CLI annotée), utilisé sur `show spanning-tree` (chapitre STP)
 - [x] Images Open Graph propres à chaque article (générées au build) + boutons de partage
 - [x] Outil : décodeur de certificat X.509 / CSR
@@ -241,7 +242,6 @@ Mise en route (une seule fois) :
 - [x] Tutoriels Loki (lab Docker Compose `loki-syslog`, testé avec Loki 3.7, Alloy 1.20, Grafana 11.2) et SD-WAN, en FR et EN
 - [x] Page « Aller plus loin » (`/aller-plus-loin`, données dans `src/data/resources.ts`) : événements (dates vérifiées, badge « J'y serai ! »), podcasts, communautés, blogs, livres, labs ; en partie issue d'awesome-network-automation (CC BY 4.0, crédité)
 - [x] Accueil : section « Pour qui ? » enrichie (4 profils, « ce que vous trouverez ici »)
-- [ ] Tutoriel `ldaps-arista` : rédaction par Antoine (visible en « en cours de rédaction », `wip: true`) ; `bgp-evpn-route-types` à étoffer
 - [ ] Page « Aller plus loin » : mettre à jour les événements (une date passée bascule seule vers le rythme habituel, mais il faut ajouter les nouvelles éditions)
 - [x] Saut 8 · Le réseau dans le cloud en FR et EN : 5 chapitres (bases AWS, security groups et NACL, interconnexion de VPC, cloud hybride, Terraform), équivalents Azure / GCP, lab Terraform `cloud-aws` (validé avec Terraform 1.10.5 et le fournisseur AWS 6.69.1 : `validate` et `plan` avec des identifiants factices, 24 ressources par défaut, 35 avec les options payantes ; jamais appliqué sur un vrai compte)
 - [x] Page Formations triée par niveau (débutant, intermédiaire, avancé), puis dans l'ordre des sauts
@@ -253,6 +253,9 @@ Mise en route (une seule fois) :
 - [ ] Tutoriel `bgp-evpn-route-types` : ajouter les vraies sorties du lab `dc-fabric` (`show bgp evpn route-type mac-ip|imet|ip-prefix ipv4`, `show vxlan flood vtep`), annotées avec `<CliOutput>`
 - [x] Tutoriels « Git et les branches » (`git-branches`, composant `<GitGraph>`) et « Jinja2 et le rendu de configuration dans NetBox » (`jinja-netbox`, gabarits dans `public/labs/netops/templates/`, rendus réellement avec Jinja2 3.1)
 - [x] Saut 5 · Sécurité : chapitre « Flux nord-sud et est-ouest » (`traffic-flows`) en FR et EN, avant Segmentation ; exercice sur le lab `security` (classement des règles de `fw-hq`, mouvement latéral par R15)
+- [x] Fondamentaux, chapitre 9 « IPv6 » (`ipv6`) en FR et EN, après ARP (routage statique, TCP/UDP et chiffrement décalés en 10, 11 et 12) ; sorties réelles obtenues sur un réseau Docker IPv6
+- [x] Tutoriel `ldaps-arista` rédigé en FR et EN (n'est plus en cours de rédaction) : syntaxe vérifiée dans le manuel EOS 4.36, recommandation TACACS+ / RADIUS, et `-disableaaa` sur TerminAttr avec CVP ; port 636 et import du certificat à confirmer sur un switch
+- [x] Section « Documentation officielle » en bas des 61 chapitres et tutoriels (FR et EN), données dans `src/data/references.ts` : RFC, IEEE, NIST, ITU-T et documentations des constructeurs ; les 157 liens ont été vérifiés un par un
 - [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---

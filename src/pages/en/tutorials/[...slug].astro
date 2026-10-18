@@ -5,6 +5,7 @@ import ArticleLayout from '@/layouts/ArticleLayout.astro';
 import { getTutorialPaths } from '@/lib/content';
 import { cheatsheets } from '@/data/cheatsheets';
 import CheatsheetCallout from '@/components/CheatsheetCallout.astro';
+import References from '@/components/References.astro';
 
 export const getStaticPaths = () => getTutorialPaths('en');
 
@@ -15,4 +16,5 @@ const sheets = cheatsheets.filter((sheet) => sheet.tutorials?.includes(post.id.s
 <ArticleLayout post={post} headings={headings} lang="en" alternates={alternates}>
   <Content components={mdxComponents} />
   <CheatsheetCallout sheets={sheets} lang="en" />
+  <References refKey={`tutorials/${post.id.split('/').slice(1).join('/')}`} lang="en" />
 </ArticleLayout>
