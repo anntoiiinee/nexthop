@@ -1,9 +1,10 @@
 ---
 title: "Ansible for networking"
-description: "Ansible applied to networking: inventory and variables, Arista collections, first playbooks, idempotency and check mode, resource modules and Ansible Vault."
+description: "Ansible applied to networking: inventory and variables, Arista collections, first playbooks, idempotency and check mode, resource modules, and Ansible Vault in detail: encrypting a file or a variable, one vault per environment, the password in CI, and a trap that writes secrets in clear text."
 pubDate: 2026-10-17
+updatedDate: 2026-10-18
 level: intermediate
-tags: [ansible, automation, yaml]
+tags: [ansible, automation, yaml, ansible-vault, secrets]
 vendor: [arista]
 order: 2
 ---
@@ -146,18 +147,119 @@ that are **not** in the list: the device becomes the exact reflection of the dat
 
 ## Protecting secrets: Ansible Vault
 
-Our credentials come from environment variables. To store secrets alongside the code (passwords, TACACS+
-keys), Ansible provides **Vault**, which encrypts a file with AES-256:
+Our credentials come from environment variables. To store secrets alongside the code (passwords, TACACS+ keys,
+SNMP communities), Ansible provides **Ansible Vault**, which encrypts with AES-256 using a password. Encrypted
+content can be committed to Git: without that password, it is unreadable.
 
-```bash
-ansible-vault create group_vars/eos/vault.yml     # create and open an encrypted file
-ansible-vault view group_vars/eos/vault.yml       # read it
-ansible-vault rekey group_vars/eos/vault.yml      # change the vault password
-ansible-playbook site.yml --ask-vault-pass        # or: ANSIBLE_VAULT_PASSWORD_FILE=…
+### The commands
+
+| Command | What it does |
+|---|---|
+| `ansible-vault create file.yml` | creates an encrypted file and opens it in the editor |
+| `ansible-vault edit file.yml` | decrypts in memory, opens the editor, re-encrypts on close |
+| `ansible-vault view file.yml` | shows the decrypted content, without writing anything to disk |
+| `ansible-vault encrypt` / `decrypt file.yml` | encrypts or decrypts an existing file, in place |
+| `ansible-vault encrypt_string 'value' --name variable` | encrypts a single value, to paste into a plain variables file |
+| `ansible-vault rekey file.yml` | changes the password of an encrypted file |
+
+### A whole file, or a single variable
+
+You can encrypt **a whole** variables file, or **a single value** with `encrypt_string`:
+
+```text title="ansible-vault encrypt_string --vault-id prod@prod.pass 'Pr0d-T4cacs' --name tacacs_key"
+tacacs_key: !vault |
+          $ANSIBLE_VAULT;1.2;AES256;prod
+          63303261623731643631613063326136633565303262346638343538623938323464633938386639
+          3562323963616566343763653962316633313966386435350a306263396565323863333166636536
+          36386464393134323234613633383865383634343235386264373163326533323666626138393066
+          6539326431643439610a363635613162346633613439616132373263343862616631343039383737
+          3838
 ```
 
-An encrypted file can be committed to Git: without the vault password, it is unreadable. Chapter 4 moves on
-to a real secrets vault, **HashiCorp Vault**, with per-person permissions and a log of every read.
+The second approach keeps the rest of the file readable, along with its diffs in Git. For a whole file, the
+convention is to separate secrets from their use:
+
+```yaml title="group_vars/eos/vault.yml (encrypted)"
+vault_tacacs_key: s3cr3t
+```
+
+```yaml title="group_vars/eos/vars.yml (plain)"
+tacacs_key: "{{ vault_tacacs_key }}"
+```
+
+A `grep tacacs_key` on the repository then finds the variable, and the `vault_` prefix tells you where it is
+defined.
+
+### Several vaults: vault IDs
+
+The same password for the lab and production means giving production to everyone who touches the lab. **Vault
+IDs** (`--vault-id label@source`) let you use one password per environment. The label is written in the encrypted
+content's header (`$ANSIBLE_VAULT;1.2;AES256;prod`), and a playbook can receive several:
+
+```bash
+ansible-vault encrypt --vault-id dev@~/.vault/dev.pass group_vars/lab/vault.yml
+ansible-vault encrypt --vault-id prod@~/.vault/prod.pass group_vars/prod/vault.yml
+ansible-playbook site.yml --vault-id dev@~/.vault/dev.pass --vault-id prod@prompt
+ansible-vault rekey --vault-id prod@~/.vault/prod.pass --new-vault-id prod@prompt group_vars/prod/vault.yml
+```
+
+The source is a password file, or `prompt` to type it. With a wrong password, the message is explicit:
+
+```text title="ansible-vault view with a wrong password"
+[ERROR]: Failed to view 'dev.yml': Decryption failed (no vault secrets were found that could decrypt).
+```
+
+### Where to keep the vault password
+
+- **On a workstation**: a file outside the repository, readable only by you (`chmod 600`), given with `--vault-id`
+  or the `ANSIBLE_VAULT_PASSWORD_FILE` variable. Add its name to `.gitignore` as a precaution.
+- **In a GitLab pipeline**: a masked, protected variable of type **File**. GitLab writes its content to a temporary
+  file and puts the **path** in the variable: `--vault-id prod@$VAULT_PASS_PROD`.
+- **Never** in the repository, nor in `ansible.cfg`, nor as a command argument visible in the shell history.
+
+### The trap: a re-encrypted secret… written in clear text
+
+<Callout type="warning">
+The `ansible.builtin.vault` filter encrypts a value in a template. But that encryption doesn't always survive being
+written: with ansible-core 2.21, a value passed through this filter and then written with `copy` and `content:` is
+**decrypted** at write time, and the file holds the secret **in clear text**. The playbook finishes without any
+error. To produce an encrypted file, go through `ansible-vault` itself, and check the result.
+</Callout>
+
+```yaml title="Writing an encrypted file, then checking it really is"
+- name: Encrypt with ansible-vault, the content going through standard input
+  ansible.builtin.command:
+    cmd: ansible-vault encrypt --vault-id prod@{{ vault_pass_file }} --output {{ secrets_file }} -
+    stdin: "{{ new_secrets | to_nice_yaml }}"
+  no_log: true
+  changed_when: true
+
+- name: Read the file as it is on disk (slurp doesn't decrypt)
+  ansible.builtin.slurp:
+    src: "{{ secrets_file }}"
+  register: written
+
+- name: Check that the written file is really encrypted
+  ansible.builtin.assert:
+    that: (written.content | b64decode).startswith('$ANSIBLE_VAULT')
+    fail_msg: "{{ secrets_file }} is not encrypted: don't commit it"
+```
+
+For the check, use `slurp`, not the `file` lookup: the latter automatically **decrypts** an encrypted file whose
+password it knows, and the test would fail on a file that is actually fine.
+
+### Good practices
+
+- **No secret in clear text in Git**, even in a private repository: a repository always ends up cloned, copied or
+  made public. A secret committed by mistake is compromised: change it, cleaning the history isn't enough.
+- **One vault per environment** (lab, staging, production), with different passwords.
+- **Least privilege**: the playbooks' service account only has the rights it needs.
+- **`no_log: true`** on every task handling a secret, so it shows up neither in the output nor in the logs.
+- **Rotation**: `rekey` the vault when someone who knew its password leaves, and change the secrets themselves if
+  they could read them.
+
+Ansible Vault remains a file protected by **a single shared password**, with no record of who read it. Chapter 4
+moves on to a real secrets vault, **HashiCorp Vault**, with per-person permissions and a log of every read.
 
 ## Python or Ansible?
 
@@ -187,6 +289,7 @@ The two complement each other: many teams deploy with Ansible and write the surr
 - **Inventory** + **group_vars** + **playbooks**; **collections** provide the vendor modules.
 - **Idempotency**: describe a state, apply only the difference; `--check --diff` before applying.
 - Prefer **resource modules** and their `state` parameter.
-- Secrets go in **Ansible Vault** (or a real vault), never in clear text in the repository.
+- Secrets go in **Ansible Vault** (or a real vault), never in clear text in the repository: one vault per
+  environment with `--vault-id`, and a check that every written file starts with `$ANSIBLE_VAULT`.
 
 Next chapter: a first concrete use case, **automatic configuration backups to Git**.
