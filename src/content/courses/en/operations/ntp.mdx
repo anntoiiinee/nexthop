@@ -101,7 +101,7 @@ NTP organizes time sources into levels, called **strata**:
 
 | Stratum | What it is |
 |---|---|
-| **0** | the **reference clock** itself: GNSS receiver, atomic clock, radio signal. It isn't on the network |
+| **0** | the **reference clock** itself: GNSS receiver, <Term id="atomic-clock">atomic clock</Term>, radio signal. It isn't on the network |
 | **1** | a server **directly connected** to a stratum 0 clock |
 | **2** | a server synchronized to a stratum 1 server |
 | **3 to 15** | each level synchronizes to the previous one |
@@ -117,7 +117,7 @@ To depend on nobody, a company installs its own **stratum 1** servers: **time ap
 Oscilloquartz…), connected to a **GNSS antenna** on the roof.
 
 - **The antenna** receives signals from satellite constellations (GPS, Galileo, GLONASS, BeiDou). Each satellite
-  carries **atomic clocks**, and its signal carries the time: that's what the appliance picks up. The antenna needs a
+  carries <Term id="atomic-clock">atomic clocks</Term>, and its signal carries the time: that's what the appliance picks up. The antenna needs a
   **clear view of the sky**, a cable of limited length, and lightning protection.
 - **The internal oscillator** keeps time when the signal disappears (failed antenna, jamming): that's **holdover**.
   An oven-controlled crystal oscillator (OCXO) drifts by a few microseconds to a few milliseconds per day depending

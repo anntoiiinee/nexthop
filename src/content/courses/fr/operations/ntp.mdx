@@ -104,7 +104,7 @@ NTP organise les sources de temps en niveaux, les **strates** (*stratum*) :
 
 | Strate | Ce que c'est |
 |---|---|
-| **0** | l'**horloge de référence** elle-même : récepteur GNSS, horloge atomique, signal radio. Elle n'est pas sur le réseau |
+| **0** | l'**horloge de référence** elle-même : récepteur GNSS, <Term id="atomic-clock">horloge atomique</Term>, signal radio. Elle n'est pas sur le réseau |
 | **1** | un serveur **directement relié** à une horloge de strate 0 |
 | **2** | un serveur synchronisé sur un serveur de strate 1 |
 | **3 à 15** | chaque niveau se synchronise sur le précédent |
@@ -120,7 +120,7 @@ Pour ne dépendre de personne, une entreprise installe ses propres serveurs de *
 temps** (Meinberg, Microchip, Oscilloquartz…), reliés à une **antenne GNSS** sur le toit.
 
 - **L'antenne** reçoit les signaux des constellations de satellites (GPS, Galileo, GLONASS, BeiDou). Chaque
-  satellite embarque des **horloges atomiques**, et son signal porte l'heure : c'est elle que le boîtier récupère.
+  satellite embarque des <Term id="atomic-clock">horloges atomiques</Term>, et son signal porte l'heure : c'est elle que le boîtier récupère.
   L'antenne a besoin d'une **vue dégagée du ciel**, d'un câble de longueur limitée, et d'une protection contre la
   foudre.
 - **L'oscillateur interne** garde l'heure quand le signal disparaît (antenne en panne, brouillage) : c'est le

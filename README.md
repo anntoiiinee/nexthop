@@ -282,6 +282,7 @@ Mise en route (une seule fois) :
 - [x] Fondamentaux, chapitre 12 « Le DNS » (`dns`) en FR et EN : arborescence, résolution et cache, A, AAAA, CNAME, PTR et zones inverses, sorties `dig` réelles (BIND 9.20) ; chiffrement décalé en 14
 - [x] Fondamentaux, chapitre 13 « Traceroute » (`traceroute`) en FR et EN : TTL et ICMP, sondes UDP / ICMP / TCP, pourquoi il ment (filtrage, limitation ICMP, asymétrie, ECMP, MPLS, tunnels), mtr, sorties réelles d'un réseau de conteneurs
 - [x] Services et observabilité, chapitre 2 « NTP : l'heure du réseau » (`ntp`) en FR et EN : strates, boîtier GNSS (antenne, oscillateur rubidium, brouillage), serveurs externes et NTS, architecture, configuration EOS (vérifiée sur la doc Arista), IOS et chrony (sortie réelle) ; chapitres suivants décalés
+- [x] Glossaire : terme « Horloge atomique » (`atomic-clock`), infobulle dans le chapitre NTP
 
 ---
 
