@@ -57,7 +57,8 @@ il suffit d'un aller-retour :
    publique éphémère, et deux extensions importantes pour le réseau : le <Term id="sni" /> (le nom du
    site demandé) et l'ALPN (le protocole applicatif voulu, `h2` pour HTTP/2 ou `http/1.1`).
 2. Le **ServerHello** choisit la suite et envoie sa propre clé éphémère. Chacun peut maintenant calculer
-   la même clé de session (échange Diffie-Hellman), sans qu'elle ait jamais circulé.
+   la même clé de session (échange Diffie-Hellman, expliqué au chapitre
+   [Le chiffrement](/formations/fundamentals/cryptography)), sans qu'elle ait jamais circulé.
 3. Le serveur envoie son **certificat** et signe l'échange avec sa clé privée (`CertificateVerify`) : il
    prouve qu'il possède la clé qui correspond au certificat.
 4. Les deux messages **Finished** confirment que personne n'a altéré la négociation.

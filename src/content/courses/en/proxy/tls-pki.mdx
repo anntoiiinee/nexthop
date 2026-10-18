@@ -56,7 +56,8 @@ single round trip is enough:
    key, and two extensions that matter for the network: the <Term id="sni" /> (the requested site name)
    and ALPN (the desired application protocol, `h2` for HTTP/2 or `http/1.1`).
 2. The **ServerHello** picks the suite and sends its own ephemeral key. Each side can now compute the
-   same session key (Diffie-Hellman exchange), without it ever crossing the network.
+   same session key (Diffie-Hellman exchange, explained in the
+   [Encryption](/en/courses/fundamentals/cryptography) chapter), without it ever crossing the network.
 3. The server sends its **certificate** and signs the exchange with its private key
    (`CertificateVerify`): it proves it holds the key matching the certificate.
 4. The two **Finished** messages confirm that nobody tampered with the negotiation.

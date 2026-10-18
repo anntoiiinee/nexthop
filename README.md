@@ -216,7 +216,7 @@ Mise en route (une seule fois) :
 - [x] Logos Arista, NetBox, Infoblox et Stormshield dans le carrousel
 - [ ] Search Console + Bing Webmaster Tools (voir « Référencement »)
 - [x] Composant `<Callout>` et composants de schémas (`Topology`, `PacketFormat`, `Bits`, `AddressSpace`)
-- [x] Formation Fondamentaux complète en FR (10 chapitres illustrés, dont ARP, LLDP/CDP, agrégation de liens et TCP/UDP, + lab `static-routing`)
+- [x] Formation Fondamentaux complète en FR (11 chapitres illustrés, dont ARP, LLDP/CDP, agrégation de liens, TCP/UDP et le chiffrement, + lab `static-routing`)
 - [x] Composant `<CliOutput>` (sortie CLI annotée), utilisé sur `show spanning-tree` (chapitre STP)
 - [x] Images Open Graph propres à chaque article (générées au build) + boutons de partage
 - [x] Outil : décodeur de certificat X.509 / CSR
@@ -252,6 +252,7 @@ Mise en route (une seule fois) :
 - [x] Tutoriel `bgp-evpn-route-types` réécrit (types 1 à 5, champs, dépannage), sans sorties CLI
 - [ ] Tutoriel `bgp-evpn-route-types` : ajouter les vraies sorties du lab `dc-fabric` (`show bgp evpn route-type mac-ip|imet|ip-prefix ipv4`, `show vxlan flood vtep`), annotées avec `<CliOutput>`
 - [x] Tutoriels « Git et les branches » (`git-branches`, composant `<GitGraph>`) et « Jinja2 et le rendu de configuration dans NetBox » (`jinja-netbox`, gabarits dans `public/labs/netops/templates/`, rendus réellement avec Jinja2 3.1)
+- [x] Fondamentaux, chapitre 11 « Le chiffrement : clés, signatures et certificats » (`cryptography`) en FR et EN : symétrique, asymétrique, hachage, signature, Diffie-Hellman, homme du milieu, avec Alice et Bob ; lab OpenSSL (sorties réelles, OpenSSL 3.0)
 - [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---
