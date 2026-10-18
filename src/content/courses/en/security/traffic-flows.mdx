@@ -1,0 +1,245 @@
+---
+title: "North-south and east-west traffic"
+description: "What enters and leaves the network, and what flows inside it: where to place controls in each case (perimeter, internal firewall, VRF, micro-segmentation), what it changes for data center and cloud architecture, and how to make east-west traffic visible."
+pubDate: 2026-10-18
+level: intermediate
+tags: [firewall, segmentation, datacenter, east-west, north-south, security]
+vendor: [fortinet, paloalto]
+order: 4
+---
+
+For a long time, enterprise network security boiled down to a **perimeter**: a strong firewall between the Internet
+and the inside, and broad trust inside. That model looks at traffic **entering and leaving**. It forgets traffic
+**flowing inside**, between computers, servers and applications, even though it is now the largest share, and the
+path an attacker takes once in. Network and security engineers tell them apart with two compass directions:
+**north-south** and **east-west**.
+
+## Where the names come from
+
+The picture comes from data center diagrams: the Internet and the WAN are drawn **at the top**, servers **at the
+bottom**, and devices of the same tier **side by side**.
+
+<Topology
+  width={760}
+  height={390}
+  groups={[{ x: 30, y: 180, w: 700, h: 190, label: 'Data center', tone: 'sky' }]}
+  nodes={[
+    { id: 'net', type: 'cloud', x: 380, y: 45, label: 'Internet, WAN', sub: 'users, branches' },
+    { id: 'fw', type: 'firewall', x: 380, y: 205, label: 'Perimeter firewall', tone: 'rose' },
+    { id: 'web', type: 'server', x: 150, y: 320, label: 'Web', sub: 'front end', tone: 'violet' },
+    { id: 'app', type: 'server', x: 380, y: 320, label: 'Application', tone: 'violet' },
+    { id: 'db', type: 'server', x: 610, y: 320, label: 'Database', tone: 'violet' },
+  ]}
+  links={[
+    { from: 'net', to: 'fw' }, { from: 'fw', to: 'web' }, { from: 'fw', to: 'app' }, { from: 'fw', to: 'db' },
+  ]}
+  flows={[
+    { from: 'net', to: 'fw', label: 'north-south', tone: 'amber', offset: -34 },
+    { from: 'web', to: 'app', label: 'east-west', tone: 'emerald', offset: -16 },
+    { from: 'app', to: 'db', label: 'east-west', tone: 'emerald', offset: -16 },
+  ]}
+  caption="North-south: traffic crossing the network's (or data center's) boundary. East-west: traffic between machines inside that boundary."
+/>
+
+| | North-south | East-west |
+|---|---|---|
+| **Definition** | Traffic **entering** or **leaving** the network | **Internal** traffic, between machines of the same network |
+| **Examples** | an Internet client to the website, a computer to the Internet, a branch to the data center | the web server to the application, the application to the database, a computer to a file share, a backup |
+| **Volume** | a minority of a data center's traffic | the majority: a single client request triggers many internal exchanges |
+| **Historical control** | the perimeter firewall, the proxy, the WAF | often none, hence the problem |
+
+<Callout type="note">
+The boundary depends on what you look at. For a data center, a branch's traffic arriving over the WAN is
+**north-south**: it crosses the data center's boundary. For the whole company, it is internal traffic. The terms
+help place controls, not classify flows once and for all: always state which boundary you mean.
+</Callout>
+
+## Why east-west became the main topic
+
+Three changes moved the problem:
+
+- **Applications were split up.** A monolithic application on one server became a front end, services, databases,
+  caches and message queues, each on its own machine or container. What was a function call inside a server became
+  an east-west network flow.
+- **Attacks go through the inside.** An attacker rarely gets in through a perimeter firewall flaw. They get in
+  through a computer (an attachment, a stolen password), then **move laterally**, towards the directory, shares,
+  backups. Each of these moves is an east-west flow.
+- **The perimeter dissolved.** Remote work, SaaS applications, cloud: part of the users and servers are no longer
+  behind the perimeter firewall. Trusting "the inside" no longer makes sense; that is the starting point of
+  [zero trust](/en/courses/security/segmentation).
+
+<Callout type="field">
+In ransomware incident reports, the pattern almost always repeats: a modest initial access, then days, sometimes
+weeks, of internal movement before encryption. The perimeter firewall saw nothing, because nothing crossed it.
+Controlling and observing east-west traffic gives you a chance to detect and contain the attack during that phase.
+</Callout>
+
+## Controlling north-south
+
+North-south is network security's historical ground, and its tools are well established. They all sit at the
+**crossing point** between inside and outside:
+
+| Direction | Control | Role | See |
+|---|---|---|---|
+| Inbound | perimeter firewall, <Term id="dmz" /> | only expose published services, isolated in the DMZ | [Firewall basics](/en/courses/security/ngfw-basics) |
+| Inbound | reverse proxy, <Term id="waf" />, <Term id="ddos" /> protection | protect published web applications | [Reverse proxy](/en/courses/proxy/reverse-proxy), [WAF](/en/courses/proxy/waf) |
+| Outbound | proxy, URL filtering, TLS inspection | control what computers and servers reach on the Internet | [Forward proxy](/en/courses/proxy/forward-proxy) |
+| Between sites | IPsec VPN, SD-WAN | connect branches to headquarters without exposing traffic | [IPsec VPN](/en/courses/security/ipsec-vpn) |
+
+North-south has one advantage: **everything goes through the same place**. A properly sized firewall, two in high
+availability, see every flow, log it and filter it.
+
+## Controlling east-west
+
+East-west has no natural crossing point: two servers in the same VLAN talk directly, through the switch, without
+ever crossing a firewall. You must therefore **create** these control points, at different levels of granularity.
+
+| Level | Tool | What it controls | Limits |
+|---|---|---|---|
+| Between large zones | **internal firewall**, gateway of the VLANs or <Term id="vrf">VRFs</Term> | users to servers, servers to backups, DMZ to inside | sees nothing inside a zone |
+| Between subnets | **ACLs** on the core or the leaves | fast, stateless filtering, close to the source | quickly unreadable, no logs nor application awareness |
+| Between machines of a zone | **private VLAN**, port isolation | computers only reach their gateway, not their neighbors | all or nothing |
+| Per application, per machine | **micro-segmentation**: hypervisor distributed firewall, server agent, cloud security groups | every flow between two workloads | requires knowing each application's flows precisely |
+
+You progress in that order. The internal firewall between large zones already stops most lateral movement, and
+[segmentation](/en/courses/security/segmentation) details how to cut those zones.
+
+### The price of a central firewall: hairpinning
+
+Sending east-west traffic through a central firewall has a cost. Two neighboring servers, on the same switch, in two
+different zones, talk by going all the way up to the firewall, then back down: that is **hairpinning**.
+
+<Topology
+  width={760}
+  height={430}
+  nodes={[
+    { id: 'fw', type: 'firewall', x: 380, y: 45, label: 'Internal firewall', sub: 'zones’ gateway', tone: 'rose' },
+    { id: 'sp', type: 'switch', x: 380, y: 205, label: 'Core / spine' },
+    { id: 'l1', type: 'switch', x: 380, y: 365, label: 'leaf1' },
+    { id: 'a', type: 'server', x: 170, y: 365, label: 'App', sub: 'PROD zone', tone: 'violet' },
+    { id: 'b', type: 'server', x: 590, y: 365, label: 'Backup', sub: 'BACKUP zone', tone: 'amber' },
+  ]}
+  links={[{ from: 'fw', to: 'sp' }, { from: 'sp', to: 'l1' }, { from: 'l1', to: 'a' }, { from: 'l1', to: 'b' }]}
+  flows={[
+    { from: 'l1', to: 'sp', tone: 'emerald', offset: -26 },
+    { from: 'sp', to: 'fw', label: 'up', tone: 'emerald', offset: -26 },
+    { from: 'fw', to: 'sp', label: 'down', tone: 'emerald', offset: -26 },
+    { from: 'sp', to: 'l1', tone: 'emerald', offset: -26 },
+  ]}
+  caption="Two servers on the same leaf, in two different zones: their traffic crosses the whole network up to the firewall, then comes back."
+/>
+
+For occasional administration or backup traffic, that is acceptable. For application flows of several gigabits per
+second, the firewall becomes the data center's bottleneck, and its capacity a major cost line. Three answers exist:
+
+- **choose the boundaries**: only send flows **between zones of different sensitivity** through the firewall, and
+  let flows inside a trusted zone go directly;
+- **the firewall at the fabric edge**: in an [EVPN-VXLAN](/en/courses/datacenter/evpn) fabric, each zone is a VRF,
+  and routing **between VRFs** only happens on *border leaves* (or *service leaves*) connected to the firewall.
+  Routing **inside** a VRF stays distributed on each leaf, with no hairpinning;
+- **distributed micro-segmentation**: control happens on the hypervisor or the server itself, where traffic starts.
+  No detour, but one more tool to operate.
+
+### Symmetry, again
+
+A stateful firewall must see **both directions** of a connection. East-west, there are more paths than at the
+perimeter: several firewalls, several gateways, ECMP routing. If the way out goes through one firewall and the way
+back through another path, the firewall only sees half the dialogue and drops packets. It is the most frequent
+cause of "ping works, the application doesn't" outages after inserting an internal firewall. Firewall clusters sync
+their sessions for that reason, and in the cloud, the Transit Gateway's **appliance mode** guarantees the same thing
+(see [Interconnecting VPCs](/en/courses/cloud/transit-gateway)).
+
+## Seeing east-west
+
+At the perimeter, firewall logs show everything. Inside, with no crossing point, traffic is invisible by default. To
+make it visible:
+
+- **internal firewall logs**, for what crosses them: including **denies**, which reveal a poorly documented
+  application or an attempt to move around;
+- **NetFlow, sFlow or IPFIX** exported by switches and leaves: who talks to whom, how much, on which ports, even
+  without a firewall (see [SNMP, syslog and NetFlow](/en/courses/operations/monitoring));
+- **cloud flow logs**, such as [VPC Flow Logs](/en/courses/cloud/security-groups);
+- **network detection** tools (NDR), which learn usual behavior and flag a computer that starts scanning its
+  neighbors' ports or reaching the directory like an administrator.
+
+<Callout type="tip">
+Before writing a single east-west rule, observe. A few weeks of NetFlow or logs from a firewall in "allow everything
+and log" mode give the real flow matrix, the one nobody had documented. That is the approach described at the end
+of the [Segmentation](/en/courses/security/segmentation) chapter.
+</Callout>
+
+## Encryption changes the game
+
+North-south, outbound web traffic can be decrypted on the proxy ([TLS inspection](/en/courses/proxy/tls-pki)).
+East-west, more and more flows are encrypted **end to end** between services, with certificates specific to each
+service (the *mutual TLS* of service meshes such as Istio or Linkerd). An internal firewall then sees addresses and
+ports, not the content. The consequence is a deep trend: east-west policies are increasingly written **by identity**
+(this service, this security group, this service account) rather than by IP address, and enforced close to the
+workloads.
+
+## In the cloud
+
+The same notions show up, under other names:
+
+| | AWS | Azure | Google Cloud |
+|---|---|---|---|
+| **Inbound north-south** | Internet Gateway, load balancer, WAF | Application Gateway, Azure Firewall | Cloud Load Balancing, Cloud Armor |
+| **Outbound north-south** | NAT Gateway, AWS Network Firewall | NAT Gateway, Azure Firewall | Cloud NAT |
+| **East-west between VPCs** | Transit Gateway and inspection VPC | hub with Azure Firewall, or Virtual WAN | Network Connectivity Center, appliances |
+| **East-west inside a VPC** | security groups (by group reference) | NSGs, Application Security Groups | firewall rules by tag or service account |
+
+[Security groups](/en/courses/cloud/security-groups), attached to each interface and able to reference another group
+rather than an address, are exactly east-west micro-segmentation, available by default.
+
+## In the lab
+
+This hop's `security` lab contains both kinds of flows. The headquarters firewall, `fw-hq`, separates four zones:
+outside, users, servers and the DMZ, plus the IPsec tunnel to the branch.
+
+<Lab name="security" lang="en" />
+
+1. Open `fw-hq/nftables.nft` ([Firewall basics](/en/courses/security/ngfw-basics) chapter) and classify each rule of
+   the `transit` chain: R10 to R12 (users to the Internet) and R30 (Internet to the DMZ) are **north-south**; R15, R20
+   (users to servers) and R40 to R42 (branch and headquarters) are **east-west** from the company's point of view.
+2. Generate traffic in both directions, then look at each rule's counters:
+
+   ```bash
+   docker exec clab-security-pc-hq curl -s -o /dev/null -w '%{http_code}\n' http://10.10.20.10
+   docker exec clab-security-ext curl -s -o /dev/null -w '%{http_code}\n' http://203.0.113.2
+   docker exec clab-security-fw-hq nft list chain inet filter transit
+   ```
+
+3. A lateral move: from the user computer, try to reach the server's fake database, on port 5432. It answers
+   `base de donnees srv-hq` (the lab is in French):
+
+   ```bash
+   docker exec clab-security-pc-hq nc -w 2 10.10.20.10 5432
+   ```
+
+   Nothing justifies a computer reaching a database. Rule **R15**, an overly broad "temporary" east-west permission,
+   allows it: exactly the path an attacker would take from a compromised computer. (If you already removed it in the
+   [Security policies](/en/courses/security/security-policies) chapter, put it back for this exercise.)
+4. Remove R15, reload the policy, and try again: the intranet (port 80) still answers, this time thanks to the
+   precise rule R20; the database no longer answers, and the implicit deny counter, at the end of `transit`, goes up.
+   The Security policies chapter showed R15 as a rule shadowing another one; seen from the east-west angle, it is
+   above all an open door to lateral movement.
+
+   ```bash
+   docker exec clab-security-fw-hq nft -f /lab/nftables.nft
+   ```
+
+5. Question: in the lab, `pc-hq` is plugged directly into the firewall. If a second computer were added to the users
+   network (`10.10.10.0/24`), connected to the first one through a switch, could `fw-hq` filter traffic between them?
+   Why, and which tools could?
+
+## Key takeaways
+
+- **North-south**: what enters and leaves the network. **East-west**: what flows inside. Always state the boundary
+  you mean (the site, the data center, the VPC).
+- East-west is the **majority** of a data center's traffic, and the path of an attacker's **lateral movement**.
+- North-south is controlled at the **crossing point**: perimeter firewall, DMZ, proxy, WAF, VPN.
+- East-west has no natural crossing point: you create one, from the **internal firewall** between large zones down
+  to **micro-segmentation** close to workloads.
+- A central firewall causes **hairpinning**: keep it for boundaries between zones of different sensitivity, or route
+  between VRFs on border leaves; and guarantee flow **symmetry**.
+- **Observe** east-west traffic (logs, NetFlow, flow logs, NDR) before filtering it, and to detect what gets through.

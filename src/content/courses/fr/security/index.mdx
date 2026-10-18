@@ -1,6 +1,6 @@
 ---
 title: "La sécurité"
-description: "Protéger et segmenter le réseau : firewall avec état et NGFW, NAT, politiques de sécurité, VPN IPsec et segmentation, avec des exemples FortiGate, Palo Alto et Stormshield et un lab nftables / strongSwan."
+description: "Protéger et segmenter le réseau : firewall avec état et NGFW, NAT, politiques de sécurité, VPN IPsec, flux nord-sud et est-ouest, segmentation, avec des exemples FortiGate, Palo Alto et Stormshield et un lab nftables / strongSwan."
 pubDate: 2026-10-17
 level: intermediate
 tags: [firewall, ngfw, nat, ipsec, vpn, segmentation, security]
@@ -25,6 +25,7 @@ attaquant ne puisse pas aller partout une fois entré.
 | **Les bases d'un firewall** | Distinguer ACL et firewall avec état, lire une table de sessions, configurer zones et NAT, situer ce qu'apporte un NGFW |
 | **Politiques de sécurité** | Écrire une politique dans le bon ordre, repérer les règles trop larges ou masquées, organiser le cycle de vie des règles |
 | **VPN IPsec** | Comprendre IKEv2 et ESP, choisir les algorithmes, monter un VPN par route, dépanner un tunnel qui ne monte pas |
+| **Flux nord-sud et est-ouest** | Distinguer les flux qui franchissent le périmètre de ceux qui circulent à l'intérieur, placer les contrôles et éviter l'effet trombone |
 | **Segmentation** | Découper le réseau en zones, construire une matrice de flux, contrôler l'accès avec 802.1X et NAC, appliquer le zero trust |
 
 Les exemples sont donnés pour trois constructeurs, à parts égales : **Fortinet** (FortiGate),
