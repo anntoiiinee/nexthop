@@ -276,7 +276,6 @@ Mise en route (une seule fois) :
 - [x] Data center, chapitre 6 « Les buffers des switches » (`buffers`) en FR et EN : différence de débits, incast et micro-rafales (calculs vérifiés), petits buffers partagés et deep buffers (VOQ), tail drop et effondrement par incast, QoS, ECN, DCTCP, PFC et RoCE, observation des pertes (VxLAN et EVPN décalés en 7 et 8)
 - [x] Tutoriel « Qu'est-ce qu'une RFC ? » (`rfc`) en FR et EN, lié depuis chaque section « Documentation officielle »
 - [x] Progression du lecteur (chapitres lus, barres par formation, stockage local) et page « Confidentialité et cookies »
-- [ ] Expliquer les fonctionnement des API (en prennant exemple sur Netbox avec Python) : Get, Update, Put, Delete
 - [x] Automatisation, chapitre 4 « Les secrets avec HashiCorp Vault » (`vault`) en FR et EN : limites d'Ansible Vault, scellement, méthodes d'authentification, politiques, KV v2 et versions, audit, classe Python `VaultClient` (hvac), Ansible `community.hashi_vault`, JWT GitLab, disponibilité du coffre pendant une panne ; conteneur Vault (mode dev) ajouté au lab `netops` (sorties testées sur Vault 2.1.1). Chapitres suivants décalés (rotation 5, nommage 6, NetBox 7, AVD 8)
 - [x] Rotation du compte de secours : mots de passe dans HashiCorp Vault (un secret KV v2 par équipement, statuts `pending` / `active`) au lieu d'Ansible Vault, en Python et en Ansible
 - [x] Fondamentaux, chapitre 12 « Le DNS » (`dns`) en FR et EN : arborescence, résolution et cache, A, AAAA, CNAME, PTR et zones inverses, sorties `dig` réelles (BIND 9.20) ; chiffrement décalé en 14
@@ -285,6 +284,7 @@ Mise en route (une seule fois) :
 - [x] Glossaire : terme « Horloge atomique » (`atomic-clock`), infobulle dans le chapitre NTP
 - [x] Automatisation, chapitre 2 « Ansible » : section Ansible Vault approfondie en FR et EN (commandes, `encrypt_string`, convention `vault_`, identifiants de coffre par environnement, mot de passe en CI avec une variable File, bonnes pratiques) et piège du filtre `vault` vérifié sur ansible-core 2.21.5 (secret écrit en clair par `copy content`, vérification avec `slurp` car le lookup `file` déchiffre)
 - [x] Accueil : badge, introduction et description du site élargis à tous les publics (plus seulement étudiants et reconversions)
+- [x] Automatisation, chapitre 7 « Les API REST » (`rest-api`) en FR et EN : ressources et URL, méthodes et idempotence, PUT et PATCH (comportement réel de NetBox), codes de retour, jetons v2 `Bearer nbt_`, pagination et filtres, Swagger et schéma OpenAPI, client `requests` et pynetbox ; script `python/netbox_api.py` dans le lab `netops`, sorties réelles de demo.netbox.dev (NetBox 4.7.3). NetBox et AVD décalés en 8 et 9 ; `fetch_structured_configs.py` accepte les jetons v2
 
 ---
 

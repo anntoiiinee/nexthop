@@ -5,7 +5,7 @@ pubDate: 2026-10-17
 level: intermediate
 tags: [netbox, source-of-truth, ipam, automation, python, ansible]
 vendor: [netbox]
-order: 7
+order: 8
 ---
 
 So far, our scripts read a small hand-written `inventory.yml`. On a real network, information is scattered: a
@@ -69,8 +69,9 @@ your own instance, the **netbox-docker** project starts one in a few minutes:
 
 ## The API and pynetbox
 
-Everything you do in the web interface can be done through the REST <Term id="api" />, with an access token.
-In Python, the **pynetbox** library makes it very natural:
+Everything you do in the web interface can be done through the REST <Term id="api" />, with an access token:
+methods, status codes, pagination and Swagger are explained in the [REST APIs](/en/courses/automation/rest-api)
+chapter. In Python, the **pynetbox** library makes it very natural:
 
 ```python title="netbox_examples.py"
 import os

@@ -74,6 +74,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'vault', title: { fr: 'Les secrets avec HashiCorp Vault', en: 'Secrets with HashiCorp Vault' } },
       { slug: 'breakglass-rotation', title: { fr: 'Rotation du compte de secours', en: 'Break-glass account rotation' } },
       { slug: 'naming-ipam', title: { fr: 'Conventions de nommage et IPAM', en: 'Naming conventions and IPAM' } },
+      { slug: 'rest-api', title: { fr: 'Les API REST', en: 'REST APIs' } },
       { slug: 'netbox', title: { fr: 'NetBox, source de vérité', en: 'NetBox as source of truth' } },
       { slug: 'avd', title: { fr: 'Arista AVD', en: 'Arista AVD' } },
     ],

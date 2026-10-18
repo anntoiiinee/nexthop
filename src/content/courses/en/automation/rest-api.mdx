@@ -1,0 +1,389 @@
+---
+title: "REST APIs: GET, POST, PUT, PATCH, DELETE"
+description: "Understanding a REST API on a real example, NetBox: resources and URLs, HTTP methods, status codes, headers and tokens, pagination and filters, the Swagger documentation and its OpenAPI schema, then a Python client with requests, and the good practices of a script that writes to an API."
+pubDate: 2026-10-18
+level: intermediate
+tags: [api, rest, http, json, swagger, openapi, netbox, python]
+vendor: [netbox]
+order: 7
+---
+
+export const postResponse = `HTTP/1.1 201 Created
+Content-Type: application/json
+API-Version: 4.7
+
+{
+  "id": 64,
+  "url": "https://demo.netbox.dev/api/ipam/vlans/64/",
+  "display": "nexthop-api-demo (3999)",
+  "vid": 3999,
+  "name": "nexthop-api-demo",
+  "site": {
+    "id": 2,
+    "url": "https://demo.netbox.dev/api/dcim/sites/2/",
+    "display": "DM-Akron",
+    "name": "DM-Akron",
+    "slug": "dm-akron",
+    "description": ""
+  },
+  "group": null,
+  "tenant": null,
+  "status": {
+    "value": "active",
+    "label": "Active"
+  },
+  "role": null,
+  "description": "",
+  "tags": [],
+  "custom_fields": {},
+  "created": "2026-10-18T19:46:58.590648Z",
+  "last_updated": "2026-10-18T19:46:58.590662Z"
+}`;
+
+export const scriptOut = `GET    /api/dcim/devices/                                200 OK
+       5 équipements sur le site dm-akron : dmi01-akron-pdu01, dmi01-akron-rtr01, dmi01-akron-sw01, (sans nom, id 74), (sans nom, id 107)
+GET    /api/dcim/sites/                                  200 OK
+POST   /api/ipam/vlans/                                  201 Created
+       créé : id 65, nexthop-api-demo (3999)
+POST   /api/ipam/vlans/                                  400 Bad Request
+       {'vid': ['Ensure this value is less than or equal to 4094.']}
+PATCH  /api/ipam/vlans/65/                               200 OK
+       description : 'VLAN de test du chapitre API'
+PUT    /api/ipam/vlans/65/                               400 Bad Request
+       {'vid': ['This field is required.'], 'name': ['This field is required.']}
+PUT    /api/ipam/vlans/65/                               200 OK
+       nexthop-api-demo-v2, statut reserved, site DM-Akron, description 'VLAN de test du chapitre API'
+DELETE /api/ipam/vlans/65/                               204 No Content
+GET    /api/ipam/vlans/65/                               404 Not Found
+       {'detail': 'No VLAN matches the given query.'}`;
+
+export const schemaVlan = `"WritableVLANRequest": {
+  "required": ["name", "vid"],
+  "properties": {
+    "vid": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4094,
+      "title": "VLAN ID",
+      "description": "Numeric VLAN ID (1-4094)"
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": {
+      "enum": ["active", "reserved", "deprecated"],
+      "type": "string"
+    },
+    …
+  }
+}`;
+
+So far, our scripts have talked to devices over SSH, like a human, or through eAPI; they have read secrets from
+Vault; they will soon read the inventory from NetBox. All these exchanges go through the same thing: an **API**
+(*Application Programming Interface*), an entry point designed for programs rather than humans. Most are **REST
+APIs**, built on HTTP. This chapter explains how they work, on a very real example: the **NetBox** API, and its
+public demo `demo.netbox.dev`. Every answer shown here comes from it.
+
+## Why an API rather than the CLI or the web interface
+
+CLI output is made to be **read**: aligned columns, abbreviations, a format that changes from one version to the
+next. A script that slices it with regular expressions breaks at the first upgrade. An API returns **structured
+data** (JSON), in a **documented**, **versioned** format: the script reads a field by its name, not a column by its
+position.
+
+| | CLI or web interface | REST API |
+|---|---|---|
+| Designed for | a human | a program |
+| Format | formatted text, HTML pages | structured JSON |
+| Stability | changes with versions | a documented, versioned contract |
+| Errors | a message to read | a **status code** and a JSON detail |
+| Automation | fragile (*screen scraping*) | built for it |
+
+## REST principles
+
+**REST** (*REpresentational State Transfer*) is an architectural style, not a protocol. A REST API follows a few
+principles:
+
+- **Everything is a resource**, identified by a **URL**: the list of VLANs, one specific VLAN, a device.
+- You act on a resource with an **HTTP method**: `GET` to read, `POST` to create, `PUT` and `PATCH` to change,
+  `DELETE` to remove.
+- Data travels in a **representation**, almost always **JSON**.
+- The server is **stateless**: each request carries everything needed, authentication included. No session to
+  open, as with SSH.
+- The server answers with an HTTP **status code** that says, in one number, whether everything went well.
+
+### NetBox URLs
+
+The NetBox API follows the organization of its interface: `/api/<application>/<model>/` for a list,
+`/api/<application>/<model>/<id>/` for an object.
+
+| URL | Resource |
+|---|---|
+| `/api/status/` | the server's state: NetBox, Django and plugin versions |
+| `/api/dcim/devices/` | the list of devices |
+| `/api/dcim/devices/1/` | the device with ID 1 |
+| `/api/ipam/vlans/` | the list of VLANs |
+| `/api/ipam/prefixes/?site=dm-akron` | a site's prefixes (a **filter** in the query string) |
+
+## Anatomy of a request and a response
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'c', label: 'Script', sub: 'client' },
+    { id: 's', label: 'NetBox', sub: 'demo.netbox.dev', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'POST /api/ipam/vlans/', tone: 'sky' },
+    { note: 'headers: Authorization, Accept, Content-Type · body: {"vid": 3999, "name": …}', tone: 'slate' },
+    { note: 'NetBox checks the token, the permissions, then validates the data', tone: 'slate' },
+    { from: 's', to: 'c', label: '201 Created', style: 'dashed', tone: 'emerald' },
+    { note: 'body: the created object, with its id and url', tone: 'slate' },
+  ]}
+  caption="An HTTP request: a method, a URL, headers and a body. The response: a status code, headers and a body."
+/>
+
+A **request** contains:
+
+1. a **method** and a **URL**: `POST https://demo.netbox.dev/api/ipam/vlans/`;
+2. **headers**:
+   - `Authorization: Bearer nbt_…`: who you are (the token);
+   - `Accept: application/json`: the format you want to receive;
+   - `Content-Type: application/json`: the format of what you send;
+3. a **body**, for methods that send data: the object to create, in JSON.
+
+With `curl`, it looks like this:
+
+```bash
+export NETBOX_URL=https://demo.netbox.dev
+export NETBOX_TOKEN=nbt_xxxxxxxxxxxx.xxxxxxxx…        # your token, never in a script
+
+curl -s -X POST "$NETBOX_URL/api/ipam/vlans/" \
+  -H "Authorization: Bearer $NETBOX_TOKEN" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"vid": 3999, "name": "nexthop-api-demo", "status": "active", "site": 2}'
+```
+
+The **response** contains a status code, headers, and the created object:
+
+<CliOutput
+  title="Response from demo.netbox.dev (main headers)"
+  output={postResponse}
+  notes={[
+    { line: 1, text: '`201 Created`: the object was created. A successful `GET` would return `200 OK`.', match: '201 Created', tone: 'emerald' },
+    { line: 3, text: 'The API version: useful to detect a version change on the server side.', match: 'API-Version: 4.7', tone: 'violet' },
+    { line: 7, text: 'The created object\'s ID and URL: that\'s the URL used to change or delete it.', match: 'https://demo.netbox.dev/api/ipam/vlans/64/', tone: 'sky' },
+    { line: 11, text: 'A related object (the site) is more than an ID: NetBox returns a nested summary.', match: '"site"', tone: 'amber' },
+    { line: 22, text: 'Choices have a value (for scripts) and a label (for humans).', match: '"value": "active"', tone: 'amber' },
+  ]}
+/>
+
+## HTTP methods
+
+| Method | Action | On | Success | Idempotent |
+|---|---|---|---|---|
+| `GET` | read | a list or an object | `200 OK` | yes |
+| `POST` | create | a list | `201 Created` | **no** |
+| `PUT` | replace | an object | `200 OK` | yes |
+| `PATCH` | change some fields | an object | `200 OK` | in practice, yes |
+| `DELETE` | remove | an object | `204 No Content` | yes |
+
+These operations are often summed up as **CRUD**: *Create* (`POST`), *Read* (`GET`), *Update* (`PUT` or `PATCH`),
+*Delete* (`DELETE`).
+
+**Idempotent** means: repeating it gives the same result as doing it once. Reading twice changes nothing; deleting
+twice leaves the object deleted (the second time answers `404`, but the state is the same). `POST`, however, creates
+a **second** object on each call. This matters when retrying after an error: you can resend a `GET`, a `PUT` or a
+`DELETE` that didn't complete, but not a `POST` without first checking whether it actually succeeded.
+
+### PUT or PATCH?
+
+- **`PATCH`** sends **only the fields to change**:
+  `PATCH /api/ipam/vlans/64/` with `{"description": "VLAN de test du chapitre API"}`.
+- **`PUT`** sends, in principle, **the whole object**, which replaces the old one.
+
+In practice, it depends on the API. In NetBox, tested on the demo:
+
+- a `PUT` without the **required** fields (`vid` and `name` for a VLAN) is refused: `400 Bad Request`,
+  `{"vid": ["This field is required."], "name": ["This field is required."]}`;
+- a `PUT` with the required fields but without the site or the description **keeps** the original site and
+  description. NetBox (through Django REST Framework) doesn't reset optional fields that are left out.
+
+<Callout type="field">
+In a script, prefer `PATCH`: you only send what you want to change, with no risk of overwriting a field someone else
+changed in the meantime. And never assume a `PUT` erases what you didn't send: check the behavior of the API you
+use.
+</Callout>
+
+## Status codes
+
+The first digit gives the family: **2xx** success, **4xx** client error (your request), **5xx** server error.
+
+| Code | Meaning | Real example on NetBox |
+|---|---|---|
+| `200 OK` | success, with a body | `GET`, `PATCH`, `PUT` |
+| `201 Created` | object created | `POST /api/ipam/vlans/` |
+| `204 No Content` | success, no body | `DELETE /api/ipam/vlans/64/` |
+| `400 Bad Request` | invalid data: the body explains why | `{"vid": ["Ensure this value is less than or equal to 4094."]}` |
+| `401` / `403` | not authenticated / not allowed | without a token, NetBox answers `403`: `{"detail": "Authentication credentials were not provided."}` |
+| `404 Not Found` | the resource doesn't exist | `{"detail": "No VLAN matches the given query."}` |
+| `405 Method Not Allowed` | method not supported on this URL | `POST` on `/api/status/` |
+| `429 Too Many Requests` | too many requests: slow down | depends on the server's configuration |
+| `500` / `502` / `503` | the server has a problem | retry later, warn the team running it |
+
+A script must **always** check the status code before using the response: a `200` and a `400` both return JSON.
+
+## Authenticating: tokens
+
+An API doesn't ask for a username and password on every request, but for a **token**, created in the user's
+profile or by an administrator, and sent in the `Authorization` header.
+
+- Since **NetBox 4.5**, tokens look like `nbt_<key>.<secret>` and are sent with `Authorization: Bearer …`. Legacy
+  40-character tokens are sent with `Authorization: Token …`. The lab scripts handle both.
+- A token has **its user's permissions**, sometimes reduced (read-only), and can have an **expiry date**. Create
+  one token per use (a script, a pipeline), with the minimum permissions.
+- Protect a token like a password: never in the code or in Git, but in an environment variable, a masked pipeline
+  variable, or [Vault](/en/courses/automation/vault).
+
+## Reading many objects: pagination and filters
+
+A list is never returned all at once: it is **paginated**.
+
+```text title="GET /api/dcim/devices/?limit=2&brief=1 (excerpt)"
+{
+    "count": 75,
+    "next": "https://demo.netbox.dev/api/dcim/devices/?brief=1&limit=2&offset=2",
+    "previous": null,
+    "results": [ … two devices … ]
+}
+```
+
+- `count`: the total number of objects; `results`: those on this page.
+- `next`: the URL of the next page, to follow until it is `null`. `limit` sets the page size, `offset` the
+  starting point.
+- `brief=1` returns a reduced version of each object (ID, name, URL): much lighter for a list.
+
+**Filters** go in the query string, and can be combined:
+
+```text title="GET /api/dcim/devices/?site=dm-akron&role=router"
+count: 1  →  dmi01-akron-rtr01, ISR 1111-8P, Active
+```
+
+Filter on the server side rather than downloading everything and sorting in the script: it's faster for you, and
+lighter for the server.
+
+## Swagger and OpenAPI: the API documentation
+
+How do you know which URLs exist, which fields to send, which are required? Modern APIs publish an **OpenAPI
+schema**: the complete description of the API, readable by programs. NetBox 4.7's describes **322 paths**, each with
+its methods, parameters, fields and constraints.
+
+<CliOutput
+  title="GET /api/schema/?format=json: a VLAN as NetBox expects it when writing (excerpt)"
+  output={schemaVlan}
+  notes={[
+    { line: 2, text: 'The required fields: exactly those the refused `PUT` asked for.', match: '["name", "vid"]', tone: 'rose' },
+    { line: 7, text: 'The constraints: the `400` received with `vid: 5000` comes from here.', match: '"maximum": 4094', tone: 'amber' },
+    { line: 13, text: 'The accepted values for a choice field.', match: '"enum"', tone: 'violet' },
+  ]}
+/>
+
+**Swagger UI** turns this schema into an interactive web page. In NetBox, it lives at **`/api/schema/swagger-ui/`**
+(a more readable variant, ReDoc, is at `/api/schema/redoc/`):
+
+- every path is listed, grouped by application (`dcim`, `ipam`…), with its methods in color;
+- each operation shows its parameters, the expected body format and response examples;
+- the **Authorize** button lets you enter your token (`Bearer nbt_…`), then **Try it out** sends a real request and
+  shows the matching `curl` command.
+
+<Callout type="warning">
+"Try it out" is not a simulator: a `DELETE` launched from Swagger really deletes the object. Explore with a
+**read-only** token, or on a test instance, never with an admin token in production.
+</Callout>
+
+Tools use the schema too: generating a client in any language, validating requests in tests, or importing the API
+into Postman or Bruno to explore it.
+
+## A Python client with requests
+
+In Python, the **requests** library makes HTTP requests. The lab script chains every operation on a test VLAN: read,
+create, validation error, `PATCH`, `PUT` refused then accepted, delete. It shows each request and its status code
+(its messages are in French, like the other lab scripts), and deletes the VLAN even if a step fails.
+
+<CodeFile lab="netops" file="python/netbox_api.py" />
+
+<CliOutput
+  title="NETBOX_URL=https://demo.netbox.dev python3 python/netbox_api.py"
+  output={scriptOut}
+  notes={[
+    { line: 4, text: 'Creation: `201`, and NetBox returns the new object\'s ID.', match: '201 Created', tone: 'emerald' },
+    { line: 6, text: 'Invalid data: `400`, with the field at fault and the reason.', match: '400 Bad Request', tone: 'rose' },
+    { line: 13, text: 'The `PUT` without site or description kept them: the NetBox behavior described above.', match: "site DM-Akron, description 'VLAN de test du chapitre API'", tone: 'amber' },
+    { line: 14, text: 'Deletion: `204`, with no response body.', match: '204 No Content', tone: 'sky' },
+  ]}
+/>
+
+A few details of the script worth carrying into yours:
+
+- a **session** (`requests.Session`) keeps the headers and reuses the TLS connection from one request to the next;
+- a **timeout** (`timeout=10`) on each request: without it, a server that doesn't answer blocks the script forever;
+- parameters passed with `params=` are **encoded** correctly in the URL; the body passed with `json=` is
+  serialized, with the right `Content-Type`;
+- the status code is checked before using the response (`raise_for_status()`, or an explicit test).
+
+For NetBox, the **pynetbox** library hides all this behind Python objects. The next chapter uses it:
+
+```python
+import os
+import pynetbox
+
+nb = pynetbox.api(os.environ["NETBOX_URL"], token=os.environ["NETBOX_TOKEN"])
+for device in nb.dcim.devices.filter(site="dm-akron", role="router"):   # GET, pagination included
+    print(device.name, device.device_type, device.status)
+vlan = nb.ipam.vlans.create(vid=3998, name="nexthop-pynetbox-demo", status="active")   # POST
+vlan.description = "via pynetbox"
+vlan.save()                                                              # PATCH
+vlan.delete()                                                            # DELETE
+```
+
+Tested on the demo with pynetbox 7.9, which sends `Bearer` or `Token` by itself depending on the token format.
+Understanding the requests it makes is still essential to read its errors.
+
+## Good practices for a script that writes to an API
+
+- **Read before writing**: check whether the object already exists before a `POST`, so a re-run script doesn't
+  create duplicates. That's [idempotency](/en/courses/automation/ansible) applied to an API.
+- **Retry with care**: after a `429` or a `5xx`, wait and retry, for longer each time. But never blindly retry a
+  `POST`.
+- **Paginate**: never assume the first page holds everything.
+- **Limit the token's permissions**, and give it an expiry date.
+- **Verify the TLS certificate**: never turn verification off, even "temporarily".
+- **Don't log** headers or tokens; logging the method, the URL and the status code is enough.
+- **Use bulk operations** when the API offers them: NetBox accepts a list of objects on
+  `POST`, `PUT`, `PATCH` and `DELETE /api/<application>/<model>/`, in a single request.
+
+## Your turn
+
+On `demo.netbox.dev`, a public, shared instance that is reset regularly: put nothing sensitive there, and clean up
+what you create. Create a token in your profile, then:
+
+1. With `curl`, show `/api/status/`. Which NetBox version is running?
+2. How many devices have the `access-switch` role? Use a filter, and `count`.
+3. Open `/api/schema/swagger-ui/`. Which fields are required to create a prefix (`ipam_prefixes_create`)?
+4. Run `python3 python/netbox_api.py`. Then change it to also create a prefix in the VLAN, and delete it at the end.
+5. Why can you safely re-send a `DELETE` that timed out, but not a `POST`?
+
+## Key takeaways
+
+- A **REST API** exposes **resources** (URLs) that you act on with **HTTP methods**, exchanging **JSON**, with no
+  state on the server side.
+- `GET` reads (`200`), `POST` creates (`201`), `PATCH` changes some fields, `PUT` sends the whole object (`200`),
+  `DELETE` removes (`204`). Everything but `POST` is **idempotent**.
+- The **status code** says whether the request succeeded: 2xx success, 4xx error in your request, 5xx server error.
+  A `400`'s body explains what to fix.
+- Authentication uses a **token** in the `Authorization` header (`Bearer nbt_…` on NetBox 4.5 and later), to protect
+  like a password.
+- Lists are **paginated** (`count`, `next`, `results`) and **filtered** in the URL.
+- The **OpenAPI schema** describes the whole API; **Swagger UI** (`/api/schema/swagger-ui/` on NetBox) makes it
+  explorable, and its requests are **real**.
+
+Next chapter: **NetBox**, the source of truth whose API we just used.

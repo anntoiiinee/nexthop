@@ -217,6 +217,17 @@ export const references: Record<string, Reference[]> = {
     rfc(6996, 'Autonomous System (AS) Reservation for Private Use'),
     netboxDocs,
   ],
+  'courses/automation/rest-api': [
+    rfc(9110, 'HTTP Semantics (methods, status codes, idempotency)'),
+    rfc(5789, 'PATCH Method for HTTP'),
+    rfc(8259, 'The JavaScript Object Notation (JSON) Data Interchange Format'),
+    rfc(6750, 'The OAuth 2.0 Authorization Framework: Bearer Token Usage'),
+    ref('OpenAPI', 'OpenAPI Specification 3.0.3', 'https://spec.openapis.org/oas/v3.0.3.html'),
+    ref('Swagger', 'Swagger UI', 'https://swagger.io/tools/swagger-ui/'),
+    ref('NetBox', 'NetBox REST API', 'https://netboxlabs.com/docs/netbox/integrations/rest-api/'),
+    ref('Python', 'Requests documentation', 'https://requests.readthedocs.io/en/latest/'),
+    ref('NetBox', 'pynetbox', 'https://github.com/netbox-community/pynetbox'),
+  ],
   'courses/automation/netbox': [
     netboxDocs,
     ref('NetBox', 'pynetbox', 'https://github.com/netbox-community/pynetbox'),
