@@ -1,0 +1,325 @@
+---
+title: "Opérer une fabric"
+description: "Faire vivre une fabric en production : mises à jour sans coupure avec le maintenance mode, le drain BGP et la mise à jour progressive, validation automatique de l'état avec ANTA, ce qu'il faut superviser, et le pont avec l'automatisation (AVD) et les opérations."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, operations, maintenance, bgp, anta, avd, monitoring]
+vendor: [arista, cisco]
+order: 17
+---
+
+Construire une fabric prend quelques semaines. L'exploiter dure des années : mises à jour logicielles, ajouts de
+leafs, remplacements d'optiques, nouveaux VLAN chaque semaine, et un jour, une panne à comprendre vite. Les chapitres
+précédents ont dessiné une architecture **redondante partout** : plusieurs spines, des serveurs raccordés à deux leafs,
+des border leafs par paire. Cette redondance n'a pas seulement pour but de survivre aux pannes ; elle permet surtout
+d'**intervenir sur n'importe quel équipement sans couper le service**, à condition de s'y prendre dans le bon ordre.
+
+Ce dernier chapitre rassemble les gestes de l'exploitation : sortir un équipement du trafic avant d'y toucher,
+mettre à jour toute une fabric switch par switch, vérifier automatiquement que tout est revenu comme avant, et savoir
+quoi superviser au quotidien.
+
+## Ne jamais toucher un équipement qui transporte du trafic
+
+La règle d'or de la maintenance d'une fabric : avant de redémarrer un switch, on **retire le trafic** qui passe par
+lui, on **vérifie** qu'il n'en passe plus, puis seulement on intervient. Redémarrer un spine « à chaud » fonctionne
+souvent (BGP et BFD détectent la panne, l'ECMP bascule), mais chaque flux qui le traversait subit une coupure, et un
+redémarrage qui se passe mal laisse un équipement à moitié vivant au milieu de la fabric.
+
+Retirer le trafic s'appelle **drainer** (*drain*). L'idée : rendre les routes qui passent par l'équipement **moins
+attractives** que les autres, pour que ses voisins basculent d'eux-mêmes vers les autres chemins, sans aucune perte,
+avant de couper quoi que ce soit.
+
+### Le drain BGP
+
+Dans une fabric eBGP, la technique la plus portable est l'**allongement du chemin d'AS** (*AS-path prepend*) : le
+spine à drainer ajoute plusieurs fois son AS aux routes qu'il annonce.
+
+<Topology
+  width={700}
+  height={300}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: 'drainé', tone: 'amber' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', style: 'dashed', tone: 'amber' }, { from: 's2', to: 'l1', tone: 'violet' },
+    { from: 's1', to: 'l2', style: 'dashed', tone: 'amber' }, { from: 's2', to: 'l2', tone: 'violet' },
+  ]}
+  notes={[
+    { x: 20, y: 272, text: 'via spine1 : 65000 65000 65000 65000 65102', tone: 'amber', anchor: 'start' },
+    { x: 680, y: 272, text: 'via spine2 : 65000 65102 (meilleur)', tone: 'violet', anchor: 'end' },
+  ]}
+  caption="spine1 allonge le chemin d'AS de ses annonces. Les leafs préfèrent le chemin le plus court, par spine2 : le trafic quitte spine1 alors que toutes ses sessions sont encore établies."
+/>
+
+Les sessions restent établies, les routes restent connues : si spine2 tombait pendant la maintenance, spine1
+reprendrait aussitôt le trafic. On parle de **drain** et non de coupure.
+
+```text title="Arista EOS : drainer spine1"
+route-map DRAIN permit 10
+   set as-path prepend 65000 65000 65000
+!
+router bgp 65000
+   neighbor UNDERLAY route-map DRAIN out
+```
+
+Pour remettre le spine en service (*undrain*), on retire la route-map. D'autres méthodes existent : la communauté
+**GRACEFUL_SHUTDOWN** (RFC 8326), que les voisins traduisent en préférence locale nulle (efficace en iBGP ou quand les
+voisins sont configurés pour la reconnaître), ou la baisse de la MED. L'AS-path prepend a l'avantage de fonctionner
+partout, sans rien configurer sur les voisins.
+
+### Le maintenance mode
+
+Les constructeurs ont intégré ce drain dans une commande unique, qui sait aussi drainer d'autres protocoles et
+vérifier que le trafic a bien quitté l'équipement :
+
+```text title="Arista EOS : mettre tout le switch en maintenance"
+maintenance
+   unit System
+      quiesce
+```
+
+```text title="Cisco NX-OS : Graceful Insertion and Removal"
+system mode maintenance
+```
+
+`show maintenance` (Arista) et `show system mode` (Cisco) suivent l'état : *maintenance mode entering*, puis
+*under maintenance* quand le drain est terminé. À la sortie (`no quiesce`, ou `no system mode maintenance`), le switch
+réannonce ses routes normalement. L'intérêt : une procédure identique pour tous les équipements, plus difficile à
+rater qu'une route-map tapée à la main.
+
+### Drainer un leaf
+
+Un spine se draine par BGP. Un leaf, lui, porte des serveurs : il faut d'abord que **ses serveurs** l'abandonnent.
+
+1. **Couper les liens vers les serveurs double-attachés** (ou les mettre en maintenance) : LACP retire ces liens des
+   bonds, les serveurs continuent par l'autre leaf. En ESI-LAG, le leaf retire ses routes de type 1, et toute la
+   fabric bascule (voir [EVPN multihoming](/formations/datacenter/multihoming)) ; en MLAG, le pair prend le relais.
+2. **Drainer l'underlay** (maintenance mode) : plus rien ne transite par lui.
+3. **Vérifier** les compteurs : plus de trafic sur les ports serveurs ni sur les liens de montée.
+4. **Intervenir.**
+
+Les serveurs raccordés à **un seul** leaf subiront une coupure, quoi qu'on fasse. C'est l'argument le plus concret
+pour le double attachement : sans lui, chaque mise à jour du leaf devient une négociation de fenêtre de maintenance
+avec les équipes applicatives.
+
+## La mise à jour progressive
+
+Mettre à jour toute une fabric, c'est enchaîner ce cycle **un équipement à la fois** (*rolling upgrade*), en
+commençant par le moins risqué :
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'op', label: 'Opérateur', sub: 'ou pipeline' },
+    { id: 'sw', label: 'spine1', tone: 'amber' },
+    { id: 'anta', label: 'ANTA', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'op', to: 'anta', label: '1. tests avant', sub: 'la fabric est-elle saine ?', tone: 'violet' },
+    { from: 'op', to: 'sw', label: '2. maintenance (drain)', tone: 'amber' },
+    { note: '3. vérifier : plus de trafic sur ses interfaces', tone: 'amber' },
+    { from: 'op', to: 'sw', label: '4. nouvelle image, redémarrage', tone: 'sky' },
+    { from: 'op', to: 'anta', label: '5. tests après', sub: 'sessions, routes, interfaces', tone: 'violet' },
+    { from: 'op', to: 'sw', label: '6. sortie de maintenance', tone: 'emerald' },
+    { note: '7. observer quelques minutes, puis équipement suivant', tone: 'emerald' },
+  ]}
+  caption="Le cycle d'une mise à jour progressive, répété pour chaque équipement. On ne passe au suivant que si les tests sont verts et que le trafic est revenu."
+/>
+
+L'ordre habituel :
+
+1. **un spine**, puis les autres un par un : la fabric perd une fraction de sa capacité pendant chaque intervention,
+   jamais la connectivité ;
+2. **les leafs**, une paire à la fois, et dans chaque paire un leaf puis l'autre ;
+3. **les border leafs** en dernier, un par un, pendant une fenêtre de faible trafic : c'est par eux que passe le
+   nord-sud.
+
+Quelques règles qui évitent les mauvaises surprises :
+
+- **une seule version cible**, validée sur un lab ou sur un premier équipement peu critique ; on lit les notes de
+  version, en particulier les **bugs connus** et les **changements de comportement par défaut** ;
+- **jamais deux équipements redondants en même temps** : pas deux spines, pas les deux leafs d'une paire ;
+- **ne pas rester longtemps entre deux versions** : une fabric où cohabitent deux versions pendant des mois finit par
+  rencontrer un cas que personne n'a testé ;
+- **une voie de retour** : l'ancienne image reste sur le switch, et l'on sait la remettre en `boot system`.
+
+Certaines plateformes savent redémarrer leur logiciel en maintenant le plan de données (Arista SSU, Cisco ISSU) :
+la coupure pour les serveurs à attachement simple tombe à moins d'une seconde. C'est utile, mais cela ne remplace pas
+le drain : on ne l'utilise que là où le double attachement est impossible.
+
+## Valider avec ANTA
+
+Après chaque intervention, il faut répondre à une question simple : **la fabric est-elle revenue exactement dans
+l'état attendu ?** Le vérifier à la main, switch par switch, avec des `show`, est long, et on oublie toujours quelque
+chose. <Term id="anta" /> (*Arista Network Test Automation*) automatise cette vérification : un **catalogue** décrit l'état
+attendu sous forme de tests, un **inventaire** liste les équipements, et ANTA exécute tous les tests sur tous les
+équipements en quelques secondes.
+
+```yaml title="catalog.yml (extrait du lab)"
+anta.tests.routing.bgp:
+  # Toutes les sessions de l'underlay (IPv4) et de l'overlay (EVPN) sont établies
+  - VerifyBGPPeersHealth:
+      address_families:
+        - afi: ipv4
+          safi: unicast
+          vrf: default
+        - afi: evpn
+
+anta.tests.routing.generic:
+  # Chaque équipement joint les trois VTEP
+  - VerifyRoutingTableEntry:
+      vrf: default
+      routes:
+        - 10.255.1.11
+        - 10.255.1.12
+        - 10.255.1.13
+```
+
+On lance le même catalogue **avant** l'intervention (pour s'assurer qu'on part d'un état sain, et ne pas se voir
+reprocher une panne préexistante) et **après** (pour prouver qu'on a tout remis). Un test rouge après la mise à jour
+arrête la procédure : on ne passe pas à l'équipement suivant.
+
+Le catalogue a tout intérêt à être **généré** plutôt qu'écrit : AVD connaît chaque lien, chaque session BGP et chaque
+VTEP de la fabric, et produit le catalogue ANTA correspondant (voir [Arista AVD](/formations/automation/avd)). L'état
+attendu vient alors de la même source que la configuration elle-même.
+
+## Ce qu'il faut superviser
+
+ANTA vérifie l'état à un instant donné, sur demande. La supervision, elle, regarde en permanence. Dans une fabric, les
+indicateurs qui comptent :
+
+| Quoi | Pourquoi | Alerte typique |
+|---|---|---|
+| **Sessions BGP** (underlay et EVPN), et nombre de préfixes reçus | Une session tombée, c'est un chemin ou un voisin de moins ; un nombre de préfixes qui chute, une annonce perdue | Session non *Established* ; préfixes reçus en baisse de plus de 10 % |
+| **Sessions BFD** | Une session qui bat signale un lien instable avant qu'il ne tombe | Plusieurs changements d'état en une heure |
+| **Erreurs, rejets et optiques** des interfaces | Les pannes silencieuses commencent par des erreurs CRC ou une puissance optique qui baisse | Erreurs en hausse ; puissance reçue proche du seuil bas |
+| **Équilibre des liens de montée** | Un spine nettement plus chargé que les autres révèle un problème d'ECMP ou des éléphants | Écart de charge persistant entre les liens d'un même leaf |
+| **Remplissage des tables matérielles** (MAC, ARP, routes) | Une table pleine ne s'annonce pas : les nouvelles entrées sont simplement ignorées | Utilisation au-delà de 80 % |
+| **Mobilité des MAC** | Une MAC qui change de leaf sans cesse signale une boucle ou une adresse dupliquée | Détection de MAC dupliquée par EVPN |
+| **Rejets des buffers et pauses PFC** | Des pertes en sortie ou des tempêtes de pause (voir [Les buffers des switches](/formations/datacenter/buffers)) | Rejets en sortie en hausse ; watchdog PFC déclenché |
+| **Synchronisation NTP** | Sans heure commune, impossible de corréler les journaux de cinq switches pendant une panne | Écart supérieur à quelques millisecondes |
+| **Dérive de configuration** | Un changement fait à la main, hors du flux GitOps, sera écrasé au prochain déploiement | Configuration en cours différente de l'intention |
+
+Ces mesures se collectent de préférence en **télémétrie** (gNMI, en continu, toutes les quelques secondes) plutôt
+qu'en interrogeant les switches toutes les cinq minutes en SNMP : une micro-coupure BFD ou un pic de rejets ne laisse
+aucune trace dans une moyenne sur cinq minutes. La formation [Services et observabilité](/formations/operations)
+détaille la chaîne complète : [SNMP, syslog et NetFlow](/formations/operations/monitoring),
+[Télémétrie avec gNMI et gNMIc](/formations/operations/telemetry),
+[Prometheus et Grafana](/formations/operations/prometheus-grafana), [NTP](/formations/operations/ntp), et le
+[réseau hors bande](/formations/operations/oob) qui permet d'atteindre un switch quand la fabric elle-même est en
+panne.
+
+<Callout type="field">
+La meilleure supervision ne remplace pas une **procédure écrite** et répétée. Les incidents les plus longs ne viennent
+pas d'une panne matérielle, mais d'une intervention faite dans le mauvais ordre : les deux leafs d'une paire mis à
+jour en même temps, un spine redémarré sans drain pendant que l'autre était déjà en maintenance, un border leaf
+oublié en maintenance après la fenêtre. Le maintenance mode, ANTA avant et après, et un pipeline qui enchaîne les
+étapes rendent ces erreurs beaucoup plus difficiles.
+</Callout>
+
+## Le pont avec l'automatisation
+
+Tout ce chapitre converge vers une même idée : **la fabric s'opère comme du code**.
+
+- **L'intention** (VLAN, VRF, leafs, sessions) vit dans un modèle de données, versionné dans Git ;
+- **les configurations** et le **catalogue de tests** en sont générés par AVD ;
+- **chaque changement** passe par une merge request : diff relu, déploiement, puis tests ANTA (voir
+  [Arista AVD](/formations/automation/avd)) ;
+- **les sauvegardes** de la configuration réelle détectent toute dérive (voir
+  [Sauvegardes GitOps des configurations](/formations/automation/config-backup)) ;
+- **les mises à jour** suivent la même logique : un pipeline qui draine, met à jour, teste et remet en service, un
+  équipement après l'autre, et s'arrête au premier test rouge.
+
+Une fabric opérée ainsi n'est pas seulement plus rapide à faire évoluer : elle est **prévisible**, et c'est ce qu'on
+attend d'une infrastructure sur laquelle reposent toutes les applications de l'entreprise.
+
+## Dans le lab
+
+Le lab `dc-fabric` place les switches sur un réseau de management, `172.20.40.0/24`, avec eAPI actif : c'est par là
+qu'ANTA les interroge. Le dossier `anta/` du lab contient l'inventaire et le catalogue.
+
+<Lab name="dc-fabric" lang="fr" />
+
+**1. Les tests avant intervention.** Sur votre machine, dans un environnement virtuel Python, installez ANTA, puis
+lancez le catalogue depuis le dossier du lab :
+
+```bash
+pip install "anta[cli]"
+anta nrfu -u admin -p admin -i anta/inventory.yml -c anta/catalog.yml table
+```
+
+Un tableau, une ligne par test et par équipement. Tout doit être vert (*success*), sauf peut-être
+`VerifyRunningConfigDiffs` : il échoue sur un switch dont la configuration a été modifiée sans être sauvegardée
+(`write memory`), par exemple pendant les chapitres précédents.
+
+**2. Drainer spine1.** Lancez un ping continu de `host1` vers `host3`, dans un autre terminal :
+
+```bash
+docker exec -it clab-dc-fabric-host1 ping 10.10.20.13
+```
+
+Sur leaf1, notez les deux prochains sauts vers le VTEP de leaf3 :
+
+```text
+show ip route 10.255.1.13
+```
+
+Puis, sur spine1, appliquez le drain :
+
+```text
+configure
+route-map DRAIN permit 10
+   set as-path prepend 65000 65000 65000
+router bgp 65000
+   neighbor UNDERLAY route-map DRAIN out
+```
+
+**3. Vérifier le drain.** Sur leaf1, `show ip route 10.255.1.13` ne montre plus qu'un prochain saut, par spine2.
+`show ip bgp 10.255.1.13` montre toujours les deux chemins, mais celui de spine1, plus long
+(`65000 65000 65000 65000 65103`), n'est plus retenu. Le ping n'a perdu **aucun** paquet. Sur spine1,
+`show interfaces counters rates` montre les liens vers les leafs presque à l'arrêt : seuls les paquets BGP et BFD y
+passent encore.
+
+**4. Pendant la maintenance.** Relancez ANTA : `VerifyBGPPeersHealth` reste vert (les sessions sont toujours
+établies), `VerifyRunningConfigDiffs` signale la modification non sauvegardée de spine1, et un vrai redémarrage de
+spine1 ferait passer les tests BGP au rouge pour spine1 et pour chaque leaf. C'est attendu : pendant une
+intervention, on compare le rapport à ce qu'on attend de l'intervention.
+
+**5. Remettre en service.** Sur spine1 :
+
+```text
+configure
+router bgp 65000
+   no neighbor UNDERLAY route-map DRAIN out
+   exit
+no route-map DRAIN
+```
+
+Sur leaf1, les deux prochains sauts reviennent. Relancez ANTA : tout est vert, comme avant. L'intervention est
+terminée, et vous avez la preuve qu'elle n'a rien laissé derrière elle.
+
+## À vous de jouer
+
+1. Pourquoi draine-t-on un spine avant de le redémarrer, alors que l'ECMP et BFD basculeraient de toute façon ?
+2. Comment l'AS-path prepend retire-t-il le trafic d'un spine sans fermer ses sessions BGP ?
+3. Dans quel ordre met-on à jour une fabric, et pourquoi jamais deux équipements redondants en même temps ?
+4. Pourquoi lance-t-on les tests ANTA **avant** une intervention, et pas seulement après ?
+5. Citez quatre indicateurs à superviser dans une fabric, et la panne que chacun permet de voir venir.
+
+## À retenir
+
+- On ne touche jamais un équipement qui transporte du trafic : on le **draine** (AS-path prepend, communauté
+  GRACEFUL_SHUTDOWN, ou **maintenance mode**), on **vérifie**, puis on intervient.
+- Un leaf se draine en faisant d'abord partir ses **serveurs double-attachés** ; les serveurs à attachement simple
+  subissent toujours une coupure.
+- **Mise à jour progressive** : les spines un par un, puis les leafs paire par paire, les border leafs en dernier ;
+  jamais deux équipements redondants à la fois.
+- **ANTA** vérifie l'état attendu de toute la fabric en quelques secondes : **avant** et **après** chaque
+  intervention ; son catalogue se génère avec AVD.
+- Superviser : sessions BGP et BFD, erreurs et optiques, équilibre ECMP, tables matérielles, mobilité des MAC,
+  buffers, NTP et dérive de configuration, de préférence en **télémétrie**.
+- Une fabric s'opère **comme du code** : intention dans Git, configurations et tests générés, changements relus,
+  déployés et validés par un pipeline.

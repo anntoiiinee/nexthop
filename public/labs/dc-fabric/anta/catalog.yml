@@ -1,0 +1,47 @@
+# Catalogue de tests ANTA du lab dc-fabric : l'état attendu de la fabric.
+# anta nrfu -u admin -p admin -i inventory.yml -c catalog.yml table
+anta.tests.interfaces:
+  # Les liens de la fabric sont up
+  - VerifyInterfacesStatus:
+      interfaces:
+        - name: Ethernet1
+          status: up
+        - name: Ethernet2
+          status: up
+  - VerifyInterfacesStatus:
+      interfaces:
+        - name: Ethernet3
+          status: up
+      filters:
+        tags: ['spine']
+  # Ni erreurs ni rejets sur les interfaces
+  - VerifyInterfaceErrors:
+  - VerifyInterfaceDiscards:
+
+anta.tests.routing.bgp:
+  # Toutes les sessions de l'underlay (IPv4) et de l'overlay (EVPN) sont établies
+  - VerifyBGPPeersHealth:
+      address_families:
+        - afi: ipv4
+          safi: unicast
+          vrf: default
+        - afi: evpn
+
+anta.tests.routing.generic:
+  # Chaque équipement joint les trois VTEP
+  - VerifyRoutingTableEntry:
+      vrf: default
+      routes:
+        - 10.255.1.11
+        - 10.255.1.12
+        - 10.255.1.13
+
+anta.tests.vxlan:
+  # L'interface Vxlan1 des leafs est active
+  - VerifyVxlan1Interface:
+      filters:
+        tags: ['leaf']
+
+anta.tests.configuration:
+  # La configuration en cours est sauvegardée
+  - VerifyRunningConfigDiffs:

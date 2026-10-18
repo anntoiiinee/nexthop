@@ -133,6 +133,15 @@ export const references: Record<string, Reference[]> = {
   // Data center
   'courses/datacenter/vrf': [rfc(4364, 'BGP/MPLS IP Virtual Private Networks (VPNs)')],
   'courses/datacenter/spine-leaf': [rfc(7938, 'Use of BGP for Routing in Large-Scale Data Centers')],
+  'courses/datacenter/underlay': [
+    rfc(7938, 'Use of BGP for Routing in Large-Scale Data Centers'),
+    rfc(6996, 'Autonomous System (AS) Reservation for Private Use'),
+    rfc(8950, 'Advertising IPv4 Network Layer Reachability Information (NLRI) with an IPv6 Next Hop'),
+    rfc(5880, 'Bidirectional Forwarding Detection (BFD)'),
+    rfc(5881, 'Bidirectional Forwarding Detection (BFD) for IPv4 and IPv6 (Single Hop)'),
+    rfc(2992, 'Analysis of an Equal-Cost Multi-Path Algorithm'),
+    rfc(7348, 'Virtual eXtensible Local Area Network (VXLAN)'),
+  ],
   'courses/datacenter/physical': [
     ieee8023,
     ref('SNIA', 'SFF specifications (SFP, QSFP form factors and management)', 'https://www.snia.org/technology-communities/sff/specifications'),
@@ -175,6 +184,19 @@ export const references: Record<string, Reference[]> = {
     rfc(9135, 'Integrated Routing and Bridging in Ethernet VPN (EVPN)'),
     rfc(9136, 'IP Prefix Advertisement in Ethernet VPN (EVPN)'),
   ],
+  'courses/datacenter/multihoming': [
+    rfc(7432, 'BGP MPLS-Based Ethernet VPN'),
+    rfc(8365, 'A Network Virtualization Overlay Solution Using Ethernet VPN (EVPN)'),
+    rfc(8584, 'Framework for Ethernet VPN Designated Forwarder Election Extensibility'),
+    ieee8021,
+    ref('Arista', 'EOS User Manual · Configuring EVPN (DCI gateway, multi-domain)', 'https://www.arista.com/en/um-eos/eos-configuring-evpn'),
+  ],
+  'courses/datacenter/border-leaf': [
+    rfc(9136, 'IP Prefix Advertisement in Ethernet VPN (EVPN)'),
+    rfc(4364, 'BGP/MPLS IP Virtual Private Networks (VPNs)'),
+    rfc(9135, 'Integrated Routing and Bridging in Ethernet VPN (EVPN)'),
+    nist80041,
+  ],
 
   'courses/datacenter/pra-pca': [
     ref('EUR-Lex', 'Regulation (EU) 2022/2554 on digital operational resilience for the financial sector (DORA)', 'https://eur-lex.europa.eu/eli/reg/2022/2554/oj'),
@@ -206,6 +228,11 @@ export const references: Record<string, Reference[]> = {
     ref('UEC', 'Ultra Ethernet Consortium · Specification 1.1 announcement', 'https://ultraethernet.org/ultra-ethernet-consortium-releases-specification-1-1-advancing-ai-and-hpc-networking/'),
     ref('IEEE', 'IEEE 802.1 Data Center Bridging (802.1Qbb PFC, 802.1Qaz ETS)', 'https://1.ieee802.org/dcb/'),
     ref('Arista', 'EOS User Manual · DCBX and Flow Control', 'https://www.arista.com/en/um-eos/eos-dcbx-and-flow-control'),
+  ],
+  'courses/datacenter/fabric-operations': [
+    rfc(8326, 'Graceful BGP Session Shutdown'),
+    ref('Arista', 'ANTA · Arista Network Test Automation', 'https://anta.arista.com/'),
+    avdDocs,
   ],
 
   // Automatisation

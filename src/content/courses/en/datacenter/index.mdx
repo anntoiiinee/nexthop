@@ -1,9 +1,9 @@
 ---
 title: "The data center"
-description: "How modern data centers are built: VRFs, spine/leaf fabric and eBGP underlay, VXLAN, then BGP EVPN as the control plane, with anycast gateway and inter-VRF routing, then disaster recovery, data center interconnect, QoS, the storage network and networks for AI. Arista cEOS lab with two spines and three leaves."
+description: "How modern data centers are built: VRFs, spine/leaf fabric and eBGP underlay with BFD and ECMP, VXLAN, then BGP EVPN as the control plane, with anycast gateway, ESI-LAG multihoming and border leaves, then disaster recovery, data center interconnect, QoS, the storage network, networks for AI and fabric operations. Arista cEOS lab with two spines and three leaves."
 pubDate: 2026-10-17
 level: advanced
-tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, dci, qos, storage, ai]
+tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, bfd, multihoming, dci, qos, storage, ai, anta]
 vendor: [arista, cisco]
 order: 0
 ---
@@ -24,23 +24,28 @@ architecture that tools such as Arista AVD generate.
 |---|---|
 | **VRFs** | Run several routing tables on one device, handle overlapping addresses, let two VRFs talk in a controlled way |
 | **Spine/leaf architecture** | Explain why data centers left the three-tier model, size a fabric, build its eBGP underlay with ECMP |
+| **The underlay in depth** | Choose between eBGP, OSPF and IS-IS, build an AS plan, move to BGP unnumbered, detect a failure in under a second with BFD, understand ECMP hashing and elephant flows |
 | **Physical infrastructure** | Choose between top of rack, top of 3 racks and end of row, pick cables and optics, count a rack's ports, avoid airflow and fiber pitfalls |
 | **Cabling and connectors** | Tell multimode from single-mode, LC from MPO, read an optic's name, choose between DAC, AOC and fiber, break out a port, respect the optical budget |
 | **WDM multiplexing** | Carry several links over one fiber pair, choose between CWDM and DWDM, compute the budget of a link between two data centers |
 | **Switch buffers** | Understand incast and microbursts, choose between shallow and deep buffers, use ECN, DCTCP and PFC, spot output discards |
 | **VxLAN** | Carry a VLAN across a routed fabric, read a VXLAN packet, understand the limits of *flood and learn* |
 | **EVPN, the control plane** | Distribute MAC and IP addresses over BGP, configure the anycast gateway and symmetric routing between VLANs and leaves |
+| **EVPN multihoming** | Connect a server to two leaves without a peer-link (ESI-LAG), read type 1 and 4 routes, explain DF election, handle PXE installation with LACP fallback, choose between ESI-LAG and MLAG |
+| **The border leaf** | Connect the fabric to the WAN, the Internet and firewalls, advertise external routes as type 5, send inter-VRF traffic through a firewall |
 | **Disaster recovery and business continuity** | Set RTO and RPO with the business, choose a recovery strategy, prepare the recovery site's network and test the failover |
 | **Data center interconnect (DCI)** | Choose the link and the interconnect mode, weigh the risks of a stretched VLAN, deploy EVPN between sites with gateways |
 | **QoS in the data center** | Classify and mark traffic, configure queues, ECN and PFC, build a simple, consistent QoS plan |
 | **The storage network** | Tell FC, iSCSI and NVMe-oF apart, design two paths with multipathing, align MTU 9000 end to end |
 | **Networks for AI** | Understand a GPU cluster's traffic, size a rail-optimized fabric, configure a lossless RoCE network |
+| **Operating a fabric** | Drain a device and put it in maintenance, upgrade a fabric without downtime, validate its state with ANTA, know what to monitor |
 
 The chapters build on each other.
 
 ## The lab
 
-A complete fabric, in Arista cEOS: two spines, three leaves, four servers in three VLANs and two VRFs.
+A complete fabric, in Arista cEOS: two spines, three leaves, five servers in three VLANs and two VRFs, one of them
+connected to two leaves with ESI-LAG.
 
 <Topology
   width={720}
@@ -55,17 +60,19 @@ A complete fabric, in Arista cEOS: two spines, three leaves, four servers in thr
     { id: 'l1', type: 'l3switch', x: 130, y: 185, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
     { id: 'l2', type: 'l3switch', x: 360, y: 185, label: 'leaf2', sub: 'AS 65102', tone: 'emerald' },
     { id: 'l3', type: 'l3switch', x: 590, y: 185, label: 'leaf3', sub: 'AS 65103', tone: 'emerald' },
-    { id: 'h1', type: 'server', x: 130, y: 325, label: 'host1', sub: '10.10.10.11' },
-    { id: 'h2', type: 'server', x: 320, y: 325, label: 'host2', sub: '10.10.10.12' },
-    { id: 'h3', type: 'server', x: 450, y: 325, label: 'host3', sub: '10.10.20.13' },
+    { id: 'h1', type: 'server', x: 70, y: 325, label: 'host1', sub: '10.10.10.11' },
+    { id: 'h5', type: 'server', x: 245, y: 325, label: 'host5', sub: '10.10.10.15', tone: 'violet' },
+    { id: 'h2', type: 'server', x: 360, y: 325, label: 'host2', sub: '10.10.10.12' },
+    { id: 'h3', type: 'server', x: 470, y: 325, label: 'host3', sub: '10.10.20.13' },
     { id: 'h4', type: 'server', x: 620, y: 325, label: 'host4', sub: '10.10.10.11', tone: 'amber' },
   ]}
   links={[
     { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'l3' },
     { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'l3' },
     { from: 'l1', to: 'h1' }, { from: 'l2', to: 'h2' }, { from: 'l3', to: 'h3' }, { from: 'l3', to: 'h4' },
+    { from: 'l1', to: 'h5', tone: 'violet' }, { from: 'l2', to: 'h5', tone: 'violet' },
   ]}
-  caption="The dc-fabric lab. Each leaf connects to both spines. host4, in VRF DEV, has the same address as host1, in VRF PROD, with no conflict."
+  caption="The dc-fabric lab. Each leaf connects to both spines. host5 is connected to leaf1 and leaf2 with ESI-LAG, without a peer-link. host4, in VRF DEV, has the same address as host1, in VRF PROD, with no conflict."
 />
 
 ## Prerequisites

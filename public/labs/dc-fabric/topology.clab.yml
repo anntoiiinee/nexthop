@@ -5,6 +5,12 @@ name: dc-fabric
 #   VRF PROD : VLAN 10 (10.10.10.0/24, VNI 10010) et VLAN 20 (10.10.20.0/24, VNI 10020), L3 VNI 50001
 #   VRF DEV  : VLAN 30 (10.10.10.0/24, VNI 10030), L3 VNI 50002 : le même sous-réseau que le VLAN 10, isolé par la VRF
 # Chaque leaf porte la passerelle anycast (.1) de chaque VLAN.
+# host5 est double-attaché à leaf1 et leaf2 en EVPN multihoming (ESI-LAG, Port-Channel5), sans peer-link.
+# Réseau de management 172.20.40.0/24 : eAPI y est actif sur les switches, pour ANTA (dossier anta/).
+
+mgmt:
+  network: dc-fabric-mgmt
+  ipv4-subnet: 172.20.40.0/24
 
 topology:
   kinds:
@@ -13,22 +19,27 @@ topology:
   nodes:
     spine1:
       kind: arista_ceos
+      mgmt-ipv4: 172.20.40.11
       startup-config: configs/spine1.cfg
       labels: { graph-level: 1 }
     spine2:
       kind: arista_ceos
+      mgmt-ipv4: 172.20.40.12
       startup-config: configs/spine2.cfg
       labels: { graph-level: 1 }
     leaf1:
       kind: arista_ceos
+      mgmt-ipv4: 172.20.40.21
       startup-config: configs/leaf1.cfg
       labels: { graph-level: 2 }
     leaf2:
       kind: arista_ceos
+      mgmt-ipv4: 172.20.40.22
       startup-config: configs/leaf2.cfg
       labels: { graph-level: 2 }
     leaf3:
       kind: arista_ceos
+      mgmt-ipv4: 172.20.40.23
       startup-config: configs/leaf3.cfg
       labels: { graph-level: 2 }
     host1:
@@ -60,6 +71,21 @@ topology:
         # VRF DEV : même adresse que host1 (VRF PROD), sans conflit
         - ip addr add 10.10.10.11/24 dev eth1
         - ip route replace default via 10.10.10.1
+    host5:
+      kind: linux
+      # netshoot : iproute2 complet, nécessaire pour créer le bond LACP
+      image: nicolaka/netshoot:v0.13
+      labels: { graph-level: 3 }
+      exec:
+        # Un bond LACP sur eth1 (vers leaf1) et eth2 (vers leaf2) : le serveur croit parler à un seul switch
+        - ip link add bond0 type bond mode 802.3ad lacp_rate fast
+        - ip link set eth1 down
+        - ip link set eth2 down
+        - ip link set eth1 master bond0
+        - ip link set eth2 master bond0
+        - ip link set bond0 up
+        - ip addr add 10.10.10.15/24 dev bond0
+        - ip route replace default via 10.10.10.1
 
   links:
     - endpoints: ["spine1:eth1", "leaf1:eth1"]
@@ -72,3 +98,5 @@ topology:
     - endpoints: ["leaf2:eth3", "host2:eth1"]
     - endpoints: ["leaf3:eth3", "host3:eth1"]
     - endpoints: ["leaf3:eth4", "host4:eth1"]
+    - endpoints: ["leaf1:eth4", "host5:eth1"]
+    - endpoints: ["leaf2:eth4", "host5:eth2"]

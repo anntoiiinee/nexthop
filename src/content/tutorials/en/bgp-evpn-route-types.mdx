@@ -18,8 +18,8 @@ The examples follow the data center course's `dc-fabric` lab: two spines, three 
 
 | Device | AS | Loopback0 (BGP) | Loopback1 (VTEP) | Hosts |
 |---|---|---|---|---|
-| leaf1 | 65101 | `10.255.0.11` | `10.255.1.11` | host1 `10.10.10.11`, VLAN 10, VRF PROD |
-| leaf2 | 65102 | `10.255.0.12` | `10.255.1.12` | host2 `10.10.10.12`, VLAN 10, VRF PROD |
+| leaf1 | 65101 | `10.255.0.11` | `10.255.1.11` | host1 `10.10.10.11`, VLAN 10, VRF PROD; host5 `10.10.10.15` (with leaf2) |
+| leaf2 | 65102 | `10.255.0.12` | `10.255.1.12` | host2 `10.10.10.12`, VLAN 10, VRF PROD; host5 `10.10.10.15` (with leaf1) |
 | leaf3 | 65103 | `10.255.0.13` | `10.255.1.13` | host3 `10.10.20.13`, VLAN 20, VRF PROD; host4 `10.10.10.11`, VLAN 30, VRF DEV |
 
 | VLAN | VNI (layer 2) | VRF | VRF VNI (layer 3) |
@@ -75,7 +75,7 @@ learns a MAC address on a local port (`redistribute learned` in the VLAN configu
 
 | Field | What it contains | In the lab, for host1 |
 |---|---|---|
-| ESI | The Ethernet segment, if the machine is connected to two leaves; zero otherwise | `0` (no multihoming in the lab) |
+| ESI | The Ethernet segment, if the machine is connected to two leaves; zero otherwise | `0` (host1 is only connected to leaf1) |
 | MAC | The machine's MAC address | host1's MAC |
 | IP | The associated IP address, if the leaf learned it (through ARP); a route without IP exists too | `10.10.10.11` |
 | Label 1 | The VLAN's VNI | `10010` |
@@ -192,7 +192,8 @@ show bgp evpn route-type auto-discovery
 show bgp evpn route-type ethernet-segment
 ```
 
-The `dc-fabric` lab has no server connected to two leaves: these commands show nothing there. That is expected.
+In the `dc-fabric` lab, `host5` is connected to leaf1 and leaf2: these commands show its Ethernet segment's routes.
+The [EVPN multihoming](/en/courses/datacenter/multihoming) chapter explores them in detail.
 
 ## Types 6 to 8: multicast
 

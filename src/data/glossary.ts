@@ -32,6 +32,14 @@ export const glossary = {
       en: 'The reference symmetric encryption algorithm (a single 128- or 256-bit key both encrypts and decrypts). Very fast, it encrypts TLS, IPsec, SSH and Wi-Fi data.',
     },
   },
+  anta: {
+    term: 'ANTA',
+    expansion: 'Arista Network Test Automation',
+    definition: {
+      fr: "Outil open source qui exécute un catalogue de tests sur les équipements réseau (sessions BGP, interfaces, routes) et vérifie que leur état réel correspond à l'état attendu.",
+      en: 'Open-source tool that runs a catalog of tests against network devices (BGP sessions, interfaces, routes) and checks that their actual state matches the expected one.',
+    },
+  },
   api: {
     term: 'API',
     expansion: 'Application Programming Interface',
@@ -84,6 +92,14 @@ export const glossary = {
     definition: {
       fr: "Serveur d’accès unique (jump host) par lequel passent toutes les connexions d’administration : authentification forte, droits par personne et enregistrement des sessions.",
       en: 'Single access server (jump host) that every administrative connection goes through: strong authentication, per-person rights and session recording.',
+    },
+  },
+  bfd: {
+    term: 'BFD',
+    expansion: 'Bidirectional Forwarding Detection',
+    definition: {
+      fr: "Protocole très léger qui échange des paquets fréquents entre deux voisins pour détecter une panne de chemin en moins d'une seconde, et prévenir aussitôt BGP ou OSPF.",
+      en: 'Very lightweight protocol exchanging frequent packets between two neighbors to detect a path failure in under a second, and notify BGP or OSPF straight away.',
     },
   },
   bgp: {
@@ -204,6 +220,14 @@ export const glossary = {
     definition: {
       fr: "Deux bits de l'en-tête IP qu'un switch congestionné marque au lieu de jeter le paquet ; le destinataire prévient l'émetteur, qui ralentit avant toute perte.",
       en: "Two bits of the IP header that a congested switch marks instead of dropping the packet; the receiver tells the sender, which slows down before any loss.",
+    },
+  },
+  esi: {
+    term: 'ESI',
+    expansion: 'Ethernet Segment Identifier',
+    definition: {
+      fr: "Identifiant sur 10 octets d'un segment Ethernet en EVPN : l'ensemble des liens qui raccordent un même équipement à plusieurs leafs, configuré à l'identique sur chacun d'eux.",
+      en: 'A 10-byte identifier of an EVPN Ethernet segment: the set of links connecting one device to several leaves, configured identically on each of them.',
     },
   },
   esp: {

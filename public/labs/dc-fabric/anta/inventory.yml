@@ -1,0 +1,19 @@
+# Inventaire ANTA du lab dc-fabric (chapitre « Opérer une fabric »)
+# Les switches répondent en eAPI sur le réseau de management 172.20.40.0/24.
+anta_inventory:
+  hosts:
+    - name: spine1
+      host: 172.20.40.11
+      tags: ['spine']
+    - name: spine2
+      host: 172.20.40.12
+      tags: ['spine']
+    - name: leaf1
+      host: 172.20.40.21
+      tags: ['leaf']
+    - name: leaf2
+      host: 172.20.40.22
+      tags: ['leaf']
+    - name: leaf3
+      host: 172.20.40.23
+      tags: ['leaf']

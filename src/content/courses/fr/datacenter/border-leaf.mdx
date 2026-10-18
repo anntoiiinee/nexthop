@@ -1,0 +1,315 @@
+---
+title: "Le border leaf : sortir de la fabric"
+description: "Relier la fabric EVPN au reste du monde : le rôle du border leaf, la connexion au WAN, à Internet et aux firewalls, les routes externes annoncées en type 5, la fuite de routes entre VRF, le firewall en coupure entre VRF, et le pont avec les flux nord-sud des formations Sécurité et Proxy."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, evpn, border-leaf, vrf, firewall, bgp, north-south]
+vendor: [arista]
+order: 11
+---
+
+Jusqu'ici, tout le trafic de la fabric restait dans la fabric : un serveur parlait à un autre serveur, dans la même
+VRF, à travers les spines. Or un data center n'existe que pour servir quelqu'un : des utilisateurs sur le campus ou
+dans les agences, des clients sur Internet, un autre data center, un fournisseur de cloud. Tout ce trafic, le flux
+**nord-sud**, entre et sort par un endroit précis : le **border leaf**.
+
+Le chapitre [L'architecture spine/leaf](/formations/datacenter/spine-leaf) l'a cité parmi les leafs particuliers. Ce
+chapitre détaille ce qui s'y branche, ce qu'il annonce dans la fabric et au dehors, et comment il sert de point de
+passage obligé entre les VRF, à travers un firewall.
+
+## Un leaf comme les autres, ou presque
+
+Un border leaf est un leaf : relié à tous les spines, VTEP, membre de l'overlay EVPN, avec les mêmes VRF que les
+autres. La différence est sur ses ports « du bas » : au lieu de serveurs, on y trouve des **routeurs** et des
+**firewalls**.
+
+<Topology
+  width={720}
+  height={430}
+  groups={[
+    { x: 20, y: 20, w: 680, h: 230, label: 'Fabric EVPN-VXLAN', tone: 'sky' },
+    { x: 20, y: 300, w: 680, h: 115, label: 'Hors fabric', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 250, y: 70, label: 'spine1' },
+    { id: 's2', type: 'l3switch', x: 470, y: 70, label: 'spine2' },
+    { id: 'l1', type: 'l3switch', x: 90, y: 190, label: 'leaf1', sub: 'serveurs', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 250, y: 190, label: 'leaf2', sub: 'serveurs', tone: 'emerald' },
+    { id: 'b1', type: 'l3switch', x: 470, y: 190, label: 'border1', tone: 'violet' },
+    { id: 'b2', type: 'l3switch', x: 630, y: 190, label: 'border2', tone: 'violet' },
+    { id: 'fw', type: 'firewall', x: 400, y: 355, label: 'firewall', sub: 'cluster' },
+    { id: 'wan', type: 'router', x: 550, y: 355, label: 'WAN', sub: 'MPLS, SD-WAN' },
+    { id: 'inet', type: 'cloud', x: 670, y: 355, label: 'Internet' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'b1' }, { from: 's1', to: 'b2' },
+    { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'b1' }, { from: 's2', to: 'b2' },
+    { from: 'b1', to: 'fw', tone: 'violet' }, { from: 'b2', to: 'fw', tone: 'violet' },
+    { from: 'b1', to: 'wan', tone: 'violet' }, { from: 'b2', to: 'wan', tone: 'violet' },
+    { from: 'b2', to: 'inet', tone: 'violet', style: 'dashed' },
+  ]}
+  caption="Une paire de border leafs, câblés comme tous les leafs vers les spines, et vers le bas aux firewalls, au WAN et (souvent derrière un firewall de périmètre) à Internet."
+/>
+
+Quelques règles de conception :
+
+- **toujours par paire**, raccordés aux équipements externes en ESI-LAG ou en MLAG (voir
+  [EVPN multihoming](/formations/datacenter/multihoming)), ou par des liens routés vers chacun ;
+- **pas sur les spines** : un spine qui fait border mélange deux rôles, et chaque changement côté WAN touche le
+  cœur de la fabric. Dans une petite fabric, des *border spines* restent une option, mais elle se paie à chaque
+  évolution ;
+- **pas de serveurs** sur les border leafs, sauf exception : leur mise à jour ou leur panne ne doit couper que le
+  nord-sud. Les équipements partagés (firewalls internes, load balancers) vont plutôt sur des **service leafs**, qui
+  sont souvent les mêmes switches.
+
+## Ce qui se branche sur un border leaf
+
+| Voisin | Protocole habituel | Ce qu'on échange |
+|---|---|---|
+| **Routeurs WAN** (MPLS, SD-WAN, cœur de campus) | eBGP, une session **par VRF** (sous-interfaces ou VLAN) | Les préfixes des agences vers la fabric ; les sous-réseaux du data center vers le WAN |
+| **Firewall de périmètre** (vers Internet) | eBGP ou routes statiques | Une route par défaut vers la fabric ; les préfixes publiés (DMZ) vers le firewall |
+| **Firewall interne** (entre VRF) | eBGP par VRF, ou statique | Voir plus bas : il devient le routeur entre les VRF |
+| **Autre data center** | EVPN entre gateways, ou niveau 3 simple | Voir [Interconnecter deux data centers](/formations/datacenter/dci) |
+| **Cloud** (Direct Connect, ExpressRoute) | eBGP | Les préfixes du VPC ou du VNet ; voir la formation [Le réseau dans le cloud](/formations/cloud) |
+
+Côté externe, chaque VRF de la fabric est prolongée par une **VRF-lite** : une sous-interface (ou un VLAN) et une
+session BGP par VRF, sur le même câble. Le routeur WAN garde ainsi la séparation entre PROD et DEV jusqu'aux agences,
+s'il le faut.
+
+```text title="Arista EOS : sortie de la VRF PROD vers le routeur WAN"
+interface Ethernet5
+   description WAN-RTR1
+   mtu 9214
+   no switchport
+!
+interface Ethernet5.101
+   description WAN-RTR1 VRF PROD
+   encapsulation dot1q vlan 101
+   vrf PROD
+   ip address 10.99.1.0/31
+!
+router bgp 65110
+   vrf PROD
+      rd 10.255.0.31:50001
+      route-target import evpn 50001:50001
+      route-target export evpn 50001:50001
+      router-id 10.255.0.31
+      neighbor 10.99.1.1 remote-as 65500
+      neighbor 10.99.1.1 description WAN-RTR1
+      neighbor 10.99.1.1 route-map PROD-TO-WAN out
+      aggregate-address 10.10.0.0/16 summary-only
+      address-family ipv4
+         neighbor 10.99.1.1 activate
+```
+
+## Les routes externes en type 5
+
+Le border leaf apprend du WAN, dans la VRF PROD, les préfixes des agences et souvent une route par défaut. Il les
+exporte dans la fabric sous forme de routes EVPN de **type 5** (*IP Prefix*), avec le RT de la VRF et son propre VTEP
+comme prochain saut. Sur Arista, les routes apprises en BGP dans une VRF sont exportées en EVPN sans configuration
+supplémentaire ; les routes statiques ou connectées demandent un `redistribute`.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'wan', label: 'routeur WAN', sub: 'AS 65500' },
+    { id: 'b1', label: 'border1', sub: 'VTEP 10.255.1.31', tone: 'violet' },
+    { id: 'l1', label: 'leaf1', sub: 'VRF PROD', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'wan', to: 'b1', label: 'eBGP, VRF PROD', sub: '0.0.0.0/0, 172.16.0.0/12', tone: 'sky' },
+    { from: 'b1', to: 'l1', label: 'EVPN type 5', sub: 'RT 50001:50001, prochain saut 10.255.1.31', tone: 'violet' },
+    { note: 'leaf1 installe la route par défaut dans PROD, via le VTEP de border1, L3 VNI 50001', tone: 'emerald' },
+    { from: 'b1', to: 'wan', label: 'eBGP, VRF PROD', sub: '10.10.0.0/16 (agrégat)', tone: 'sky' },
+  ]}
+  caption="Dans un sens, les routes du WAN deviennent des routes de type 5 dans la fabric. Dans l'autre, la fabric n'annonce au WAN qu'un agrégat de ses sous-réseaux."
+/>
+
+Deux disciplines évitent bien des ennuis :
+
+- **vers la fabric, peu de routes** : une route par défaut et, si nécessaire, quelques agrégats. Les leafs n'ont pas
+  besoin de connaître les dix mille préfixes du WAN, et leur table matérielle n'est pas extensible ;
+- **vers l'extérieur, des agrégats, jamais les /32** : la fabric connaît chaque serveur par une route `/32` (les
+  routes de type 2 avec adresse IP). Annoncer ces routes au WAN, c'est inonder les agences de milliers de routes qui
+  bougent à chaque migration de machine virtuelle. On annonce `10.10.0.0/16`, et une route-map filtre le reste.
+
+<Callout type="warning">
+Une route par défaut reçue de **deux** border leafs (ou de deux sites) est installée en ECMP par chaque leaf : la
+moitié du trafic sort par chacun. C'est souhaitable vers deux routeurs WAN équivalents, mais un piège devant deux
+firewalls à état qui ne partagent pas leurs sessions : l'aller passe par l'un, le retour par l'autre, et la connexion
+est coupée. Préférer explicitement un chemin (AS-path, préférence locale) ou s'assurer que les firewalls forment un
+seul cluster.
+</Callout>
+
+## La fuite de routes entre VRF
+
+Les VRF sont étanches : c'est leur raison d'être. Mais il y a toujours des exceptions : un VLAN de services partagés
+(DNS, NTP, annuaire, supervision) que toutes les VRF doivent joindre, ou une application de PROD qui doit lire une
+base de DEV pendant une migration.
+
+La méthode la plus directe est la **fuite de routes** (*route leaking*) : une VRF **importe** les routes d'une autre en
+ajoutant le RT de celle-ci à sa liste d'import, exactement comme au chapitre [Les VRF](/formations/datacenter/vrf).
+
+```text title="Arista EOS : la VRF PROD importe les routes de la VRF SHARED"
+router bgp 65101
+   vrf PROD
+      route-target import evpn 50001:50001
+      route-target import evpn 50099:50099
+```
+
+C'est simple et rapide (le trafic reste routé par les leafs, à pleine vitesse), mais avec trois limites :
+
+- **pas de contrôle** : tout ce qui est routé passe, sans inspection ni journal ;
+- **pas d'adresses qui se recouvrent** : si PROD et DEV utilisent toutes deux `10.10.10.0/24`, comme dans le lab,
+  importer l'une dans l'autre crée un conflit ;
+- **la symétrie** : l'autre VRF doit aussi importer les routes de retour, sinon le paquet arrive et la réponse ne
+  revient jamais.
+
+La fuite de routes convient donc aux services partagés de confiance. Pour tout le reste, on fait passer le trafic
+entre VRF par un **firewall**.
+
+## Le firewall en coupure entre VRF
+
+Le modèle le plus répandu en entreprise : **aucune** VRF n'importe les routes d'une autre. Chaque VRF a une session
+(eBGP ou statique) entre le border leaf et le firewall, sur une sous-interface dédiée. Dans chaque VRF, la route par
+défaut pointe vers le firewall. Le firewall, lui, voit chaque VRF comme une **zone** et applique sa politique entre
+elles.
+
+<Topology
+  width={700}
+  height={410}
+  groups={[
+    { x: 30, y: 265, w: 290, h: 130, label: 'VRF PROD', tone: 'sky' },
+    { x: 380, y: 265, w: 290, h: 130, label: 'VRF DEV', tone: 'amber' },
+  ]}
+  nodes={[
+    { id: 'fw', type: 'firewall', x: 350, y: 45, label: 'firewall', sub: 'zones PROD et DEV' },
+    { id: 'b1', type: 'l3switch', x: 350, y: 200, label: 'border1', sub: 'Et5.101 · Et5.102', tone: 'violet' },
+    { id: 'h1', type: 'server', x: 175, y: 335, label: 'app PROD', sub: '10.10.20.13' },
+    { id: 'h4', type: 'server', x: 525, y: 335, label: 'base DEV', sub: '10.30.10.20' },
+  ]}
+  links={[
+    { from: 'b1', to: 'fw', label: 'trunk : 101, 102', style: 'trunk', tone: 'violet' },
+    { from: 'b1', to: 'h1', style: 'dashed' }, { from: 'b1', to: 'h4', style: 'dashed' },
+  ]}
+  flows={[
+    { from: 'h1', to: 'b1', label: 'défaut → firewall', tone: 'sky', offset: 22 },
+    { from: 'b1', to: 'h4', tone: 'amber', offset: -22 },
+  ]}
+  caption="Le trafic de PROD vers DEV suit la route par défaut de PROD jusqu'au firewall, qui l'inspecte et le renvoie dans la VRF DEV par une autre sous-interface. Les liens en pointillés traversent la fabric."
+/>
+
+Avantages : une seule politique, au même endroit, journalisée ; des VRF qui peuvent se recouvrir si le firewall fait
+du NAT entre elles ; et une séparation qui ne dépend pas d'une ligne de RT oubliée. Contreparties : le trafic entre
+VRF fait un **détour** par le border leaf, et la capacité du firewall devient celle de tout le trafic inter-VRF. C'est
+pourquoi on choisit les frontières avec soin : séparer PROD et DEV, oui ; séparer chaque application dans sa VRF,
+rarement.
+
+<Callout type="note">
+Le routage **à l'intérieur** d'une VRF reste distribué sur chaque leaf, par la passerelle anycast : deux serveurs de
+PROD dans deux VLAN ne passent jamais par le firewall. Seul le trafic **entre** VRF, et le nord-sud, y passe. Le
+chapitre [Flux nord-sud et est-ouest](/formations/security/traffic-flows) de la formation Sécurité discute ce
+compromis, et ce qu'on fait quand l'est-ouest doit lui aussi être inspecté.
+</Callout>
+
+## Le nord-sud, de bout en bout
+
+En sortie vers Internet, le chemin complet d'une requête d'un serveur de la fabric ressemble à ceci :
+
+1. le serveur envoie le paquet à sa passerelle anycast, sur son leaf ;
+2. le leaf suit la route par défaut de la VRF, apprise en type 5 depuis le border leaf ;
+3. le border leaf la remet au **firewall** (interne, puis de périmètre, ou un seul firewall à plusieurs zones) ;
+4. pour le web, le flux passe souvent par un **proxy sortant**, qui filtre et journalise les URL ;
+5. le routeur Internet fait la traduction d'adresses et envoie le paquet chez l'opérateur.
+
+En entrée, c'est le chemin inverse, avec une **DMZ** : une VRF dédiée aux services publiés, derrière un **reverse
+proxy** ou un load balancer, et souvent un **WAF**. Chacune de ces briques a son chapitre :
+
+- [Les bases d'un firewall](/formations/security/ngfw-basics) et [Segmentation](/formations/security/segmentation) pour
+  les zones et la politique du firewall ;
+- [Le proxy sortant](/formations/proxy/forward-proxy) pour le web sortant ;
+- [Le reverse proxy](/formations/proxy/reverse-proxy), [Load balancing](/formations/proxy/load-balancing)
+  et [WAF et protection applicative](/formations/proxy/waf) pour les services publiés.
+
+Le border leaf n'est que le point où la fabric leur remet le trafic. Mais c'est là que se décident les routes, la
+symétrie et le passage obligé par le firewall : une erreur à cet endroit contourne toute la sécurité qu'on a
+construite derrière.
+
+## Dans le lab
+
+Le lab n'a pas de routeur externe, mais on peut jouer le rôle d'un border leaf avec leaf3 : il va annoncer une route
+par défaut dans la VRF PROD, comme s'il l'avait apprise du WAN.
+
+<Lab name="dc-fabric" lang="fr" />
+
+**1. Avant.** Sur leaf1, la VRF PROD n'a pas de route par défaut :
+
+```bash
+docker exec -it clab-dc-fabric-leaf1 Cli
+```
+
+```text
+show ip route vrf PROD 0.0.0.0/0
+```
+
+**2. leaf3 devient border leaf.** Sur leaf3, une route statique par défaut dans la VRF PROD (vers `Null0`, faute de
+vrai routeur), redistribuée en EVPN :
+
+```text
+configure
+ip route vrf PROD 0.0.0.0/0 Null0
+router bgp 65103
+   vrf PROD
+      redistribute static
+```
+
+**3. La route de type 5.** De retour sur leaf1 :
+
+```text
+show bgp evpn route-type ip-prefix ipv4
+show ip route vrf PROD 0.0.0.0/0
+```
+
+La route par défaut `0.0.0.0/0` arrive en type 5, deux fois (une par spine), avec le RT `50001:50001` et leaf3 comme prochain
+saut. Dans la table de PROD, elle pointe vers le VTEP `10.255.1.13`, par le L3 VNI 50001 : tout le trafic de PROD vers
+une destination inconnue partirait vers leaf3, comme vers un vrai border leaf.
+
+**4. L'isolation tient.** Sur leaf1, `show ip route vrf DEV 0.0.0.0/0` : rien. La route n'a été exportée qu'avec le RT de
+PROD ; la VRF DEV ne l'importe pas. Pour qu'elle en profite, il faudrait soit une fuite de routes (impossible ici sans
+conflit, puisque PROD et DEV partagent `10.10.10.0/24`), soit une seconde session vers un firewall, dans DEV.
+
+**5. Nettoyage.** Sur leaf3 :
+
+```text
+configure
+no ip route vrf PROD 0.0.0.0/0 Null0
+router bgp 65103
+   vrf PROD
+      no redistribute static
+```
+
+## À vous de jouer
+
+1. Pourquoi évite-t-on de faire jouer le rôle de border aux spines ?
+2. Comment une route par défaut apprise du WAN par un border leaf arrive-t-elle sur un leaf serveur ? Sous quelle
+   forme, avec quel prochain saut ?
+3. Pourquoi ne faut-il jamais annoncer au WAN les routes `/32` des serveurs ?
+4. Quelles sont les trois limites de la fuite de routes entre VRF ?
+5. Dans le modèle du firewall en coupure, quel chemin suit un paquet de PROD vers DEV ? Et un paquet entre deux VLAN
+   de PROD ?
+
+## À retenir
+
+- Le **border leaf** est un leaf comme les autres, raccordé au WAN, à Internet, aux firewalls et aux autres sites ;
+  toujours **par paire**, sans serveurs, et pas sur les spines.
+- Chaque VRF sort par une **VRF-lite** : une sous-interface et une session eBGP par VRF.
+- Les routes externes entrent dans la fabric en **type 5**, avec le border leaf comme prochain saut. Vers la fabric :
+  une route par défaut et des agrégats. Vers l'extérieur : des **agrégats**, jamais les `/32`.
+- La **fuite de routes** (import d'un RT) est simple mais sans contrôle, sans recouvrement d'adresses, et doit être
+  symétrique : elle convient aux services partagés.
+- Le **firewall en coupure** entre VRF centralise la politique : chaque VRF a sa route par défaut vers lui. Le
+  routage intra-VRF reste distribué sur les leafs.
+- Le border leaf est le point de départ du **nord-sud** : firewall, proxy, DMZ, reverse proxy et WAF sont détaillés
+  dans les formations Sécurité et Proxy.
+
+Prochain chapitre : **PRA et PCA**, ou comment survivre à la perte d'un data center entier.

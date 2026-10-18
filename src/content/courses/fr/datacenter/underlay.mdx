@@ -1,0 +1,415 @@
+---
+title: "L'underlay en détail : eBGP, ECMP et BFD"
+description: "Construire l'underlay d'une fabric : eBGP, OSPF ou IS-IS, le plan de numérotation des AS, BGP unnumbered sur les adresses IPv6 link-local, BFD pour détecter une panne en moins d'une seconde, l'ECMP, son hachage et les flux éléphants, avec une mesure de convergence dans le lab."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, underlay, bgp, ebgp, ecmp, bfd, spine-leaf]
+vendor: [arista]
+order: 3
+---
+
+Le chapitre [L'architecture spine/leaf](/formations/datacenter/spine-leaf) a posé l'**underlay** en quelques
+lignes : des liens routés en `/31`, une session eBGP par lien, un AS pour les spines, un AS par leaf, et
+`maximum-paths` pour l'ECMP. Ça fonctionne, et c'est ce que fait le lab. Mais derrière chacun de ces choix, il y a
+une question qu'on vous posera le jour où vous concevrez une vraie fabric : pourquoi BGP et pas OSPF ? Comment
+numéroter les AS quand on passe de trois leafs à soixante ? Faut-il vraiment un plan d'adressage pour chaque lien ?
+Et surtout : **combien de temps** le trafic est-il perdu quand un lien tombe ?
+
+L'underlay n'a qu'un seul travail : que chaque VTEP joigne chaque autre VTEP, par tous les chemins à la fois, et
+qu'il cesse d'utiliser un chemin mort **le plus vite possible**. Tout ce qui suit sert ce travail.
+
+## eBGP, OSPF ou IS-IS
+
+Les trois conviennent. Le choix dépend de la taille de la fabric, de l'équipe et de ce qu'on fait par-dessus.
+
+| | OSPF | IS-IS | eBGP (RFC 7938) |
+|---|---|---|---|
+| **Principe** | État de liens : chaque routeur connaît toute la topologie | État de liens, comme OSPF | Vecteur de chemins : chaque routeur ne connaît que ce que ses voisins lui annoncent |
+| **Domaine de panne** | Une aire : un lien qui bat déclenche un recalcul partout | Un niveau, idem | La session concernée ; le reste ne voit qu'un retrait de routes |
+| **Échelle** | Quelques centaines de routeurs par aire | Plus confortable qu'OSPF | Des milliers (les plus grands data centers) |
+| **Politiques** | Limitées (coûts, filtres aux frontières d'aire) | Limitées | Très fines : route-maps, communautés, AS-path |
+| **Overlay EVPN** | Il faut **en plus** iBGP pour EVPN : deux protocoles | Idem | Le **même** protocole porte l'underlay et EVPN |
+| **Pour qui** | Petites fabrics, équipes qui connaissent OSPF | Opérateurs, grandes fabrics à état de liens | La norme des fabrics EVPN modernes, celle que génère AVD |
+
+Pourquoi eBGP l'emporte dans les grandes fabrics ? Parce qu'un protocole à état de liens **inonde** chaque
+changement à tout le domaine : avec deux cents leafs, un lien qui bat (*flapping*) fait recalculer deux cents
+switches. Avec eBGP, chaque switch ne connaît que ce que ses voisins lui disent, et un retrait de route s'arrête là
+où il n'a plus d'effet. Et puisqu'EVPN est de toute façon une famille d'adresses BGP, garder un seul protocole
+simplifie l'exploitation : une seule syntaxe, une seule supervision, un seul jeu de commandes de dépannage.
+
+<Callout type="field">
+OSPF n'est pas une faute. Une fabric de quatre à huit leafs, exploitée par une équipe qui connaît OSPF par cœur,
+fonctionne très bien avec un underlay OSPF en aire 0 et iBGP pour EVPN, spines en *route reflectors*. Ce qui est une
+faute, c'est de choisir eBGP pour faire moderne sans comprendre le plan d'AS, ou OSPF par habitude dans une fabric
+qui doit grandir jusqu'à cent leafs.
+</Callout>
+
+## Le plan de numérotation des AS
+
+Dans le lab : `65000` pour les deux spines, `65101` à `65103` pour les leafs. Ce n'est pas un hasard, et il faut
+comprendre pourquoi avant de l'étendre.
+
+### Les spines partagent un AS
+
+Si chaque spine avait son AS, une route pourrait voyager de leaf1 à spine1, redescendre sur leaf2, remonter vers
+spine2 et revenir : BGP finirait par l'écarter, mais après avoir exploré des chemins absurdes. Quand une route
+disparaît, ce comportement, qu'on appelle la **chasse aux chemins** (*path hunting*), retarde la convergence de
+plusieurs secondes, le temps que chaque switch essaie une à une les alternatives qui lui restent.
+
+Avec **un seul AS pour tous les spines**, la règle de base d'eBGP fait le ménage : un routeur rejette toute route
+qui contient déjà son propre AS. Une route passée par spine1 (`65000`) et renvoyée vers spine2 (`65000` aussi) est
+refusée d'office. Un leaf ne sert jamais de transit entre deux spines.
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: 'AS 65000' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', sub: 'AS 65102', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', tone: 'violet' }, { from: 's2', to: 'l1' },
+    { from: 's1', to: 'l2', tone: 'violet' }, { from: 's2', to: 'l2', tone: 'rose', style: 'dashed' },
+  ]}
+  notes={[
+    { x: 350, y: 272, text: 'spine2 reçoit « 65102 65000 65101 » de leaf2 : 65000 y figure déjà, route rejetée', tone: 'rose' },
+  ]}
+  caption="La route de leaf1 arrive à leaf2 par spine1 (en violet). leaf2 la relaie à spine2, qui la refuse : son propre AS est dans le chemin. Pas de transit par un leaf, pas de chasse aux chemins."
+/>
+
+### Un AS par leaf, ou par paire de leafs
+
+Chaque leaf a son AS, ce qui rend le chemin d'AS lisible : `65000 65102` se lit « via un spine, depuis leaf2 ».
+Deux exceptions courantes :
+
+- une **paire de leafs en MLAG** partage le même AS : vue du reste de la fabric, c'est une seule entité ;
+- certains réseaux donnent **le même AS à tous les leafs** pour simplifier les modèles. Il faut alors autoriser un
+  leaf à accepter des routes qui contiennent son propre AS (`allowas-in`), ce qui désactive justement la protection
+  ci-dessus. C'est possible, mais c'est un choix à faire en connaissance de cause.
+
+### Prévoir la taille
+
+Les AS privés sur 2 octets vont de `64512` à `65534` : environ mille valeurs. C'est assez pour une fabric, pas
+forcément pour un groupe de data centers où chaque site a ses spines, ses leafs et ses border leafs. Les AS privés
+sur **4 octets** (`4200000000` à `4294967294`, RFC 6996) en offrent 95 millions, et permettent d'encoder un plan :
+
+| Rôle | AS sur 2 octets (une fabric) | AS sur 4 octets (plusieurs sites) |
+|---|---|---|
+| Spines du site 1 | `65000` | `4200100000` |
+| Leaf (ou paire MLAG) n° 07 du site 1 | `65107` | `4200100107` |
+| Spines du site 2 | `65200` | `4200200000` |
+| Super-spines (fabric à trois étages) | `64900` | `4200000000` |
+
+L'important n'est pas la formule, c'est qu'elle soit **écrite** et **appliquée par l'outil** (une source de vérité
+comme NetBox, puis AVD), pas inventée à la main au fil des ajouts. Le chapitre
+[Conventions de nommage et IPAM](/formations/automation/naming-ipam) applique la même idée aux noms et aux adresses.
+
+## BGP unnumbered
+
+Chaque lien spine-leaf du lab a son sous-réseau en `/31` : `10.0.1.0/31`, `10.0.1.2/31`… Avec quatre spines et
+quarante leafs, cela fait 160 sous-réseaux à attribuer, à documenter et à configurer des deux côtés, sans erreur. Et
+chaque session BGP désigne son voisin par une adresse qu'il faut connaître.
+
+**BGP unnumbered** supprime tout cela. Le principe :
+
+1. chaque interface de la fabric active **IPv6**, ce qui lui donne automatiquement une adresse **link-local**
+   (`fe80::…`), sans configuration ;
+2. les deux switches se découvrent par les annonces de routeur IPv6 (*Router Advertisements*) et ouvrent leur
+   session BGP **sur l'interface**, vers l'adresse link-local du voisin ;
+3. les routes **IPv4** (les loopbacks, les VTEP) sont annoncées avec un **prochain saut IPv6** : c'est ce que permet
+   la RFC 8950 (qui remplace la RFC 5549, nom sous lequel on la cite encore souvent).
+
+Plus aucune adresse IPv4 sur les liens : on configure « une session BGP sur Ethernet1 », pas « une session vers
+10.0.1.0 ». Le câblage peut changer, la configuration ne bouge pas.
+
+```text title="Arista EOS : underlay unnumbered d'un leaf"
+ip routing ipv6 interfaces
+!
+interface Ethernet1
+   description spine1
+   mtu 9214
+   no switchport
+   ipv6 enable
+!
+interface Ethernet2
+   description spine2
+   mtu 9214
+   no switchport
+   ipv6 enable
+!
+router bgp 65101
+   router-id 10.255.0.11
+   maximum-paths 4 ecmp 4
+   neighbor SPINES peer group
+   neighbor interface Ethernet1-2 peer-group SPINES remote-as 65000
+   address-family ipv4
+      neighbor SPINES activate
+      neighbor SPINES next-hop address-family ipv6 originate
+      network 10.255.0.11/32
+      network 10.255.1.11/32
+```
+
+`ip routing ipv6 interfaces` permet de router de l'IPv4 vers des prochains sauts IPv6 sans adresse IPv4 sur
+l'interface, et `next-hop address-family ipv6 originate` annonce les routes IPv4 avec l'adresse link-local comme
+prochain saut. Sous FRR (et donc sous SONiC ou Cumulus Linux), c'est encore plus court :
+`neighbor swp1 interface remote-as external`.
+
+<Callout type="note">
+Le *router-id* et l'adresse source des sessions EVPN restent des loopbacks IPv4 : seul l'adressage des liens
+disparaît. Contrepartie : un `traceroute` à travers la fabric montre des sauts sans adresse IPv4 propre (souvent
+celle de la loopback), et certains outils de supervision s'attendent encore à trouver une adresse par lien. AVD sait
+générer les deux variantes (`underlay_rfc5549: true`).
+</Callout>
+
+## BFD : détecter une panne en moins d'une seconde
+
+Combien de temps faut-il à BGP pour s'apercevoir qu'un voisin est mort ? Ça dépend de la panne.
+
+- **Panne franche** : le câble est débranché, l'optique meurt, le switch d'en face s'éteint. L'interface passe
+  *down* des deux côtés, le prochain saut disparaît de la table de routage, et les routes qui passaient par lui sont
+  retirées **immédiatement**. BGP n'a rien à détecter.
+- **Panne silencieuse** : l'interface reste *up*, mais plus rien ne passe. Une fibre coupée dans un seul sens, un
+  équipement de transport (un multiplexeur WDM, un convertisseur de média) entre les deux switches, un switch dont le
+  plan de contrôle est figé. Là, BGP ne s'aperçoit de rien jusqu'à l'expiration de son **hold timer** : **180
+  secondes** par défaut sur Arista (90 secondes ailleurs, avec des keepalives à 30). Pendant tout ce temps, une
+  partie du trafic part dans un trou noir.
+
+On peut réduire les timers BGP (`timers 3 9` : keepalive toutes les 3 secondes, voisin déclaré mort après 9), mais
+BGP tourne sur le processeur, et des keepalives trop fréquents chargent le plan de contrôle. La bonne réponse est
+<Term id="bfd" /> (*Bidirectional Forwarding Detection*, RFC 5880 et 5881) : un protocole minuscule, dont le seul
+rôle est d'échanger des paquets très fréquents entre deux voisins. Quand plusieurs paquets consécutifs manquent, BFD
+prévient BGP, qui ferme la session et retire les routes aussitôt.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'l1', label: 'leaf1', sub: 'BGP + BFD', tone: 'emerald' },
+    { id: 's1', label: 'spine1', sub: 'BGP + BFD' },
+  ]}
+  messages={[
+    { from: 'l1', to: 's1', label: 'BFD, toutes les 300 ms', tone: 'sky' },
+    { from: 's1', to: 'l1', label: 'BFD, toutes les 300 ms', tone: 'sky' },
+    { note: 'panne silencieuse : le lien reste up, plus rien ne passe', tone: 'rose' },
+    { note: '3 paquets manqués (900 ms) : BFD déclare le voisin mort et prévient BGP', tone: 'amber' },
+    { note: 'BGP ferme la session et retire les routes : le trafic passe par spine2', tone: 'violet' },
+  ]}
+  caption="Avec BFD à 300 ms et un multiplicateur de 3, une panne silencieuse est détectée en moins d'une seconde, au lieu de jusqu'à 180 secondes avec le seul hold timer de BGP."
+/>
+
+BFD se configure avec trois valeurs, négociées entre les deux voisins : l'intervalle d'émission, l'intervalle de
+réception minimal, et le **multiplicateur** (le nombre de paquets manqués avant de déclarer le voisin mort). Les
+valeurs par défaut d'Arista, 300 ms et 3, donnent une détection en 900 ms. Sur du matériel où BFD est traité par le
+circuit du switch plutôt que par le processeur, on descend à 50 ms ou 100 ms.
+
+```text title="Arista EOS : BFD sur les sessions de l'underlay"
+interface Ethernet1
+   bfd interval 300 min-rx 300 multiplier 3
+!
+router bgp 65101
+   neighbor UNDERLAY bfd
+```
+
+BFD s'active **des deux côtés** : sur les leafs et sur les spines. `show bfd peers` liste les sessions BFD et leur
+état.
+
+<Callout type="warning">
+Ne descendez pas les timers BFD plus bas que ce que l'équipement tient. Un switch dont le processeur est chargé (une
+mise à jour, un pic de routes) peut manquer quelques paquets BFD : la session tombe alors qu'il n'y a aucune panne,
+BGP retire les routes, puis tout revient, et le trafic subit deux convergences pour rien. Dans un lab virtuel comme
+le nôtre, restez à 300 ms. Sur les sessions EVPN entre loopbacks, qui traversent plusieurs sauts, BFD est rarement
+utile : si l'underlay converge vite, l'overlay suit, puisque les VTEP restent joignables par l'autre spine.
+</Callout>
+
+## L'ECMP et le hachage
+
+Entre deux leafs, il y a autant de chemins que de spines. L'<Term id="ecmp" /> les installe tous dans la table de
+routage. Reste à décider, paquet par paquet, lequel prendre.
+
+### Par flux, jamais par paquet
+
+Envoyer chaque paquet sur le chemin suivant, à tour de rôle, équilibrerait parfaitement la charge, mais les paquets
+d'une même connexion arriveraient dans le désordre (les chemins n'ont jamais exactement la même latence) et TCP
+prendrait ce désordre pour des pertes. Le switch calcule donc un **hachage** sur les champs qui identifient un flux,
+le plus souvent les **cinq** (*5-tuple*) : adresses IP source et destination, protocole, ports source et
+destination. Le résultat désigne un chemin. Tous les paquets d'un même flux prennent le même chemin et arrivent dans
+l'ordre ; des flux différents se répartissent sur tous les chemins.
+
+### Et dans une fabric VXLAN ?
+
+Entre deux VTEP, tout le trafic encapsulé a les mêmes adresses IP externes (les deux VTEP) et le même port de
+destination (4789). Si l'on ne hachait que l'en-tête externe, tout le trafic entre deux leafs prendrait un seul
+spine. La solution est dans la norme VXLAN (RFC 7348) : le VTEP d'entrée choisit le **port UDP source** à partir
+d'un hachage de la trame **intérieure**. Chaque flux des serveurs donne un port source différent, et les spines, qui
+ne voient que l'en-tête externe, répartissent correctement.
+
+### La polarisation
+
+Si tous les switches utilisent la même fonction de hachage avec les mêmes paramètres, un flux envoyé vers spine1 par
+le premier switch est toujours dans la même « moitié » au switch suivant : certains chemins ne reçoivent jamais
+rien. C'est la **polarisation**. Les constructeurs l'évitent en mélangeant au calcul une graine propre à chaque
+équipement ; elle est active par défaut sur les switches de data center, mais c'est un point à vérifier dans les
+fabrics à trois étages.
+
+## Les flux éléphants
+
+L'ECMP répartit des **flux**, pas des **octets**. Tant que le trafic est fait de milliers de petits flux (des
+requêtes web, des appels d'API, les « souris »), la loi des grands nombres équilibre la charge. Mais un data center a
+aussi ses **éléphants** : une sauvegarde, une réplication de base de données, une migration de machine virtuelle, une
+synchronisation entre GPU. Un seul flux, plusieurs dizaines de gigabits par seconde, pendant des minutes.
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: '100 Gb/s saturé', tone: 'rose' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: '100 Gb/s presque vide' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', tone: 'rose' }, { from: 's2', to: 'l1' },
+    { from: 's1', to: 'l2', tone: 'rose' }, { from: 's2', to: 'l2' },
+  ]}
+  flows={[
+    { from: 'l1', to: 's1', label: 'sauvegarde 60 Gb/s + réplication 50 Gb/s', tone: 'rose', offset: -24 },
+    { from: 'l1', to: 's2', label: 'souris : 5 Gb/s', tone: 'sky', offset: 24 },
+  ]}
+  caption="Deux éléphants que le hachage envoie, par malchance, sur le même spine : 110 Gb/s pour un lien de 100 Gb/s, alors que l'autre spine est presque vide."
+/>
+
+Deux éléphants hachés vers le même spine saturent son lien pendant que l'autre reste vide : c'est une **collision**.
+Le switch n'y peut rien avec un hachage statique, puisqu'il ne regarde que l'identité des flux, pas leur débit. Les
+réponses, de la plus simple à la plus avancée :
+
+- **plus de chemins et des liens plus rapides** : avec huit spines, deux éléphants ont une chance sur huit de se
+  retrouver ensemble, et un lien à 400 Gb/s absorbe une collision qu'un lien à 100 Gb/s ne tient pas ;
+- **découper les éléphants** à la source : plusieurs flux parallèles pour une sauvegarde ou une réplication (c'est
+  ce que font la plupart des outils de stockage et des bibliothèques de communication des GPU) ;
+- **la répartition dynamique** (*Dynamic Load Balancing*, *flowlets*) : le switch mesure la charge de ses liens et
+  peut changer de chemin un flux entre deux rafales, quand un silence suffisamment long garantit qu'aucun paquet ne
+  sera remis dans le désordre ;
+- **la pulvérisation de paquets** (*packet spraying*) : chaque paquet sur un chemin différent, avec des cartes
+  réseau capables de remettre les paquets dans l'ordre. C'est la voie des réseaux pour l'IA, détaillée dans
+  [Les réseaux pour l'IA](/formations/datacenter/ai-networking).
+
+<Callout type="note">
+Quand un chemin disparaît (un spine en panne), un hachage naïf redistribue **tous** les flux, y compris ceux qui
+passaient par les spines encore vivants : ils changent de chemin, et peuvent arriver brièvement dans le désordre. Le
+**hachage résilient** (*resilient ECMP*) ne déplace que les flux du chemin perdu. Il est utile devant des services à
+état (load balancers, firewalls en grappe) annoncés en anycast.
+</Callout>
+
+## Dans le lab
+
+On reprend le lab `dc-fabric`, avec son underlay eBGP numéroté. L'objectif : provoquer les deux types de panne et
+**mesurer** le temps de convergence, avec et sans BFD.
+
+<Lab name="dc-fabric" lang="fr" />
+
+**1. Le plan d'AS.** Sur spine1 :
+
+```bash
+docker exec -it clab-dc-fabric-spine1 Cli
+```
+
+```text
+show ip bgp summary
+```
+
+Trois voisins, trois AS différents : `65101`, `65102`, `65103`. Sur leaf1, `show ip bgp 10.255.1.12` montre la
+loopback VTEP de leaf2 reçue deux fois, par spine1 et par spine2, avec le même chemin `65000 65102`. Les deux
+chemins sont installés (`show ip route 10.255.1.12`).
+
+**2. Le chemin d'un flux.** Lancez un ping continu de `host1` vers `host2`, dans un terminal à part :
+
+```bash
+docker exec -it clab-dc-fabric-host1 ping 10.10.10.12
+```
+
+Sur leaf1, regardez quel lien de montée le transporte : le compteur de paquets sortants qui augmente d'environ un
+par seconde désigne le spine choisi par le hachage.
+
+```text
+show interfaces Ethernet1-2 counters
+```
+
+Le ping a été haché sur un spine, et y restera tant que rien ne change : c'est l'ECMP par flux. Dans la suite, on
+suppose qu'il passe par `Ethernet1` (spine1) ; sinon, remplacez `eth1` par `eth2` et spine1 par spine2.
+
+**3. Une panne franche.** Sur leaf1, coupez le lien qui transporte le ping :
+
+```text
+configure
+interface Ethernet1
+   shutdown
+```
+
+Le ping perd au plus un paquet : l'interface est tombée, la route par spine1 a disparu aussitôt, le hachage n'a plus
+qu'un chemin. Remettez le lien (`no shutdown`), et attendez que `show ip bgp summary` montre de nouveau deux
+sessions établies.
+
+**4. Une panne silencieuse, sans BFD.** Cette fois, on laisse les interfaces `up` mais on jette tout ce qui passe,
+dans les deux sens, avec `tc netem` (comme dans le chapitre [SNMP, syslog et NetFlow](/formations/operations/monitoring)) :
+
+```bash
+docker run --rm --privileged --net container:clab-dc-fabric-leaf1 nicolaka/netshoot tc qdisc add dev eth1 root netem loss 100%
+docker run --rm --privileged --net container:clab-dc-fabric-spine1 nicolaka/netshoot tc qdisc add dev eth1 root netem loss 100%
+```
+
+Regardez le ping : il ne passe plus. Et il ne repassera qu'à l'expiration du hold timer, jusqu'à **trois minutes**
+plus tard. Pendant ce temps, `show ip bgp summary` sur leaf1 montre la session vers spine1 toujours *Established*.
+Quand elle finit par tomber, `show logging last 5 minutes` montre la cause (*hold timer expired*). Comptez les
+paquets perdus : c'est votre temps de convergence, en secondes. Retirez la panne :
+
+```bash
+docker run --rm --privileged --net container:clab-dc-fabric-leaf1 nicolaka/netshoot tc qdisc del dev eth1 root
+docker run --rm --privileged --net container:clab-dc-fabric-spine1 nicolaka/netshoot tc qdisc del dev eth1 root
+```
+
+**5. La même panne, avec BFD.** Activez BFD sur leaf1 et sur spine1 :
+
+```text
+configure
+router bgp 65101
+   neighbor UNDERLAY bfd
+```
+
+```text
+configure
+router bgp 65000
+   neighbor UNDERLAY bfd
+```
+
+Vérifiez sur leaf1 que la session BFD vers `10.0.1.0` est *Up* (`show bfd peers`), puis relancez le ping et
+recommencez la panne silencieuse de l'étape 4. Cette fois, le ping perd **un ou deux paquets** : BFD a déclaré le
+voisin mort en moins d'une seconde, BGP a retiré les routes, et le trafic est passé par spine2. `show bfd peers`
+montre la session *Down*. Retirez la panne comme à l'étape 4.
+
+Le même lien, la même panne : trois minutes contre moins d'une seconde.
+
+## À vous de jouer
+
+1. Pourquoi donne-t-on le même AS à tous les spines d'une fabric eBGP ? Que se passerait-il avec un AS par spine ?
+2. Qu'apporte BGP unnumbered, et quelle RFC permet d'annoncer une route IPv4 avec un prochain saut IPv6 ?
+3. Pourquoi une panne franche se passe-t-elle de BFD, et pas une panne silencieuse ? Donnez deux exemples de panne
+   silencieuse.
+4. Comment une fabric VXLAN répartit-elle sur plusieurs spines le trafic entre deux mêmes VTEP ?
+5. Pourquoi l'ECMP gère-t-il mal deux flux éléphants ? Citez deux façons d'y remédier.
+
+## À retenir
+
+- **eBGP** est la norme des grandes fabrics EVPN : domaines de panne limités, politiques fines, et un seul protocole
+  pour l'underlay et l'overlay. OSPF ou IS-IS restent valables pour les petites fabrics.
+- **Un AS pour tous les spines** (pas de transit par un leaf, pas de chasse aux chemins), **un AS par leaf** ou par
+  paire MLAG ; un plan écrit, appliqué par l'outil, sur **4 octets** si plusieurs sites.
+- **BGP unnumbered** : sessions sur les adresses IPv6 link-local, routes IPv4 avec prochain saut IPv6 (RFC 8950),
+  plus aucune adresse sur les liens.
+- Panne franche : convergence immédiate. Panne silencieuse : jusqu'à **180 s** sans **BFD**, moins d'**une
+  seconde** avec (300 ms × 3).
+- L'**ECMP** hache **par flux** (5-tuple, port UDP source de VXLAN) ; il équilibre les souris, pas les
+  **éléphants**. Plus de chemins, des flux découpés ou la répartition dynamique limitent les collisions.
+
+Prochain chapitre : **l'infrastructure physique**, où l'on quitte les protocoles pour les baies, les câbles et les
+optiques.

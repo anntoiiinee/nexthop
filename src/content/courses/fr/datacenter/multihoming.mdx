@@ -1,0 +1,337 @@
+---
+title: "EVPN multihoming : ESI-LAG contre MLAG"
+description: "Raccorder un serveur à deux leafs sans peer-link : le segment Ethernet et l'ESI, les routes EVPN de type 1 et 4, l'élection du designated forwarder, le mode all-active, le LACP fallback pour l'installation PXE, la comparaison avec MLAG (peer-link, split-brain) et le choix pour un nouveau déploiement, avec un serveur double-attaché dans le lab."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, evpn, multihoming, esi, mlag, lacp]
+vendor: [arista]
+order: 10
+---
+
+Un serveur de production n'a jamais un seul câble. S'il est branché sur un seul leaf, la panne de ce leaf, ou
+simplement sa mise à jour, l'isole. On le raccorde donc à **deux** leafs, et l'on veut que les deux liens travaillent
+en même temps, comme un port-channel ordinaire.
+
+Le chapitre [Agrégation de liens et MLAG](/formations/fundamentals/link-aggregation) a présenté la réponse classique :
+**MLAG**, deux switches qui se coordonnent par un **peer-link** pour se présenter comme un seul. Le chapitre
+[EVPN, le control plane](/formations/datacenter/evpn) a mentionné l'autre : le **multihoming EVPN**, où c'est BGP, et
+non un câble entre les deux leafs, qui assure la coordination. Ce chapitre ouvre la boîte : comment EVPN y parvient,
+ce que cela change par rapport à MLAG, et lequel choisir quand on construit une nouvelle fabric.
+
+## Le segment Ethernet
+
+Vu du serveur, rien ne change : il forme un port-channel <Term id="lacp" /> sur ses deux cartes, comme s'il était
+branché à un seul switch. Pour que LACP accepte de grouper les deux liens, les deux leafs doivent envoyer **le même
+identifiant de système LACP**. Jusque-là, c'est exactement MLAG.
+
+La différence est de l'autre côté. Pour EVPN, l'ensemble des liens qui mènent au serveur forme un **segment
+Ethernet** (*Ethernet Segment*), identifié par un <Term id="esi" /> (*Ethernet Segment Identifier*) : une valeur de
+10 octets, **identique sur les deux leafs**, et unique dans la fabric. Chaque leaf annonce en BGP qu'il est raccordé à
+ce segment ; tous les autres leafs savent alors que le serveur est joignable par l'un **ou** l'autre.
+
+<Topology
+  width={700}
+  height={400}
+  groups={[{ x: 100, y: 145, w: 500, h: 245, label: 'Ethernet Segment · ESI 0000:0000:0001:0002:0005', tone: 'violet' }]}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 50, label: 'spine1' },
+    { id: 's2', type: 'l3switch', x: 470, y: 50, label: 'spine2' },
+    { id: 'l1', type: 'l3switch', x: 200, y: 215, label: 'leaf1', sub: 'Port-Channel5', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 500, y: 215, label: 'leaf2', sub: 'Port-Channel5', tone: 'emerald' },
+    { id: 'h5', type: 'server', x: 350, y: 330, label: 'host5', sub: 'bond0 · LACP', tone: 'violet' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' },
+    { from: 'l1', to: 'h5', tone: 'violet' }, { from: 'l2', to: 'h5', tone: 'violet' },
+  ]}
+  caption="Deux leafs, un même ESI, un même identifiant LACP : host5 voit un seul port-channel. Aucun câble entre leaf1 et leaf2 ; ils se coordonnent par BGP EVPN, à travers les spines."
+/>
+
+L'ESI le plus courant est de **type 0** : choisi à la main (ou par l'outil d'automatisation), il commence par `00`.
+D'autres types le dérivent automatiquement, par exemple de l'identifiant LACP. Quel que soit le type, la règle est la
+même : **un ESI par serveur** (par segment), le même sur ses deux leafs.
+
+## Les routes de type 1 et 4
+
+Le multihoming utilise les deux types de routes EVPN laissés de côté jusqu'ici.
+
+| Route | Annoncée par | Ce qu'elle permet |
+|---|---|---|
+| **Type 4**, *Ethernet Segment* | Chaque leaf raccordé au segment | Les leafs d'un même segment se **découvrent**, puis élisent le *designated forwarder*. Elle ne concerne qu'eux : elle porte un RT dérivé de l'ESI (`route-target import`), que seuls les leafs du segment importent. |
+| **Type 1**, *Ethernet Auto-Discovery* **par segment** | Chaque leaf raccordé au segment | « Je suis raccordé à ce segment. » Si le lien tombe, le leaf **retire cette seule route**, et tous les leafs distants retirent d'un coup toutes les MAC du segment derrière lui : c'est le **retrait de masse** (*mass withdrawal*). |
+| **Type 1**, *Ethernet Auto-Discovery* **par EVI** | Chaque leaf raccordé, pour chaque VLAN du segment | « Je peux atteindre ce segment dans ce VLAN. » Permet l'**aliasing** : une MAC apprise et annoncée par un seul des deux leafs reste joignable par les deux. |
+
+### L'aliasing
+
+Le serveur répartit son trafic sur ses deux liens selon son propre hachage. Il est donc fréquent qu'une adresse MAC
+ne soit vue, et donc annoncée en type 2, que par **un seul** des deux leafs. Sans plus d'information, un leaf distant
+n'enverrait le trafic vers ce serveur que par ce leaf-là. Mais la route de type 2 porte l'ESI, et les deux leafs ont
+annoncé une route de type 1 par EVI pour ce segment : le leaf distant en déduit que les deux VTEP mènent à la MAC, et
+répartit son trafic sur les deux, en ECMP.
+
+### Le retrait de masse
+
+Un serveur de virtualisation porte des centaines de machines virtuelles, donc des centaines de MAC. Si le lien entre
+leaf1 et ce serveur tombe, retirer les centaines de routes de type 2 une par une prendrait du temps. Avec le retrait de
+masse, leaf1 retire **une seule** route de type 1, et chaque leaf distant met à jour, d'un coup, toutes les MAC
+associées à cet ESI : elles ne sont plus joignables que par leaf2.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'h5', label: 'host5', sub: 'ESI …0005', tone: 'violet' },
+    { id: 'l1', label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', label: 'leaf2', tone: 'emerald' },
+    { id: 'l3', label: 'leaf3', sub: 'leaf distant', tone: 'emerald' },
+  ]}
+  messages={[
+    { note: 'normal : leaf3 joint les MAC de host5 par leaf1 et leaf2 (aliasing, ECMP)', tone: 'sky' },
+    { from: 'h5', to: 'l1', label: 'lien coupé', tone: 'rose', style: 'blocked' },
+    { from: 'l1', to: 'l3', label: 'retrait type 1 (ESI …0005)', sub: 'une seule route, via les spines', tone: 'amber' },
+    { note: 'leaf3 retire leaf1 de toutes les MAC du segment, d\'un coup', tone: 'violet' },
+    { from: 'l3', to: 'l2', label: 'trafic vers host5', sub: 'uniquement par leaf2', tone: 'emerald' },
+  ]}
+  caption="Le retrait de masse : quand le lien leaf1-host5 tombe, leaf1 retire sa route de type 1 par segment. Les leafs distants basculent toutes les MAC du segment vers leaf2 en une fois."
+/>
+
+## Le designated forwarder
+
+Les deux liens sont actifs : c'est le mode **all-active**, le plus courant. Pour le trafic unicast, tout va bien :
+chaque trame prend un lien ou l'autre. Mais le trafic **BUM** (broadcast, multicast, destination inconnue) est
+répliqué vers **tous** les VTEP du VLAN, donc vers leaf1 **et** leaf2. Si les deux le transmettaient au serveur,
+celui-ci recevrait chaque broadcast en double.
+
+Les leafs du segment élisent donc un **designated forwarder** (DF), **par VLAN** : seul le DF transmet le BUM venu de
+la fabric vers le serveur. L'élection repose sur les routes de type 4. Avec l'algorithme par défaut (RFC 7432), dit
+**modulo** ou *service carving* :
+
+1. chaque leaf collecte les adresses des leafs du segment, et les trie : `10.255.1.11`, `10.255.1.12` ;
+2. pour le VLAN `V`, le DF est le leaf de rang `V modulo N` (N = nombre de leafs du segment, rangs à partir de 0) ;
+3. VLAN 10 : `10 mod 2 = 0`, DF = leaf1. VLAN 11 : `11 mod 2 = 1`, DF = leaf2.
+
+Les VLAN se répartissent ainsi entre les leafs. D'autres algorithmes existent (le cadre de la RFC 8584 permet de les
+négocier), notamment une élection par **préférence**, qui permet de choisir explicitement le DF.
+
+### Le split horizon
+
+Reste un cas : le serveur envoie un broadcast (une requête ARP) par son lien vers leaf1. leaf1 le transmet à ses
+serveurs locaux et le réplique dans la fabric, y compris vers leaf2. leaf2, s'il est DF pour ce VLAN, ne doit surtout
+pas le renvoyer au serveur, qui recevrait son propre broadcast. En VXLAN, leaf2 voit que le paquet vient du VTEP de
+leaf1, qui partage avec lui ce segment : il ne le transmet pas vers ce segment. C'est le **split horizon**, appelé
+*local bias* dans la RFC 8365.
+
+### Single-active
+
+Le mode **single-active** garde un seul lien actif par VLAN (celui du DF), l'autre en secours. Il sert pour des
+équipements qui ne savent pas faire de LACP, ou quand un seul chemin doit être utilisé à la fois. En data center, le
+mode all-active est la règle.
+
+## La configuration
+
+Sur les deux leafs, une configuration **identique** pour le port-channel du serveur (le numéro de port-channel peut
+différer, mais le garder identique simplifie tout) :
+
+```text title="Arista EOS : ESI-LAG vers host5, sur leaf1 et leaf2"
+interface Ethernet4
+   description host5
+   channel-group 5 mode active
+!
+interface Port-Channel5
+   description host5
+   switchport access vlan 10
+   evpn ethernet-segment
+      identifier 0000:0000:0001:0002:0005
+      route-target import 00:01:00:02:00:05
+   lacp system-id 0001.0002.0005
+```
+
+Trois valeurs, toutes dérivées du même numéro pour rester lisibles :
+
+- `identifier` : l'ESI, de type 0 ;
+- `route-target import` : le RT des routes de type 4 de ce segment, au format d'une adresse MAC ;
+- `lacp system-id` : l'identifiant LACP commun que les deux leafs présentent au serveur.
+
+C'est tout. Pas de peer-link, pas de VLAN de synchronisation, pas de battement de cœur : la configuration EVPN déjà
+en place (sessions BGP, `redistribute learned`) fait le reste. Dans une vraie fabric, ces valeurs ne sont pas tapées
+à la main : AVD les dérive d'un identifiant par serveur.
+
+### Le LACP fallback
+
+Un port-channel LACP ne monte que si le serveur parle LACP. Or il existe un moment où il ne le fait pas encore :
+l'**installation**. Un serveur neuf démarre en PXE, sur le micrologiciel de sa carte réseau, bien avant que le
+système d'exploitation n'ait configuré son bond. Il n'envoie aucune LACPDU, le port-channel reste *down* sur les deux
+leafs, la requête DHCP ne part jamais, et l'installation automatique échoue. Même situation pour un serveur réinstallé,
+ou pour une carte remplacée dont le bond n'est pas encore configuré.
+
+Le **LACP fallback** règle ce cas : si le port-channel ne reçoit **aucune LACPDU** pendant un délai donné, le switch
+active quand même ses membres, sans LACP. Dès que le serveur commence à parler LACP, le port-channel reprend son
+fonctionnement normal.
+
+```text title="Arista EOS : LACP fallback sur le port-channel de host5, sur leaf1 et leaf2"
+interface Port-Channel5
+   port-channel lacp fallback individual
+   port-channel lacp fallback timeout 30
+```
+
+- `individual` : chaque membre devient un port indépendant, avec la configuration du port-channel (ici, accès au
+  VLAN 10). C'est le mode recommandé pour le PXE. L'autre mode, `static`, active un seul membre comme port-channel
+  statique ;
+- `timeout 30` : le nombre de secondes sans LACPDU avant de basculer. Assez long pour ne pas se déclencher pendant
+  une négociation LACP normale, assez court pour que le PXE n'abandonne pas avant.
+
+<Callout type="warning">
+Le fallback est une rustine pour l'installation, pas un mode de fonctionnement. Tant qu'il est actif, le serveur n'a
+plus d'agrégat : en ESI-LAG, ses deux cartes sont vues comme deux ports séparés, sur deux leafs, et une même adresse
+MAC peut apparaître des deux côtés. Activez-le **uniquement** sur les ports des serveurs installés par le réseau, avec
+la **même configuration sur les deux leafs** du segment, et vérifiez dans les notes de version que la plateforme
+supporte le fallback sur un port-channel ESI. Côté supervision, un port-channel resté en fallback après
+l'installation signale un bond mal configuré : `show port-channel` l'indique.
+</Callout>
+
+## MLAG ou ESI-LAG
+
+| | MLAG | ESI-LAG (multihoming EVPN) |
+|---|---|---|
+| **Coordination** | Un **peer-link** et un battement de cœur entre les deux leafs | **BGP EVPN**, à travers la fabric |
+| **Câblage** | Deux à quatre ports de chaque leaf réservés au peer-link | Aucun lien entre les leafs |
+| **Split-brain** | Le scénario à craindre : peer-link coupé, deux primaires, réseau incohérent | Pas de notion de primaire : chaque leaf annonce ce qu'il voit |
+| **Port orphelin** (raccordé à un seul leaf) | Joignable par le peer-link | Joignable par la fabric, comme n'importe quel autre serveur |
+| **Nombre de leafs** | Deux, toujours | Deux en pratique (la norme en permet plus) |
+| **Norme** | Propre à chaque constructeur (MLAG, vPC, MC-LAG) | RFC 7432 et 8365 : multi-constructeurs en principe |
+| **Sans EVPN** | Fonctionne (cœur de campus, réseau de niveau 2 classique) | Impossible : il faut une fabric EVPN |
+| **Maturité** | Plus de quinze ans d'exploitation | Plus récent, implémentations variables selon les constructeurs et les versions |
+| **Mise à jour d'un leaf** | Bien rodée, mais la paire reste couplée (versions compatibles, ordre à respecter) | Les deux leafs sont indépendants |
+
+<Callout type="warning">
+Avec MLAG, la paire de leafs est **un seul système** de niveau 2 : un bug, une erreur de configuration ou une
+incohérence entre les deux peut toucher les deux à la fois. Avec ESI-LAG, chaque leaf reste un équipement
+indépendant de la fabric. C'est l'argument de fond, plus encore que les ports économisés.
+</Callout>
+
+## Lequel choisir pour un nouveau déploiement ?
+
+C'est la question qu'on pose vraiment en avant-projet, et la réponse honnête est : **ESI-LAG par défaut dans une
+nouvelle fabric EVPN, sauf raison précise de garder MLAG**.
+
+Choisir **ESI-LAG** quand :
+
+- la fabric est **EVPN-VXLAN** dès le départ ;
+- le constructeur et la version visée le supportent bien en all-active (vérifier les notes de version et les
+  limites : nombre de segments, fonctions compatibles) ;
+- on veut des leafs **indépendants**, faciles à mettre à jour un par un, sans peer-link à câbler ni à surveiller.
+
+Garder **MLAG** quand :
+
+- il n'y a **pas d'EVPN** (un cœur de campus, un petit data center en niveau 2) ;
+- la fabric existante est en MLAG et fonctionne : migrer seulement pour migrer apporte peu ;
+- certains équipements raccordés dépendent de fonctions que le constructeur ne supporte qu'en MLAG ;
+- l'équipe d'exploitation maîtrise MLAG et pas encore EVPN : le meilleur design est celui qu'on sait dépanner à 3 h
+  du matin.
+
+<Callout type="field">
+Les deux coexistent très bien dans une même fabric : des paires MLAG historiques à côté de nouvelles paires en
+ESI-LAG, toutes reliées au même overlay EVPN. Migrer une baie à la fois, lors du renouvellement de ses leafs, est
+souvent la voie la plus sûre. Et quel que soit le choix, vérifiez côté serveur : un hyperviseur configuré en
+actif/passif sans LACP fonctionne avec les deux, un bond LACP mal configuré ne fonctionne avec aucun.
+</Callout>
+
+## Dans le lab
+
+Le lab `dc-fabric` comporte un cinquième serveur, `host5` (`10.10.10.15`, VLAN 10), raccordé à leaf1 et à leaf2
+par un bond LACP. Les deux leafs portent le même segment Ethernet, et il n'y a aucun lien entre eux.
+
+<Lab name="dc-fabric" lang="fr" />
+
+**1. Le serveur voit un seul switch.** Sur `host5` :
+
+```bash
+docker exec clab-dc-fabric-host5 cat /proc/net/bonding/bond0
+```
+
+Deux interfaces membres, `eth1` et `eth2`, et pour chacune le même *Partner Mac Address* : `00:01:00:02:00:05`,
+l'identifiant LACP commun aux deux leafs. Pour le serveur, c'est un seul partenaire.
+
+**2. Le port-channel sur chaque leaf.** Sur leaf1, puis sur leaf2 :
+
+```bash
+docker exec -it clab-dc-fabric-leaf1 Cli
+```
+
+```text
+show port-channel 5
+show bgp evpn instance
+```
+
+Le port-channel est actif, avec un seul membre local. La seconde commande montre le segment Ethernet, son ESI, et le
+**designated forwarder** élu pour le VLAN 10 : leaf1 (`10.255.1.11`), comme le calcul `10 mod 2 = 0` le prévoyait.
+
+**3. Les routes de type 4.**
+
+```text
+show bgp evpn route-type ethernet-segment
+```
+
+Deux routes pour l'ESI `0000:0000:0001:0002:0005`, l'une de leaf1, l'autre de leaf2 : chacun a découvert l'autre. leaf3,
+qui n'est pas raccordé au segment, n'en fait rien : le RT de ces routes ne correspond à aucun de ses segments.
+
+**4. Les routes de type 1 et l'aliasing.** Faites parler `host5`, puis regardez depuis leaf3 :
+
+```bash
+docker exec clab-dc-fabric-host5 ping -c 3 10.10.10.1
+```
+
+```text
+show bgp evpn route-type auto-discovery
+show bgp evpn route-type mac-ip
+```
+
+Sur leaf3 : des routes de type 1 de leaf1 **et** de leaf2 pour le même ESI, et la route de type 2 de `host5` (`10.10.10.15`),
+qui porte cet ESI. Même si une seule des deux routes de type 2 est présente, leaf3 sait que la MAC est joignable par les deux
+VTEP.
+
+**5. La panne d'un lien.** Lancez un ping continu depuis `host3` (VLAN 20, sur leaf3) vers `host5` :
+
+```bash
+docker exec -it clab-dc-fabric-host3 ping 10.10.10.15
+```
+
+Puis coupez le lien de leaf1 vers `host5` :
+
+```text
+configure
+interface Ethernet4
+   shutdown
+```
+
+Le ping perd au plus un ou deux paquets. Sur leaf3, `show bgp evpn route-type auto-discovery` ne montre plus que les
+routes de leaf2 pour ce segment : leaf1 a retiré sa route de type 1, et le trafic passe par leaf2. Sur `host5`,
+`/proc/net/bonding/bond0` montre `eth1` en panne et `eth2` toujours actif. Remettez le lien (`no shutdown`) : il
+rejoint le bond en quelques secondes, sans aucune coupure.
+
+À aucun moment leaf1 et leaf2 n'ont échangé directement : tout est passé par BGP, à travers les spines.
+
+## À vous de jouer
+
+1. Qu'est-ce qu'un segment Ethernet, et quelles sont les trois valeurs à configurer à l'identique sur les deux leafs
+   d'un ESI-LAG ?
+2. À quoi servent les routes de type 4 ? Et les routes de type 1 par segment et par EVI ?
+3. Avec l'algorithme modulo, qui est DF pour le VLAN 31 sur un segment partagé par `10.255.1.11` et `10.255.1.12` ?
+4. Pourquoi faut-il un designated forwarder en all-active, alors que les deux liens sont actifs ?
+5. Citez deux raisons de choisir ESI-LAG et deux raisons de garder MLAG.
+6. Pourquoi l'installation PXE d'un serveur raccordé en LACP échoue-t-elle sans LACP fallback ?
+
+## À retenir
+
+- Le **multihoming EVPN** (ESI-LAG) raccorde un serveur à deux leafs **sans peer-link** : le serveur voit un seul
+  port-channel LACP, les leafs se coordonnent par **BGP EVPN**.
+- Un **segment Ethernet** = un **ESI** (10 octets), identique sur les deux leafs, avec le même **system-id LACP**.
+- **Type 4** : découverte des leafs du segment et élection du **designated forwarder** (par VLAN, modulo par
+  défaut). **Type 1** : **retrait de masse** (par segment) et **aliasing** (par EVI).
+- **All-active** : les deux liens transmettent ; seul le **DF** envoie le BUM au serveur, et le **split horizon**
+  empêche de lui renvoyer ses propres trames.
+- Le **LACP fallback** active les membres sans LACP après un délai sans LACPDU : indispensable pour l'installation
+  PXE, à réserver aux ports qui en ont besoin.
+- **MLAG** : peer-link, risque de **split-brain**, paire couplée, mais mature et utilisable sans EVPN. **ESI-LAG** :
+  leafs indépendants, normalisé, le choix par défaut d'une nouvelle fabric EVPN.
+
+Prochain chapitre : **le border leaf**, ou comment le trafic sort de la fabric.
