@@ -132,6 +132,18 @@ src/
 
 ---
 
+## Progression du lecteur et confidentialité
+
+- **Progression du lecteur** : bouton « Marquer ce chapitre comme lu » en fin de chapitre, coches dans le programme, barres
+  de progression (page d'une formation, liste des formations, parcours de l'accueil). Stockée dans le navigateur
+  (`localStorage`, clé `nexthop-progress`), commune au FR et à l'EN, jamais envoyée. Fonction demandée par le lecteur :
+  exemptée de consentement. Logique dans `src/lib/progress.ts`, affichage par `ProgressScript.astro` (attributs
+  `data-progress-*`).
+- **Page « Confidentialité et cookies »** (`/confidentialite`, `/en/privacy`, `PrivacyPage.astro`) : le site n'utilise aucun
+  cookie ni outil de mesure d'audience. À mettre à jour à chaque nouvel usage du stockage du navigateur ou nouveau service
+  tiers ; un outil de mesure d'audience demanderait un recueil du consentement (une intégration Axeptio a été étudiée puis
+  abandonnée : offre gratuite limitée à 200 visiteurs par mois).
+
 ## Conventions
 
 - **Code en anglais**, contenu dans la langue de l'article. Les URLs de pages sont traduites (`/tutoriels` / `/en/tutorials`), les slugs de contenu sont en anglais et **identiques en FR et EN**.
@@ -263,7 +275,9 @@ Mise en route (une seule fois) :
 - [x] Data center, chapitre 5 « Le multiplexage en longueur d'onde (WDM) » (`wdm`) en FR et EN : mux et demux, CWDM et DWDM (grilles UIT-T), optiques colorées, accordables et cohérentes (400ZR), OADM, budget, interconnexion de data centers ; composant `<FiberDiagram view="modes|wavelengths|wdm" />`, aussi utilisé dans la connectique (VxLAN et EVPN décalés en 6 et 7)
 - [x] Data center, chapitre 6 « Les buffers des switches » (`buffers`) en FR et EN : différence de débits, incast et micro-rafales (calculs vérifiés), petits buffers partagés et deep buffers (VOQ), tail drop et effondrement par incast, QoS, ECN, DCTCP, PFC et RoCE, observation des pertes (VxLAN et EVPN décalés en 7 et 8)
 - [x] Tutoriel « Qu'est-ce qu'une RFC ? » (`rfc`) en FR et EN, lié depuis chaque section « Documentation officielle »
-- [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
+- [x] Progression du lecteur (chapitres lus, barres par formation, stockage local) et page « Confidentialité et cookies »
+- [ ] Patcher l'outils permettant de visualiser les containerlab
+- [ ] Contenus à venir : Ajoute un passage sur Vault d'Hashicorp dans automation (voir la section suivante), remplace la partie rotation des mots de passe avec Ansible Vault par Vault de Hashi Corp ; Jinja2 est couvert par le tutoriel `jinja-netbox`, explication du DNS (A, PTR, AAAA, CNAME), , outil traceroute, le NTP local (boitier physique, antenne atomique et strate) ou externe
 
 ---
 

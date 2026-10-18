@@ -1,0 +1,163 @@
+---
+// Page « Confidentialité et cookies » : ce que le site stocke dans le navigateur, et comment l'effacer.
+// À tenir à jour à chaque nouvel usage du stockage du navigateur ou nouveau service tiers.
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { routes, t, type Lang } from '@/i18n/ui';
+import { PROGRESS_KEY } from '@/lib/progress';
+
+interface Props { lang: Lang }
+const { lang } = Astro.props;
+
+const copy = {
+  fr: {
+    intro: "Next Hop est un site personnel, sans publicité. Cette page liste tout ce que le site enregistre dans votre navigateur, ce qui est mesuré, et comment garder la main.",
+    storageTitle: 'Ce que le site enregistre dans votre navigateur',
+    storageIntro: "Le site n'utilise aucun cookie. Les seules informations enregistrées restent sur votre appareil, dans le stockage local du navigateur : elles ne sont jamais envoyées à un serveur, et servent uniquement à des fonctions que vous utilisez vous-même.",
+    head: ['Nom', 'Type', 'À quoi il sert', 'Consentement'],
+    rows: [
+      ['theme', 'localStorage', 'Retenir votre choix de thème clair ou sombre', 'non requis'],
+      [PROGRESS_KEY, 'localStorage', 'Retenir les chapitres que vous avez marqués comme lus, pour afficher votre progression', 'non requis'],
+      ['subnet-quiz-best', 'localStorage', 'Retenir votre meilleure série au quiz de subnetting', 'non requis'],
+    ],
+    analyticsTitle: "Mesure d'audience",
+    analyticsOff: "Le site ne mesure pas son audience : aucun outil de statistiques, aucun traceur publicitaire. Si cela change, cette page sera mise à jour et votre accord vous sera demandé au préalable.",
+    manageTitle: 'Gérer vos choix',
+    progressReset: 'Pour effacer votre progression de lecture dans ce navigateur :',
+    progressDone: 'Progression effacée.',
+    browser: "Vous pouvez aussi tout effacer depuis les réglages de votre navigateur (données de site et cookies), ou naviguer en mode privé.",
+    stackTitle: 'Comment le site est construit',
+    stackIntro: "Next Hop est un site statique : toutes les pages sont générées à l'avance, il n'y a ni base de données, ni compte utilisateur, ni code exécuté côté serveur pour vous servir une page. Le code source est public sur",
+    stackHead: ['Brique', 'Rôle'],
+    stack: [
+      ['Astro', 'https://astro.build', 'Générateur de site statique : transforme les contenus en pages HTML'],
+      ['MDX', 'https://mdxjs.com', 'Format des formations et tutoriels : du Markdown avec des composants (schémas, sorties CLI, labs)'],
+      ['Tailwind CSS', 'https://tailwindcss.com', 'Mise en forme et thème clair ou sombre'],
+      ['Expressive Code', 'https://expressive-code.com', 'Coloration des blocs de code et des configurations'],
+      ['Pagefind', 'https://pagefind.app', "Recherche : l'index est généré avec le site et la recherche se fait dans votre navigateur, sans service externe"],
+      ['Satori', 'https://github.com/vercel/satori', "Images d'aperçu des pages pour les réseaux sociaux, générées au build"],
+      ['Fontsource', 'https://fontsource.org', 'Polices Inter et JetBrains Mono, servies par le site lui-même plutôt que par un service tiers'],
+      ['Cloudflare Workers', 'https://developers.cloudflare.com/workers/static-assets/', 'Hébergement des fichiers générés, servis depuis le réseau de Cloudflare'],
+    ],
+    hostingTitle: 'Hébergement',
+    hosting: "Le site est hébergé par Cloudflare. Comme tout hébergeur, Cloudflare traite des données techniques de connexion (adresse IP, date, page demandée) pour acheminer les pages et protéger le site contre les abus.",
+    contactTitle: 'Une question ?',
+    contact: "Pour toute question sur ces données, contactez l'auteur depuis la page",
+  },
+  en: {
+    intro: 'Next Hop is a personal, ad-free site. This page lists everything the site stores in your browser, what is measured, and how to stay in control.',
+    storageTitle: 'What the site stores in your browser',
+    storageIntro: 'The site uses no cookies. The only information stored stays on your device, in the browser’s local storage: it is never sent to a server, and only serves features you use yourself.',
+    head: ['Name', 'Type', 'What it is for', 'Consent'],
+    rows: [
+      ['theme', 'localStorage', 'Remember your light or dark theme choice', 'not required'],
+      [PROGRESS_KEY, 'localStorage', 'Remember the chapters you marked as read, to show your progress', 'not required'],
+      ['subnet-quiz-best', 'localStorage', 'Remember your best streak in the subnetting quiz', 'not required'],
+    ],
+    analyticsTitle: 'Audience measurement',
+    analyticsOff: 'The site does not measure its audience: no analytics tool, no advertising tracker. If that changes, this page will be updated and your consent will be asked first.',
+    manageTitle: 'Managing your choices',
+    progressReset: 'To clear your reading progress in this browser:',
+    progressDone: 'Progress cleared.',
+    browser: 'You can also clear everything from your browser settings (site data and cookies), or browse in private mode.',
+    stackTitle: 'How the site is built',
+    stackIntro: 'Next Hop is a static site: every page is generated in advance, with no database, no user account and no server-side code run to serve you a page. The source code is public on',
+    stackHead: ['Component', 'Role'],
+    stack: [
+      ['Astro', 'https://astro.build', 'Static site generator: turns the content into HTML pages'],
+      ['MDX', 'https://mdxjs.com', 'Format of the courses and tutorials: Markdown with components (diagrams, CLI outputs, labs)'],
+      ['Tailwind CSS', 'https://tailwindcss.com', 'Styling and light or dark theme'],
+      ['Expressive Code', 'https://expressive-code.com', 'Highlighting of code blocks and configurations'],
+      ['Pagefind', 'https://pagefind.app', 'Search: the index is generated with the site and searching happens in your browser, with no external service'],
+      ['Satori', 'https://github.com/vercel/satori', 'Page preview images for social networks, generated at build time'],
+      ['Fontsource', 'https://fontsource.org', 'Inter and JetBrains Mono fonts, served by the site itself rather than by a third-party service'],
+      ['Cloudflare Workers', 'https://developers.cloudflare.com/workers/static-assets/', "Hosting of the generated files, served from Cloudflare's network"],
+    ],
+    hostingTitle: 'Hosting',
+    hosting: 'The site is hosted by Cloudflare. Like any host, Cloudflare processes technical connection data (IP address, date, requested page) to deliver pages and protect the site against abuse.',
+    contactTitle: 'Any question?',
+    contact: 'For any question about this data, contact the author from the page',
+  },
+}[lang];
+
+const rows = copy.rows;
+const h2 = 'mt-12 text-xl font-bold text-slate-900 dark:text-white';
+const button = 'rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-sky-400 hover:text-sky-700 dark:border-slate-700 dark:text-slate-300 dark:hover:text-sky-300';
+---
+<BaseLayout title={`${t(lang, 'privacy.title')} | Next Hop`} description={copy.intro} lang={lang} alternates={routes.privacy}>
+  <section class="mx-auto max-w-3xl px-4 py-16">
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{t(lang, 'privacy.title')}</h1>
+    <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{copy.intro}</p>
+
+    <h2 class={h2}>{copy.storageTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.storageIntro}</p>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full min-w-[36rem] text-left text-sm">
+        <thead>
+          <tr class="border-b border-slate-300 text-xs text-slate-500 dark:border-slate-700">
+            {copy.head.map((h) => <th class="py-2 pr-4 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr class="border-b border-slate-200 align-top dark:border-slate-800">
+              <td class="py-2 pr-4 font-mono text-xs text-slate-900 dark:text-slate-100">{r[0]}</td>
+              <td class="py-2 pr-4 font-mono text-xs text-slate-500">{r[1]}</td>
+              <td class="py-2 pr-4 text-slate-600 dark:text-slate-400">{r[2]}</td>
+              <td class="py-2 text-slate-600 dark:text-slate-400">{r[3]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class={h2}>{copy.analyticsTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.analyticsOff}</p>
+
+    <h2 class={h2}>{copy.manageTitle}</h2>
+    <p class="mt-3 flex flex-wrap items-center gap-3 text-slate-600 dark:text-slate-400">
+      {copy.progressReset}
+      <button type="button" data-progress-reset class={button}>{t(lang, 'progress.reset')}</button>
+      <span data-progress-reset-done hidden class="text-sm text-emerald-700 dark:text-emerald-400">{copy.progressDone}</span>
+    </p>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.browser}</p>
+
+    <h2 class={h2}>{copy.stackTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.stackIntro} <a href="https://github.com/anntoiiinee/nexthop" class="font-medium text-sky-600 hover:underline dark:text-sky-400">GitHub</a>.</p>
+    <div class="mt-4 overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead>
+          <tr class="border-b border-slate-300 text-xs text-slate-500 dark:border-slate-700">
+            {copy.stackHead.map((h) => <th class="py-2 pr-4 font-medium">{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {copy.stack.map(([name, href, role]) => (
+            <tr class="border-b border-slate-200 align-top dark:border-slate-800">
+              <td class="whitespace-nowrap py-2 pr-4"><a href={href} class="font-medium text-sky-600 hover:underline dark:text-sky-400">{name}</a></td>
+              <td class="py-2 text-slate-600 dark:text-slate-400">{role}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class={h2}>{copy.hostingTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.hosting}</p>
+
+    <h2 class={h2}>{copy.contactTitle}</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">{copy.contact} <a href={routes.whoami[lang]} class="font-medium text-sky-600 hover:underline dark:text-sky-400">whoami</a>.</p>
+  </section>
+</BaseLayout>
+
+<script>
+  import { writeProgress, PROGRESS_EVENT } from '@/lib/progress';
+
+  document.querySelectorAll<HTMLButtonElement>('[data-progress-reset]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      writeProgress({});
+      document.dispatchEvent(new CustomEvent(PROGRESS_EVENT));
+      const done = btn.parentElement?.querySelector<HTMLElement>('[data-progress-reset-done]');
+      if (done) done.hidden = false;
+    }),
+  );
+</script>

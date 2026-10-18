@@ -9,6 +9,7 @@ import { absoluteUrl, authorSchema, breadcrumbSchema, ogImagePath } from '@/lib/
 import ShareButtons from './ShareButtons.astro';
 import ContentDates from './ContentDates.astro';
 import { courseDates } from '@/lib/dates';
+import ProgressBar from './ProgressBar.astro';
 
 interface Props {
   lang: Lang;
@@ -60,6 +61,9 @@ const jsonLd = [
     <h1 class="mt-4 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl dark:text-white">{title}</h1>
     <p class="mt-4 text-lg text-slate-600 dark:text-slate-400">{description}</p>
     <ContentDates created={dates.created} updated={dates.updated} lang={lang} class="mt-4 text-sm" />
+    {course.chapters.length > 0 && (
+      <ProgressBar course={course.slug} chapters={course.chapters.map(chapterSlugOf)} lang={lang} class="mt-6 max-w-sm" />
+    )}
 
     <div class="prose prose-slate mt-8 max-w-none dark:prose-invert prose-a:text-sky-600 dark:prose-a:text-sky-400">
       <Content components={mdxComponents} />
@@ -70,7 +74,7 @@ const jsonLd = [
         <h2 class="mt-12 text-xl font-bold text-slate-900 dark:text-white">{t(lang, 'courses.program')}</h2>
         <ol class="mt-6 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
           {course.chapters.map((chapter, i) => (
-            <li>
+            <li data-progress-chapter={`${course.slug}/${chapterSlugOf(chapter)}`} class="group/ch">
               <a
                 href={chapterUrl(lang, course.slug, chapterSlugOf(chapter))}
                 class="group flex items-center gap-4 p-4 transition hover:bg-slate-50 dark:hover:bg-slate-900"
@@ -82,6 +86,7 @@ const jsonLd = [
                   </p>
                   <p class="text-sm text-slate-500">{chapter.data.description}</p>
                 </div>
+                <span class="hidden rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 group-data-[read=true]/ch:inline dark:bg-emerald-500/15 dark:text-emerald-300">✓</span>
                 <span class="text-slate-400 transition group-hover:translate-x-1">→</span>
               </a>
             </li>
