@@ -1,0 +1,192 @@
+---
+title: "Switch buffers"
+description: "The memory where a switch holds waiting packets: why it is needed (speed mismatch, incast, microbursts), shared and deep buffers, what happens when they overflow, ECN, DCTCP and PFC for storage and AI fabrics, and how to observe congestion."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, buffers, congestion, qos, ecn, pfc, rdma]
+vendor: [arista, cisco]
+order: 6
+---
+
+A switch receives packets on its input ports and sends them out on its output ports. As long as each output port has time
+to send what arrives for it, all is well. But if, for a fraction of a second, more traffic arrives for a port than it can
+send, the switch must **store** the extra packets somewhere while they wait: that is the **buffer**. When it overflows,
+packets are lost. These losses don't show on a 30% utilization graph, and yet they slow applications down: it is one of
+the most frequent causes of "unexplained slowness" in a data center.
+
+## Why a switch needs memory
+
+Three situations fill a buffer:
+
+- **Speed mismatch**: a leaf receives traffic from a spine at 100 Gb/s for a server connected at 25 Gb/s. The output port
+  drains four times slower than it fills, for as long as the burst lasts.
+- **Incast**, or "many to one": a client queries ten storage servers at once, and all ten answer at the same instant
+  towards its single port. Ten input ports at full speed converge on a single output port.
+- **Microbursts**: spikes of a few microseconds to a few milliseconds, where a port is saturated while its five-minute
+  average is low. They are invisible in the usual graphs.
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 's1', type: 'server', x: 90, y: 40, label: 'storage 1' },
+    { id: 's2', type: 'server', x: 90, y: 120, label: 'storage 2' },
+    { id: 's3', type: 'server', x: 90, y: 200, label: '…' },
+    { id: 's4', type: 'server', x: 90, y: 280, label: 'storage 10' },
+    { id: 'leaf', type: 'switch', x: 400, y: 160, label: 'leaf1', sub: 'Et5 port buffer', tone: 'amber' },
+    { id: 'c', type: 'host', x: 680, y: 160, label: 'client', sub: '25 Gb/s', tone: 'violet' },
+  ]}
+  links={[
+    { from: 's1', to: 'leaf' }, { from: 's2', to: 'leaf' }, { from: 's3', to: 'leaf' }, { from: 's4', to: 'leaf' },
+    { from: 'leaf', to: 'c', label: 'Et5' },
+  ]}
+  flows={[
+    { from: 'leaf', to: 'c', label: '25 Gb/s out', tone: 'rose', offset: -18 },
+  ]}
+  notes={[{ x: 270, y: 22, text: '10 × 25 Gb/s in, at the same instant', tone: 'slate' }]}
+  caption="Incast: ten servers answer the same client at the same time. Up to 250 Gb/s arrive for a port that only sends 25: the rest waits in the buffer, or is lost."
+/>
+
+### Doing the math
+
+A buffer is measured in bytes, but it is better thought of in **time**: how long it lets you absorb a burst at full speed.
+
+| Memory | Port speed | Absorption time |
+|---|---|---|
+| 1 MB | 25 Gb/s | 320 µs |
+| 32 MB | 100 Gb/s | 2.56 ms |
+| 4 GB | 100 Gb/s | 320 ms |
+
+Back to the diagram's incast: ten servers each send **1 MB** at 25 Gb/s to the same client. The 10 MB arrive in 320 µs;
+meanwhile, the output port only sends 1 MB. The buffer must therefore absorb **9 MB** for that port alone, otherwise
+packets are lost.
+
+## Where the memory is: shared and deep buffers
+
+Two families of switches stand apart:
+
+| | Shallow buffers | Deep buffers |
+|---|---|---|
+| Memory | a few tens of MB, **on** the chip, shared between all ports | several GB of memory **outside** the chip |
+| Latency | very low, constant | higher when queues fill up |
+| Cost, power | lower | higher |
+| Typical use | most leaves and spines of a fabric | border leaves, data center interconnect, WAN edge, heavily loaded storage fabrics |
+
+In a shallow-buffer switch, memory is **shared**: each port doesn't get a fixed share, it draws from a common pool
+according to **dynamic** thresholds. A congested port can borrow a lot of memory as long as the others don't need it. It
+is efficient, but a very busy port can also starve the others. Deep-buffer switches often organize memory as **Virtual
+Output Queues** (VOQ): packets wait at the **input**, in a queue specific to each output port, and only cross the chip when
+that port is ready.
+
+<Callout type="note">
+More memory isn't always better. A full 4 GB buffer, on a 100 Gb/s port, holds packets for 320 ms: a huge delay for an
+interactive application, which also delays TCP's reaction to congestion. This is called *bufferbloat*. Deep buffers are
+useful where speeds change sharply (100G to a 10G WAN link) and round-trip times are long, not inside a homogeneous
+fabric.
+</Callout>
+
+## When the buffer overflows
+
+A full buffer **drops** the next packets: that is *tail drop*. For TCP, a loss is a congestion signal: the sender sharply
+reduces its rate, then resends lost packets. An isolated loss goes unnoticed. But with incast, it is more serious:
+
+- all ten servers lose packets at the same time and all slow down;
+- if the last packets of a response are lost, the sender only notices when its retransmission timer expires, which is at
+  least **200 ms** by default on Linux;
+- a response that should take a millisecond takes two hundred: useful throughput collapses. This is **TCP incast
+  collapse**.
+
+<Callout type="field">
+The classic symptom: "the application is slow, but the network is at 20%". Five-minute SNMP graphs smooth out bursts,
+and the port looks almost empty. The port's **output discard** counters, though, keep rising. Always look at them before
+concluding the network has nothing to do with it.
+</Callout>
+
+## Managing congestion instead of suffering it
+
+### Queues and QoS
+
+A port doesn't have a single queue, but several (often eight), mapped to traffic classes according to packets' **DSCP**
+marking. You can give more buffer or priority to storage than to backups, or protect control traffic (BGP, BFD) so that it
+is never lost in a congestion.
+
+### ECN: warn rather than drop
+
+With **ECN** (*Explicit Congestion Notification*), the switch doesn't drop the packet when the queue starts filling up: it
+**marks** it (two bits of the IP header). The receiver relays the information to the sender, which slows down **before**
+the buffer overflows. No more losses, no more 200 ms timers.
+
+**DCTCP** (*Data Center TCP*) takes the idea further: it measures the **proportion** of marked packets and slows down
+accordingly, finely, instead of halving its rate. Queues stay short, latency low, and throughput high. It requires
+switches to mark ECN and servers to use DCTCP: realistic inside a data center you control end to end.
+
+### PFC: a lossless network for storage and AI
+
+Some protocols tolerate the slightest loss very poorly: storage and distributed computing over **RDMA over Ethernet**
+(RoCEv2), widely used in AI fabrics. For them, the network is made **lossless** with **PFC** (*Priority-based Flow
+Control*, IEEE 802.1Qbb): when a class's buffer reaches a threshold, the switch sends a **pause** to the neighbor for that
+class only, which stops transmitting instead of having its packets dropped.
+
+<Callout type="warning">
+PFC is effective but dangerous. A pause propagates from neighbor to neighbor, and a single slow server can block flows
+that have nothing to do with it (*head-of-line blocking*), or even trigger a **pause storm** that freezes part of the
+fabric. Only enable it on the traffic class that needs it, with ECN to slow senders down before reaching pauses (the
+principle of DCQCN for RoCE), and with a **watchdog** that disables PFC on a port blocked for too long. New approaches for
+AI, such as the Ultra Ethernet Consortium's, aim precisely at doing without PFC.
+</Callout>
+
+## Observing buffers
+
+| What you are looking for | Where to see it |
+|---|---|
+| Packets dropped for lack of buffer | output discard counters: `show interfaces counters discards` on Arista EOS, *Total output drops* in `show interfaces` on Cisco IOS |
+| Queue occupancy over time | the vendor's queue monitoring tools, such as LANZ on Arista (`show queue-monitor length`), depending on the platform |
+| Microbursts | [streaming telemetry](/en/courses/operations/telemetry), at short intervals, rather than SNMP every five minutes |
+| ECN marking and PFC pauses | ECN and PFC counters per interface and per class |
+
+The rule: an average throughput graph says **nothing** about buffers. Look at **drops** and **queue occupancy**, at the
+right time scale.
+
+## Choosing your switch
+
+- **Leaves and spines of a homogeneous fabric** (same speeds, short distances): shallow-buffer switches are almost always
+  enough, with reasonable oversubscription (see [Spine/leaf architecture](/en/courses/datacenter/spine-leaf)) and ECN if
+  the applications support it.
+- **Distributed storage, analytics, massive backups** (a lot of incast): look at drop counters. If drops are real, ECN,
+  better class allocation, or leaves with bigger buffers.
+- **Border leaves, data center interconnect, WAN edge** (from a high speed to a low one, long delays): the natural ground
+  for **deep buffers**.
+- **RoCE AI fabrics**: a dedicated design (traffic classes, ECN, controlled PFC, no oversubscription), on switches built
+  for it.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| Slow application, links lightly loaded on average | microbursts or incast: output drops invisible in throughput graphs |
+| Regular slowness during backups or night jobs | massive incast towards a few servers, buffer too small for these bursts |
+| High and variable latency, without loss | deep buffers filled too much (*bufferbloat*) |
+| Part of the fabric frozen, RoCE traffic blocked | PFC pause storm, or head-of-line blocking |
+| Control traffic (BGP, BFD) drops during congestion | no protected class for control traffic |
+
+## Your turn
+
+1. Twenty servers each send 500 KB at the same instant to a client connected at 25 Gb/s, from 25 Gb/s ports. How much
+   buffer does this port need?
+2. A switch shares 32 MB between 56 ports. If every port is congested at the same time, how much does each one get, and
+   how much time does that represent at 25 Gb/s?
+3. A user complains about slowness, their server's link is at 15% on average. Which counters do you look at, and at what
+   time scale?
+4. Why does a border leaf towards a 10 Gb/s WAN link benefit from a deep buffer, while a server leaf doesn't need one?
+
+## Key takeaways
+
+- The **buffer** holds packets when an output port receives more than it can send: **speed mismatch**, **incast**,
+  **microbursts**.
+- Think of it in **time**: 32 MB at 100 Gb/s is 2.56 ms. An incast of 10 × 1 MB needs about 9 MB for a single port.
+- **Shared shallow buffers** for most fabrics; **deep buffers** (GB of external memory, VOQ) for edges and speed changes.
+  Too much buffer adds latency.
+- An overflowing buffer **drops** packets; with incast, TCP can collapse because of timer-based retransmissions.
+- **ECN** and **DCTCP** avoid losses by slowing down early; **PFC** makes a class lossless for RoCE, but must be handled
+  with care.
+- Observe **output drops** and **queue occupancy**, not average throughput.

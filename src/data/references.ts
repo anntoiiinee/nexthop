@@ -134,6 +134,16 @@ export const references: Record<string, Reference[]> = {
     ref('OpenZR+ MSA', 'OpenZR+ Multi-Source Agreement', 'https://openzrplus.org/'),
     ref('FOA', 'The Fiber Optic Association · Guide to Fiber Optics', 'https://www.thefoa.org/tech/ref/contents.html'),
   ],
+  'courses/datacenter/buffers': [
+    rfc(3168, 'The Addition of Explicit Congestion Notification (ECN) to IP'),
+    rfc(8257, 'Data Center TCP (DCTCP): TCP Congestion Control for Data Centers'),
+    rfc(7567, 'IETF Recommendations Regarding Active Queue Management'),
+    rfc(2474, 'Definition of the Differentiated Services Field (DS Field)'),
+    rfc(9330, 'Low Latency, Low Loss, and Scalable Throughput (L4S) Internet Service: Architecture'),
+    ref('IEEE', '802.1Qbb · Priority-based Flow Control', 'https://1.ieee802.org/dcb/802-1qbb/'),
+    ref('IBTA', 'InfiniBand Trade Association (RoCE specifications)', 'https://www.infinibandta.org/'),
+    ref('UEC', 'Ultra Ethernet Consortium', 'https://ultraethernet.org/'),
+  ],
   'courses/datacenter/vxlan': [rfc(7348, 'Virtual eXtensible Local Area Network (VXLAN)')],
   'courses/datacenter/evpn': [
     rfc(7432, 'BGP MPLS-Based Ethernet VPN'),

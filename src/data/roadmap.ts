@@ -55,6 +55,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'physical', title: { fr: 'L’infrastructure physique', en: 'Physical infrastructure' } },
       { slug: 'cabling', title: { fr: 'La connectique', en: 'Cabling and connectors' } },
       { slug: 'wdm', title: { fr: 'Le multiplexage WDM', en: 'WDM multiplexing' } },
+      { slug: 'buffers', title: { fr: 'Les buffers des switches', en: 'Switch buffers' } },
       { slug: 'vxlan', title: { fr: 'VxLAN', en: 'VxLAN' } },
       { slug: 'evpn', title: { fr: 'EVPN, le control plane', en: 'EVPN, the control plane' } },
     ],
