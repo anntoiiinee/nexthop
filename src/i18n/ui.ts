@@ -14,7 +14,7 @@ export const routes = {
 
 export const ui = {
   fr: {
-    'site.description': 'Tutoriels réseau et sécurité pour étudiants et personnes en reconversion.',
+    'site.description': 'Tutoriels réseau, sécurité et automatisation, des bases jusqu’au data center, avec labs et outils interactifs.',
     'site.tagline': 'Votre prochain saut vers le réseau',
     'nav.home': 'Accueil',
     'nav.tutorials': 'Tutoriels',
@@ -105,7 +105,7 @@ export const ui = {
     'tools.inTutorial': 'Utilisé dans le tutoriel',
   },
   en: {
-    'site.description': 'Networking and security tutorials for students and career changers.',
+    'site.description': 'Networking, security and automation tutorials, from the basics to the data center, with labs and interactive tools.',
     'site.tagline': 'Your next hop into networking',
     'nav.home': 'Home',
     'nav.tutorials': 'Tutorials',

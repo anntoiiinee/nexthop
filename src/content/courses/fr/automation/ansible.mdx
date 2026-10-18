@@ -1,9 +1,10 @@
 ---
 title: "Ansible pour le réseau"
-description: "Ansible appliqué au réseau : inventaire et variables, collections Arista, premiers playbooks, idempotence et mode check, modules ressources et Ansible Vault."
+description: "Ansible appliqué au réseau : inventaire et variables, collections Arista, premiers playbooks, idempotence et mode check, modules ressources, et Ansible Vault en détail : chiffrer un fichier ou une variable, un coffre par environnement, le mot de passe en CI, et un piège qui écrit les secrets en clair."
 pubDate: 2026-10-17
+updatedDate: 2026-10-18
 level: intermediate
-tags: [ansible, automation, yaml]
+tags: [ansible, automation, yaml, ansible-vault, secrets]
 vendor: [arista]
 order: 2
 ---
@@ -149,19 +150,122 @@ exact des données.
 
 ## Protéger les secrets : Ansible Vault
 
-Nos identifiants viennent de variables d'environnement. Pour stocker des secrets avec le code
-(mots de passe, clés TACACS+), Ansible fournit **Vault**, qui chiffre un fichier en AES-256 :
+Nos identifiants viennent de variables d'environnement. Pour stocker des secrets avec le code (mots de passe, clés
+TACACS+, communautés SNMP), Ansible fournit **Ansible Vault**, qui chiffre en AES-256 avec un mot de passe. Un
+contenu chiffré peut être commité dans Git : sans ce mot de passe, il est illisible.
 
-```bash
-ansible-vault create group_vars/eos/vault.yml     # crée et ouvre un fichier chiffré
-ansible-vault view group_vars/eos/vault.yml       # le lire
-ansible-vault rekey group_vars/eos/vault.yml      # changer le mot de passe du coffre
-ansible-playbook site.yml --ask-vault-pass        # ou : ANSIBLE_VAULT_PASSWORD_FILE=…
+### Les commandes
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `ansible-vault create fichier.yml` | crée un fichier chiffré et l'ouvre dans l'éditeur |
+| `ansible-vault edit fichier.yml` | déchiffre en mémoire, ouvre l'éditeur, rechiffre à la fermeture |
+| `ansible-vault view fichier.yml` | affiche le contenu déchiffré, sans rien écrire sur le disque |
+| `ansible-vault encrypt` / `decrypt fichier.yml` | chiffre ou déchiffre un fichier existant, sur place |
+| `ansible-vault encrypt_string 'valeur' --name variable` | chiffre une seule valeur, à coller dans un fichier de variables en clair |
+| `ansible-vault rekey fichier.yml` | change le mot de passe d'un fichier chiffré |
+
+### Un fichier entier, ou une seule variable
+
+On peut chiffrer **tout un fichier** de variables, ou **une seule valeur** avec `encrypt_string` :
+
+```text title="ansible-vault encrypt_string --vault-id prod@prod.pass 'Pr0d-T4cacs' --name tacacs_key"
+tacacs_key: !vault |
+          $ANSIBLE_VAULT;1.2;AES256;prod
+          63303261623731643631613063326136633565303262346638343538623938323464633938386639
+          3562323963616566343763653962316633313966386435350a306263396565323863333166636536
+          36386464393134323234613633383865383634343235386264373163326533323666626138393066
+          6539326431643439610a363635613162346633613439616132373263343862616631343039383737
+          3838
 ```
 
-Un fichier chiffré peut être commité dans Git : sans le mot de passe du coffre, il est illisible.
-Au chapitre 4, on passe à un vrai coffre-fort de secrets, **HashiCorp Vault**, avec des droits par personne et
-un journal de chaque lecture.
+La seconde approche garde le reste du fichier lisible, et ses différences dans Git. Pour un fichier entier, la
+convention est de séparer les secrets de leur usage :
+
+```yaml title="group_vars/eos/vault.yml (chiffré)"
+vault_tacacs_key: s3cr3t
+```
+
+```yaml title="group_vars/eos/vars.yml (en clair)"
+tacacs_key: "{{ vault_tacacs_key }}"
+```
+
+Un `grep tacacs_key` sur le dépôt trouve ainsi la variable, et le préfixe `vault_` dit où elle est définie.
+
+### Plusieurs coffres : les identifiants de coffre
+
+Un même mot de passe pour le lab et la production, c'est donner la production à tous ceux qui touchent au lab.
+Les **identifiants de coffre** (`--vault-id label@source`) permettent d'utiliser un mot de passe par environnement.
+Le label est écrit dans l'en-tête du contenu chiffré (`$ANSIBLE_VAULT;1.2;AES256;prod`), et un playbook peut en
+recevoir plusieurs :
+
+```bash
+ansible-vault encrypt --vault-id dev@~/.vault/dev.pass group_vars/lab/vault.yml
+ansible-vault encrypt --vault-id prod@~/.vault/prod.pass group_vars/prod/vault.yml
+ansible-playbook site.yml --vault-id dev@~/.vault/dev.pass --vault-id prod@prompt
+ansible-vault rekey --vault-id prod@~/.vault/prod.pass --new-vault-id prod@prompt group_vars/prod/vault.yml
+```
+
+La source est un fichier de mot de passe, ou `prompt` pour le saisir. Avec un mauvais mot de passe, le message est
+explicite :
+
+```text title="ansible-vault view avec un mauvais mot de passe"
+[ERROR]: Failed to view 'dev.yml': Decryption failed (no vault secrets were found that could decrypt).
+```
+
+### Où ranger le mot de passe du coffre
+
+- **Sur un poste** : un fichier hors du dépôt, lisible par vous seul (`chmod 600`), désigné par `--vault-id` ou par
+  la variable `ANSIBLE_VAULT_PASSWORD_FILE`. Ajoutez son nom au `.gitignore` par précaution.
+- **Dans un pipeline GitLab** : une variable masquée et protégée de type **File**. GitLab écrit son contenu dans un
+  fichier temporaire et met le **chemin** dans la variable : `--vault-id prod@$VAULT_PASS_PROD`.
+- **Jamais** dans le dépôt, ni dans `ansible.cfg`, ni en argument de commande visible dans l'historique.
+
+### Le piège : un secret rechiffré… écrit en clair
+
+<Callout type="warning">
+Le filtre `ansible.builtin.vault` chiffre une valeur dans un template. Mais ce chiffrement ne survit pas toujours à
+l'écriture : avec ansible-core 2.21, une valeur passée par ce filtre puis écrite avec `copy` et `content:` est
+**déchiffrée** au moment de l'écriture, et le fichier contient le secret **en clair**. Le playbook se termine sans
+erreur. Pour produire un fichier chiffré, passez par `ansible-vault` lui-même, et vérifiez le résultat.
+</Callout>
+
+```yaml title="Écrire un fichier chiffré, puis vérifier qu'il l'est vraiment"
+- name: Chiffrer avec ansible-vault, le contenu passant par l'entrée standard
+  ansible.builtin.command:
+    cmd: ansible-vault encrypt --vault-id prod@{{ vault_pass_file }} --output {{ secrets_file }} -
+    stdin: "{{ new_secrets | to_nice_yaml }}"
+  no_log: true
+  changed_when: true
+
+- name: Lire le fichier tel qu'il est sur le disque (slurp ne déchiffre pas)
+  ansible.builtin.slurp:
+    src: "{{ secrets_file }}"
+  register: written
+
+- name: Vérifier que le fichier écrit est bien chiffré
+  ansible.builtin.assert:
+    that: (written.content | b64decode).startswith('$ANSIBLE_VAULT')
+    fail_msg: "{{ secrets_file }} n'est pas chiffré : ne le commitez pas"
+```
+
+Pour la vérification, utilisez `slurp`, pas le lookup `file` : ce dernier **déchiffre** automatiquement un fichier
+chiffré dont il connaît le mot de passe, et le test échouerait sur un fichier pourtant correct.
+
+### Les bonnes pratiques
+
+- **Aucun secret en clair dans Git**, même dans un dépôt privé : un dépôt finit toujours par être cloné, copié ou
+  rendu public. Un secret commité par erreur est compromis : changez-le, nettoyer l'historique ne suffit pas.
+- **Un coffre par environnement** (lab, préproduction, production), avec des mots de passe différents.
+- **Le moindre privilège** : le compte de service des playbooks n'a que les droits dont il a besoin.
+- **`no_log: true`** sur toute tâche qui manipule un secret, pour qu'il n'apparaisse ni dans la sortie ni dans les
+  journaux.
+- **Une rotation** : `rekey` du coffre au départ de quelqu'un qui en connaissait le mot de passe, et changement des
+  secrets eux-mêmes s'il a pu les lire.
+
+Ansible Vault reste un fichier protégé par **un seul mot de passe partagé**, sans trace de qui l'a lu. Au chapitre 4,
+on passe à un vrai coffre-fort de secrets, **HashiCorp Vault**, avec des droits par personne et un journal de chaque
+lecture.
 
 ## Python ou Ansible ?
 
@@ -192,6 +296,7 @@ script dans les deux versions.
 - **Inventaire** + **group_vars** + **playbooks** ; les **collections** apportent les modules constructeur.
 - L'**idempotence** : décrire un état, n'appliquer que la différence ; `--check --diff` avant d'appliquer.
 - Privilégiez les **modules ressources** et leur paramètre `state`.
-- Les secrets vont dans **Ansible Vault** (ou un vrai coffre), jamais en clair dans le dépôt.
+- Les secrets vont dans **Ansible Vault** (ou un vrai coffre), jamais en clair dans le dépôt : un coffre par
+  environnement avec `--vault-id`, et une vérification que tout fichier écrit commence par `$ANSIBLE_VAULT`.
 
 Prochain chapitre : un premier usage concret, la **sauvegarde automatique des configurations dans Git**.

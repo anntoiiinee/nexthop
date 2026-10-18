@@ -21,7 +21,7 @@
 
 ---
 
-Blog pédagogique réseau et sécurité, bilingue FR/EN, destiné aux étudiants et aux personnes en reconversion : tutoriels écrits (pas de vidéo), formations en chapitres, labs ContainerLab téléchargeables et outils interactifs.
+Blog pédagogique réseau, sécurité et automatisation, bilingue FR/EN, pour tous les niveaux (étudiants, reconversions, admins et techs, devs et DevOps) : tutoriels écrits (pas de vidéo), formations en chapitres, labs ContainerLab téléchargeables et outils interactifs.
 
 Auteur : Antoine Lecarpentier, IT Network Specialist.
 
@@ -283,6 +283,8 @@ Mise en route (une seule fois) :
 - [x] Fondamentaux, chapitre 13 « Traceroute » (`traceroute`) en FR et EN : TTL et ICMP, sondes UDP / ICMP / TCP, pourquoi il ment (filtrage, limitation ICMP, asymétrie, ECMP, MPLS, tunnels), mtr, sorties réelles d'un réseau de conteneurs
 - [x] Services et observabilité, chapitre 2 « NTP : l'heure du réseau » (`ntp`) en FR et EN : strates, boîtier GNSS (antenne, oscillateur rubidium, brouillage), serveurs externes et NTS, architecture, configuration EOS (vérifiée sur la doc Arista), IOS et chrony (sortie réelle) ; chapitres suivants décalés
 - [x] Glossaire : terme « Horloge atomique » (`atomic-clock`), infobulle dans le chapitre NTP
+- [x] Automatisation, chapitre 2 « Ansible » : section Ansible Vault approfondie en FR et EN (commandes, `encrypt_string`, convention `vault_`, identifiants de coffre par environnement, mot de passe en CI avec une variable File, bonnes pratiques) et piège du filtre `vault` vérifié sur ansible-core 2.21.5 (secret écrit en clair par `copy content`, vérification avec `slurp` car le lookup `file` déchiffre)
+- [x] Accueil : badge, introduction et description du site élargis à tous les publics (plus seulement étudiants et reconversions)
 
 ---
 
@@ -294,15 +296,7 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 4 Automatisation · 5 Sécurité · **6 Proxy et load balancing** (`proxy`) · **7 Services et observabilité** (`operations`) ·
 **8 Le réseau dans le cloud** (`cloud`). Les 8 sauts sont rédigés.
 
-### Formation Automatisation : les secrets et Vault (nouveau chapitre, ou approfondissement du chapitre Ansible)
-
-- Ansible Vault en détail : `create`, `edit`, `view`, `encrypt_string`, `rekey`, plusieurs coffres avec `--vault-id`,
-  fichier de mot de passe, intégration CI (variable de type File).
-- Les limites d'Ansible Vault (un mot de passe partagé, pas de journal d'accès) et les gestionnaires de secrets :
-  HashiCorp Vault (moteur KV, politiques, jetons, `community.hashi_vault`), CyberArk, Bitwarden.
-- Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
-- Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
-  le fichier produit commence bien par `$ANSIBLE_VAULT`.
+Aucun contenu en attente pour le moment.
 
 ---
 
