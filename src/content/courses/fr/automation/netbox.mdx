@@ -5,7 +5,7 @@ pubDate: 2026-10-17
 level: intermediate
 tags: [netbox, source-of-truth, ipam, automation, python, ansible]
 vendor: [netbox]
-order: 7
+order: 8
 ---
 
 Jusqu'ici, nos scripts lisaient un petit `inventory.yml` écrit à la main. Sur un vrai réseau, les
@@ -71,7 +71,8 @@ minutes :
 ## L'API et pynetbox
 
 Tout ce qu'on fait dans l'interface web est faisable par l'<Term id="api" /> REST, avec un jeton
-d'accès. En Python, la bibliothèque **pynetbox** la rend très naturelle :
+d'accès : méthodes, codes de retour, pagination et Swagger sont expliqués au chapitre
+[Les API REST](/formations/automation/rest-api). En Python, la bibliothèque **pynetbox** la rend très naturelle :
 
 ```python title="netbox_examples.py"
 import os

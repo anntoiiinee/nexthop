@@ -24,7 +24,9 @@ def main(names: list[str]) -> int:
         sys.exit("Définissez NETBOX_URL et NETBOX_TOKEN.")
 
     session = requests.Session()
-    session.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
+    # Jetons v2 (NetBox 4.5 et plus) : « Bearer » ; anciens jetons : « Token »
+    scheme = "Bearer" if token.startswith("nbt_") else "Token"
+    session.headers.update({"Authorization": f"{scheme} {token}", "Accept": "application/json"})
     OUTPUT.mkdir(parents=True, exist_ok=True)
 
     errors = 0
