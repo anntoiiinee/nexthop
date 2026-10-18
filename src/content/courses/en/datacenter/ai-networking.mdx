@@ -1,0 +1,199 @@
+---
+title: "Networks for AI"
+description: "The network of a GPU cluster: front-end, back-end, scale-up and storage, collective communications and job completion time, the rail-optimized topology and its sizing, RDMA and RoCEv2, lossless networking (PFC, ECN, DCQCN), load balancing against elephant flows, InfiniBand versus Ethernet, and Ultra Ethernet."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, ai, gpu, rdma, roce, rail-optimized, ultra-ethernet, pfc, ecn]
+vendor: [arista]
+order: 13
+---
+
+Training a large AI model means making **thousands of GPUs** work together for weeks. No GPU can do it all alone:
+each computes on part of the data, then all of them **exchange** their results before the next step. Those exchanges
+go over the network, and until they are done, the GPUs, which cost tens of thousands of euros each, **wait**. In an AI
+cluster, the network is no longer infrastructure: it is part of the computer. This chapter shows how it differs from a
+classic fabric, reusing everything the course has laid down: spine/leaf,
+[buffers](/en/courses/datacenter/buffers), [QoS, PFC and ECN](/en/courses/datacenter/qos).
+
+## The networks of a GPU cluster
+
+A typical AI server holds **8 GPUs**. It is connected to several separate networks:
+
+| Network | Role | Characteristics |
+|---|---|---|
+| **Scale-up** | connecting the GPUs **of the same server** (or rack) to each other | proprietary, very high-speed links (NVLink at NVIDIA), not classic Ethernet |
+| **Back-end** (*scale-out*) | connecting GPUs **of different servers** for training | one network card per GPU, at 400 or 800 Gb/s; **lossless**, no oversubscription |
+| **Storage** | loading training data, writing *checkpoints* | large bursty throughput, often NVMe-oF or parallel file systems |
+| **Front-end** | the "normal" network: user access, job scheduler, services | a classic data center fabric |
+| **Management** | administration, consoles | the usual [out-of-band network](/en/courses/operations/oob) |
+
+The **back-end** network is what makes an AI cluster unique, and it is what the rest of this chapter describes.
+
+## Why this traffic is different
+
+### Collective communications
+
+At each training step, the GPUs combine their results through **collective operations**, the best known being
+**all-reduce**: each GPU contributes its share, and all receive the combined result. Libraries such as NCCL organize
+these exchanges, as rings or trees, between all of a job's GPUs.
+
+The decisive consequence: a step is only done when **the last exchange** is done. The network isn't judged on its
+average throughput, but on its **slowest flow** (*tail latency*). A single congested link, a single lost packet, and
+thousands of GPUs wait. The measure that counts is the **job completion time**.
+
+### Few flows, huge, synchronized
+
+A classic fabric carries millions of small, varied flows, which ECMP spreads well statistically. An AI cluster carries
+**few flows**, **huge** ones (*elephant flows* that saturate a 400 Gb/s link), that **all start at the same time**.
+Two consequences:
+
+- **ECMP collisions**: ECMP picks a link by **hashing** the headers. With few flows, two elephants often land on the
+  same saturated link while a neighboring link stays empty. This is called low **entropy**.
+- **Synchronized incast**: every GPU sends at the same moment, creating bursts on the same ports.
+
+## The rail-optimized topology
+
+In a server, GPU 0 mostly talks to the GPU 0s of other servers, GPU 1 to the GPU 1s, and so on (communication
+libraries organize exchanges this way). The **rail-optimized** topology takes advantage of it: each **rail** is a
+group of leaves to which **the same GPU of every server** is connected.
+
+<Topology
+  width={760}
+  height={390}
+  groups={[{ x: 60, y: 150, w: 640, h: 80, label: 'Leaves, one per rail', tone: 'sky' }]}
+  nodes={[
+    { id: 'sp1', type: 'switch', x: 270, y: 50, label: 'spine 1', tone: 'violet' },
+    { id: 'sp2', type: 'switch', x: 490, y: 50, label: 'spine 2', tone: 'violet' },
+    { id: 'r0', type: 'switch', x: 140, y: 190, label: 'rail 0' },
+    { id: 'r1', type: 'switch', x: 300, y: 190, label: 'rail 1' },
+    { id: 'r2', type: 'switch', x: 460, y: 190, label: 'rail 2' },
+    { id: 'r3', type: 'switch', x: 620, y: 190, label: 'rail 3' },
+    { id: 's1', type: 'server', x: 230, y: 345, label: 'server 1', sub: 'GPUs 0 to 3', tone: 'emerald' },
+    { id: 's2', type: 'server', x: 530, y: 345, label: 'server 2', sub: 'GPUs 0 to 3', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'r0', to: 'sp1' }, { from: 'r0', to: 'sp2' }, { from: 'r1', to: 'sp1' }, { from: 'r1', to: 'sp2' },
+    { from: 'r2', to: 'sp1' }, { from: 'r2', to: 'sp2' }, { from: 'r3', to: 'sp1' }, { from: 'r3', to: 'sp2' },
+    { from: 's1', to: 'r0', label: 'GPU 0' }, { from: 's1', to: 'r1' }, { from: 's1', to: 'r2' }, { from: 's1', to: 'r3' },
+    { from: 's2', to: 'r0' }, { from: 's2', to: 'r1' }, { from: 's2', to: 'r2' }, { from: 's2', to: 'r3', label: 'GPU 3' },
+  ]}
+  caption="Rail-optimized, simplified to 4 GPUs per server: each server's GPU 0 is on rail 0, GPU 1 on rail 1… Exchanges between GPUs of the same rank only cross a single leaf."
+/>
+
+- The most intense traffic (between GPUs of the same rank) stays **within a rail**, **one hop** away, without going
+  through the spines.
+- The spines carry exchanges between rails, which are less frequent.
+- The fabric is **non-blocking**: as much bandwidth towards the spines as towards the GPUs, with no
+  [oversubscription](/en/courses/datacenter/spine-leaf#oversubscription). Any reduction would be paid for in compute
+  time.
+
+### Sizing: an example
+
+A cluster of **1,024 GPUs** (128 servers with 8 GPUs), each GPU with a **400 Gb/s** card, and **64-port 400 Gb/s**
+switches:
+
+- **8 rails**, one per GPU rank, of **128 GPU ports** each;
+- each leaf dedicates **32 ports to GPUs** and **32 ports to spines** (non-blocking): that's **4 leaves per rail**, so
+  **32 leaves**;
+- the 32 leaves together have **1,024 links** to the spines: with 64-port spines, **16 spines**.
+
+In total, **2,048 links at 400 Gb/s** for the back-end network alone: 1,024 to the GPUs and 1,024 between leaves and
+spines, i.e. as many optics or cables. At this scale, [cabling](/en/courses/datacenter/cabling), power and cooling
+become topics in their own right.
+
+## RDMA and RoCE
+
+To go fast, GPUs exchange their data with <Term id="rdma" /> (*Remote Direct Memory Access*): the network card reads
+and writes **directly** into the remote GPU's memory, without going through the CPU or the system's TCP/IP stack.
+Minimal latency, a free CPU.
+
+- **InfiniBand** is RDMA's historical network, designed for high-performance computing.
+- **RoCEv2** (*RDMA over Converged Ethernet*) carries RDMA over Ethernet, inside **UDP port 4791**. It is routable,
+  so it runs over a classic IP fabric.
+
+RDMA was designed for a **lossless** network: its loss recovery is rudimentary (it retransmits everything from the
+lost packet onwards). A 0.1% loss rate is enough to collapse throughput. Hence the recipe we have already seen:
+
+1. **PFC** on the RoCE class, so no packet is dropped through congestion;
+2. **ECN** on that same class, with low thresholds, to slow senders down **before** reaching the pauses;
+3. **DCQCN**, the congestion control algorithm of RoCE cards: the receiver of an ECN-marked packet sends a
+   notification (**CNP**, *Congestion Notification Packet*) back to the sender, which reduces its rate;
+4. a **PFC watchdog** everywhere, against pause storms.
+
+<Callout type="warning">
+An "almost lossless" RoCE network doesn't exist: a single misconfigured switch, port or card, and the class loses
+packets or hangs. Configurations are generated from a model, checked on every change, and PFC pause, ECN marking and
+per-queue drop counters are monitored continuously.
+</Callout>
+
+## Spreading the load despite the elephants
+
+Against ECMP collisions, several techniques, often combined:
+
+- **More entropy**: multiply RDMA connections (*queue pairs*) between two GPUs; each uses a different UDP source port,
+  and therefore a different hash result.
+- **Dynamic load balancing** (*dynamic* or *adaptive load balancing*): the switch picks the egress link based on its
+  actual load, and can move a flow between two bursts (*flowlets*) without reordering its packets.
+- **Packet spraying**: each packet of a flow goes over a different link. The load is perfectly spread, but packets
+  arrive **out of order**: you need a network card able to reorder them.
+- **Topology**: rail-optimized avoids the spines for most of the traffic.
+
+## InfiniBand or Ethernet?
+
+| | InfiniBand | Ethernet (RoCEv2) |
+|---|---|---|
+| Lossless | native, through credits (like Fibre Channel) | to be built: PFC, ECN, DCQCN |
+| Management | a centralized subnet manager | a classic IP fabric, BGP, EVPN, familiar tools |
+| Vendors | essentially one (NVIDIA) | many: switches, cards, optics |
+| Skills | specialized | those of network teams |
+| Integration | a world apart | the same network as the rest of the data center |
+
+InfiniBand long dominated supercomputers and the first AI clusters. Ethernet is progressing fast, driven by the number
+of vendors, available skills and standardization work such as Ultra Ethernet.
+
+## Ultra Ethernet
+
+The **Ultra Ethernet Consortium** (UEC), which brings together switch, card and GPU makers, published its
+**specification 1.0 in June 2025**, then version 1.1 in October 2026. It describes a complete stack, from cards and
+switches to optics, and above all a new transport, **Ultra Ethernet Transport** (UET, UDP port 4793), designed for AI
+and high-performance computing:
+
+- a **modern RDMA** over Ethernet and IP, which accepts packets **out of order**: spraying packets over every path
+  becomes possible;
+- **selective retransmission** of only the lost packets, instead of resending everything: a loss no longer collapses
+  throughput;
+- **congestion control** built into the transport.
+
+The goal is to depend less on a lossless network, and therefore on PFC and its risks. Compatible equipment is arriving
+gradually; RoCEv2 remains the basis of Ethernet clusters in production today.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| Job completion time varies a lot from day to day | ECMP collisions depending on job placement; static load balancing over few flows |
+| RoCE throughput collapses at times | losses in the RDMA class: a device without PFC, or missing ECN letting queues overflow |
+| Part of the cluster freezes | PFC pause storm, no watchdog |
+| A slow job, underused GPUs | a degraded link or an optic losing packets; a single slow link slows the whole job |
+| Checkpoints slow down training | storage network undersized for write bursts |
+| Different performance between two rails | swapped cabling (a GPU on the wrong rail), or an oversubscribed rail |
+
+## Your turn
+
+1. Why is a fabric's **average throughput** a poor measure for an AI cluster? Which one should be used?
+2. Size the back-end network of a 256-GPU cluster (32 servers with 8 GPUs, 400 Gb/s per GPU) with 64-port switches: how
+   many rails, leaves, spines?
+3. Why can two 400 Gb/s flows saturate a link even though the fabric is non-blocking? Name two remedies.
+4. What role do PFC, ECN and CNPs each play in a RoCE network? What is Ultra Ethernet trying to change?
+
+## Key takeaways
+
+- An AI server connects to several networks: **scale-up** (NVLink), **back-end** (GPU to GPU), **storage**,
+  **front-end** and management. The back-end is the heart of the cluster.
+- **Collective communications** synchronize every GPU: the network is judged on its **slowest flow** and on **job
+  completion time**.
+- **Rail-optimized**: the same GPU of every server on the same rail, one hop away; a **non-blocking** fabric.
+- **RDMA** over Ethernet = **RoCEv2** (UDP 4791), which requires a **lossless** network: PFC, ECN, DCQCN and watchdog.
+- Few synchronized **elephant flows**: against ECMP collisions, more entropy, dynamic load balancing, packet spraying.
+- **InfiniBand** remains a reference; **Ethernet** is progressing, and **Ultra Ethernet** (specification 1.0 in 2025)
+  aims for a transport that tolerates loss and reordering.

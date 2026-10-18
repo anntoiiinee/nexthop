@@ -1,0 +1,210 @@
+---
+title: "Disaster recovery and business continuity: surviving the loss of a data center"
+description: "Disaster recovery and business continuity plans from a network team's point of view: RTO and RPO, the business impact analysis, recovery strategies from cold site to active/active, replication and backups (the 3-2-1 rule, an immutable copy against ransomware), what the network must prepare (addressing, DNS, BGP, firewalls, access), the restart order, and testing."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, pra, pca, disaster-recovery, backup, resilience, dci]
+vendor: [multi]
+order: 9
+---
+
+A fire in a room, a flood, a long power outage, a human error that wipes a storage array, ransomware that
+encrypts every server: a data center **can** disappear, all at once. The question isn't whether it will happen, but
+what the company will have prepared that day. That's the purpose of the **BCP** and the **DRP**. They are first of
+all management and business topics, but the network plays a central role: without it, no recovery site can be
+reached.
+
+## BCP and DRP: two complementary plans
+
+| | **BCP**, business continuity plan | **DRP**, disaster recovery plan |
+|---|---|---|
+| In French | *PCA, plan de continuité d'activité* | *PRA, plan de reprise d'activité* |
+| Goal | **keep** the business running during the crisis, with little or no interruption | **resume** the business after it stopped, within a defined time |
+| Scope | the whole company: premises, staff, suppliers, communication… and IT | usually IT: systems, data, network |
+| In IT | **active/active** sites, a failure absorbed with no visible switchover | a **failover** to a recovery site, with an accepted interruption |
+
+The BCP includes the DRP: the company's continuity also depends on IT's ability to restart.
+
+## Two numbers to decide everything: RTO and RPO
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: 'Last copy', sub: 'of the data', span: 3, tone: 'emerald' },
+      { label: '← RPO →', sub: 'data lost', span: 3, tone: 'rose' },
+      { label: 'Disaster', sub: 'everything stops', span: 2, tone: 'slate' },
+      { label: '← RTO →', sub: 'downtime', span: 4, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="The RPO looks back: how much data is lost? The RTO looks ahead: how long before restarting?"
+/>
+
+- <Term id="rto" /> (*Recovery Time Objective*): the maximum acceptable downtime. "The ordering service must be back
+  within 4 hours."
+- <Term id="rpo" /> (*Recovery Point Objective*): the maximum acceptable data loss, expressed in time. "We accept
+  losing at most 15 minutes of orders."
+
+These numbers aren't technical: the **business** sets them, during a **Business Impact Analysis** (BIA): what does
+an hour of downtime cost for each service, in money, reputation, legal obligations? A payroll service can wait two
+days; an online shop, not two hours. Each application thus gets its RTO and RPO, and therefore its strategy, with
+its cost.
+
+## Recovery strategies
+
+| Strategy | Principle | RTO | RPO | Cost |
+|---|---|---|---|---|
+| **Offsite backups** | backups kept elsewhere; everything is rebuilt on hardware to be found | days to weeks | last backup (often 24 h) | low |
+| **Cold site** | premises and network ready, no running servers | days | last backup | moderate |
+| **Warm site** | hardware installed, data restored or replicated regularly | hours | hours | high |
+| **Hot site** (active/passive) | a complete site, data **replicated** continuously, ready to take over | minutes to hours | seconds to minutes | very high |
+| **Active/active** | both sites serve all the time | close to zero | close to zero | highest |
+
+The **cloud** changed the game: a recovery site can be infrastructure started only in case of disaster, paid as you
+go.
+
+## Data: replication and backups
+
+### Replication
+
+- **Synchronous**: a write is only confirmed once written **at both sites**. Zero RPO, but each write pays the round
+  trip between the sites, which limits the distance (the [DCI](/en/courses/datacenter/dci) chapter does the math).
+- **Asynchronous**: the write is confirmed locally, then sent to the other site. No distance limit, but an RPO of a
+  few seconds to a few minutes.
+
+### Why replication isn't enough
+
+Replication copies **everything**, including the worst: a table deleted by mistake, or files encrypted by
+ransomware, are replicated to the recovery site within seconds. Against those disasters, only **backups** protect
+you, provided the attacker can't reach them.
+
+The classic rule, known as **3-2-1**, popularized by photographer Peter Krogh and taken up by the US cybersecurity
+agency (CISA):
+
+- **3** copies of the data (the original and two backups);
+- on **2** different media;
+- **1** of them offsite.
+
+Today we add an **offline or immutable** copy (impossible to change or delete during its retention period, even by an
+administrator), and regular, error-free **restore tests**.
+
+<Callout type="warning">
+Ransomware looks for the backups first, to prevent recovery. Backups reachable from the production network, with the
+same admin accounts as the servers, will be encrypted along with them. Isolate the backup network and accounts, and
+keep a copy that no network access can erase.
+</Callout>
+
+## What the network must prepare
+
+On failover day, every network oversight costs hours. The list of what must exist **at the recovery site**, or be
+planned in advance:
+
+### Addressing
+
+Two choices, to be made well before the disaster:
+
+- **Keep the same addresses** at the recovery site: nothing to change in the applications, but the network must be
+  able to **move** those prefixes, with a BGP advertisement from the other site or
+  [stretched VLANs](/en/courses/datacenter/dci#stretching-a-vlan-between-two-sites-why-its-risky), with their risks.
+- **Change addresses**: each site has its own clean, routed networks. More robust, but every dependency on an IP
+  address (firewall rules, application configurations, licences) must be inventoried and adapted.
+
+### User and customer access
+
+- **DNS**: records to switch to the recovery site's addresses. A short TTL on the names involved, set **in advance**
+  ([DNS chapter](/en/courses/fundamentals/dns)), otherwise clients keep the old address for hours.
+- **GSLB** or **anycast** address: a [global load balancer](/en/courses/proxy/load-balancing) automatically directs
+  to the available site.
+- **Internet**: public prefixes advertised in BGP from both sites, the recovery site with a less preferred path (*AS
+  path prepend*), so it takes over on its own if the primary disappears.
+- **Remote access**: VPN concentrators and remote sites' access (SD-WAN) to the recovery site.
+
+### Infrastructure services
+
+Everything applications need to start must **already be running** at the recovery site: DNS, directory (Active
+Directory), [NTP](/en/courses/operations/ntp), DHCP and IPAM, authentication (TACACS+, RADIUS), certificate
+authority, monitoring. A restored application that can't find its directory won't start.
+
+### Security
+
+- The recovery site's **firewall rules** are kept up to date at the same pace as the primary's. A gap discovered on
+  failover day blocks entire applications.
+- **Certificates** are valid for the names and addresses used at the recovery site.
+
+### The network team's tools and access
+
+- [Configuration backups](/en/courses/automation/config-backup), the Git repository, documentation, diagrams:
+  **reachable without the primary site**. A repository hosted in the destroyed data center is useless.
+- **Break-glass passwords**: the vault must be reachable, or an offline copy available
+  ([Vault chapter](/en/courses/automation/vault#the-network-trap-the-vault-during-an-outage)).
+- [Out-of-band access](/en/courses/operations/oob) to the recovery site, independent of the primary site.
+
+## The restart order
+
+Applications depend on one another. The DRP describes the restart **order**, from the bottom up:
+
+1. **Network**: core, firewalls, Internet and WAN access;
+2. **Infrastructure services**: DNS, directory, NTP, authentication;
+3. **Storage**: replication failover, volumes presented;
+4. **Databases**;
+5. **Applications**, from most to least critical;
+6. **User access**: DNS switch, GSLB, BGP advertisements.
+
+Each step has its checks, its owner and a written procedure (*runbook*), followed step by step on the day, by teams
+under pressure, maybe in the middle of the night.
+
+## Test, again and again
+
+A DRP that has never been tested doesn't work: forgotten dependencies, missing firewall rules and passwords nobody can
+find only show up when you try. Three levels of testing:
+
+| Test | Principle | Indicative frequency |
+|---|---|---|
+| **Tabletop** | walk through the scenario in a meeting, procedure in hand, without touching anything | several times a year |
+| **Partial** | fail over one application, or one infrastructure service, to the recovery site | regularly |
+| **Full** | actually cut the primary site, or simulate it, and run the business from the recovery site | at least once a year |
+
+Each test measures the **RTO and RPO actually achieved**, and ends with a list of fixes. Regulations require it in
+some sectors: for finance, the European **DORA** regulation, applicable since 17 January 2025, requires a continuity
+policy, recovery plans tested at least once a year, and restores onto systems separate from the original ones.
+
+<Callout type="field">
+The test that reveals the most problems: **coming back**. Failing over to the recovery site is prepared; returning to
+the primary site, with data that changed in the meantime, rarely is. The DRP must describe both directions.
+</Callout>
+
+## Classic pitfalls
+
+| Symptom on failover day | Cause |
+|---|---|
+| Clients keep going to the old site for hours | long DNS TTLs, never lowered in advance |
+| Applications start but refuse connections | the recovery site's firewall rules are out of date |
+| Nothing starts for lack of directory or DNS | infrastructure services missing from the recovery site |
+| The recovery site's data is encrypted too | replication as the only protection, with no isolated or immutable backup |
+| The team can find neither the procedure nor the passwords | documentation and vault hosted at the affected site |
+| The actual RTO is three times the planned one | plan never tested, restart order unknown |
+| Both sites serve at the same time after the link is cut | no witness to break the tie: split-brain |
+
+## Your turn
+
+1. A service accepts losing 5 minutes of data and must restart within 1 hour. Which strategy and which replication
+   mode do you propose?
+2. Why doesn't synchronous replication between two sites protect against ransomware? What else is needed?
+3. List five network items to check at the recovery site before a failover test.
+4. The company's public website must fail over to the recovery site. Compare a DNS-based and a BGP-based failover:
+   benefits and limits.
+
+## Key takeaways
+
+- **BCP**: keep going during the crisis; **DRP**: resume afterwards, within a defined time. The BCP includes the DRP.
+- **RTO** (downtime) and **RPO** (data loss) are set by the **business**, after an **impact analysis**, and dictate the
+  strategy: from offsite backups to active/active.
+- **Replication** also copies errors and ransomware: you need **3-2-1 backups**, including an **offline or immutable**
+  copy, tested.
+- The network prepares **addressing**, **DNS** (TTL), **BGP** and GSLB, **firewalls**, **infrastructure services**
+  and the **team's access** to the recovery site.
+- A DRP is **tested**, in both directions, and fixed after every test.
+
+Next chapter: **data center interconnect**, the link that makes the recovery site reachable and replication
+possible.

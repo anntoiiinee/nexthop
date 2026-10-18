@@ -134,6 +134,14 @@ export const glossary = {
       en: 'Notation that gives the size of a network as the number of prefix bits, for example /24, instead of the old A, B and C classes.',
     },
   },
+  dci: {
+    term: 'DCI',
+    expansion: 'Data Center Interconnect',
+    definition: {
+      fr: "Les liens et les technologies qui relient deux data centers : fibre, WDM, routage entre sites, et parfois extension de réseaux de niveau 2 avec EVPN-VXLAN.",
+      en: "The links and technologies connecting two data centers: fiber, WDM, routing between sites, and sometimes layer 2 extension with EVPN-VXLAN.",
+    },
+  },
   ddos: {
     term: 'DDoS',
     expansion: 'Distributed Denial of Service',
@@ -166,6 +174,14 @@ export const glossary = {
       en: "Distributed directory translating names (www.example.com) into IP addresses, and back, through a hierarchy of servers.",
     },
   },
+  dscp: {
+    term: 'DSCP',
+    expansion: 'Differentiated Services Code Point',
+    definition: {
+      fr: "Les 6 bits de l'en-tête IP qui indiquent la classe de service d'un paquet (64 valeurs, comme EF ou AF31) ; ils survivent au routage, contrairement au CoS 802.1p.",
+      en: "The 6 bits of the IP header that give a packet's service class (64 values, such as EF or AF31); they survive routing, unlike 802.1p CoS.",
+    },
+  },
   ebgp: {
     term: 'eBGP',
     expansion: 'External BGP',
@@ -180,6 +196,14 @@ export const glossary = {
     definition: {
       fr: "Utilisation simultanée de plusieurs chemins de même coût vers une destination : le trafic est réparti par flux entre eux.",
       en: "Using several equal-cost paths to a destination at once: traffic is spread across them per flow.",
+    },
+  },
+  ecn: {
+    term: 'ECN',
+    expansion: 'Explicit Congestion Notification',
+    definition: {
+      fr: "Deux bits de l'en-tête IP qu'un switch congestionné marque au lieu de jeter le paquet ; le destinataire prévient l'émetteur, qui ralentit avant toute perte.",
+      en: "Two bits of the IP header that a congested switch marks instead of dropping the packet; the receiver tells the sender, which slows down before any loss.",
     },
   },
   esp: {
@@ -513,6 +537,14 @@ export const glossary = {
       en: "The name of the data unit at each layer: bit (layer 1), frame (2), packet (3), segment or datagram (4).",
     },
   },
+  pfc: {
+    term: 'PFC',
+    expansion: 'Priority-based Flow Control',
+    definition: {
+      fr: "Contrôle de flux Ethernet par classe (IEEE 802.1Qbb) : un switch envoie une pause pour une seule priorité, rendant cette classe sans perte ; indispensable au RDMA, mais à surveiller.",
+      en: "Per-class Ethernet flow control (IEEE 802.1Qbb): a switch sends a pause for a single priority, making that class lossless; essential for RDMA, but to be watched.",
+    },
+  },
   pki: {
     term: 'PKI',
     expansion: 'Public Key Infrastructure',
@@ -528,12 +560,28 @@ export const glossary = {
       en: "Intermediary that receives a connection in place of the destination and opens a second one to it. It sees, filters and logs what goes through.",
     },
   },
+  qos: {
+    term: 'QoS',
+    expansion: 'Quality of Service',
+    definition: {
+      fr: "L'ensemble des mécanismes qui décident quel trafic passe en premier, attend ou est jeté quand un lien est congestionné : classification, files, ordonnancement, ECN, PFC.",
+      en: "The mechanisms deciding which traffic goes first, waits or is dropped when a link is congested: classification, queues, scheduling, ECN, PFC.",
+    },
+  },
   rd: {
     term: 'RD',
     expansion: 'Route Distinguisher',
     definition: {
       fr: "Valeur ajoutée devant un préfixe pour le rendre unique dans BGP, même si deux VRF utilisent les mêmes adresses.",
       en: "Value prepended to a prefix to make it unique in BGP, even when two VRFs use the same addresses.",
+    },
+  },
+  rdma: {
+    term: 'RDMA',
+    expansion: 'Remote Direct Memory Access',
+    definition: {
+      fr: "Accès direct de la carte réseau à la mémoire d'une machine distante, sans passer par le processeur ni la pile TCP/IP ; sur Ethernet, il s'appelle RoCE et exige un réseau sans perte.",
+      en: "Direct access by the network card to a remote machine's memory, bypassing the CPU and the TCP/IP stack; over Ethernet it is called RoCE and requires a lossless network.",
     },
   },
   rib: {
@@ -550,6 +598,14 @@ export const glossary = {
     definition: {
       fr: "Infrastructure qui permet de vérifier cryptographiquement qu'un AS a le droit d'annoncer un préfixe (via des ROA).",
       en: "Infrastructure that cryptographically verifies that an AS is allowed to announce a prefix (through ROAs).",
+    },
+  },
+  rpo: {
+    term: 'RPO',
+    expansion: 'Recovery Point Objective',
+    definition: {
+      fr: "La perte de données maximale acceptable après un sinistre, exprimée en temps : un RPO de 15 minutes signifie que l'on accepte de perdre au plus 15 minutes d'écritures.",
+      en: "The maximum acceptable data loss after a disaster, expressed in time: a 15-minute RPO means accepting the loss of at most 15 minutes of writes.",
     },
   },
   rpz: {
@@ -574,6 +630,14 @@ export const glossary = {
     definition: {
       fr: "Communauté BGP étendue qui indique dans quelles VRF ou quels VLAN une route doit être importée.",
       en: "Extended BGP community telling which VRFs or VLANs a route must be imported into.",
+    },
+  },
+  rto: {
+    term: 'RTO',
+    expansion: 'Recovery Time Objective',
+    definition: {
+      fr: "La durée maximale d'interruption acceptable après un sinistre, avant que le service ne soit rétabli ; avec le RPO, elle dicte la stratégie de secours.",
+      en: "The maximum acceptable downtime after a disaster before the service is restored; together with the RPO, it dictates the recovery strategy.",
     },
   },
   slaac: {

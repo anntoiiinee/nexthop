@@ -60,6 +60,11 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'buffers', title: { fr: 'Les buffers des switches', en: 'Switch buffers' } },
       { slug: 'vxlan', title: { fr: 'VxLAN', en: 'VxLAN' } },
       { slug: 'evpn', title: { fr: 'EVPN, le control plane', en: 'EVPN, the control plane' } },
+      { slug: 'pra-pca', title: { fr: 'PRA et PCA', en: 'Disaster recovery and continuity' } },
+      { slug: 'dci', title: { fr: 'Interconnecter deux data centers', en: 'Data center interconnect' } },
+      { slug: 'qos', title: { fr: 'La QoS dans le data center', en: 'QoS in the data center' } },
+      { slug: 'storage', title: { fr: 'Le réseau du stockage', en: 'The storage network' } },
+      { slug: 'ai-networking', title: { fr: 'Les réseaux pour l’IA', en: 'Networks for AI' } },
     ],
   },
   {

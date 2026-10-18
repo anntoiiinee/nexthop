@@ -1,0 +1,217 @@
+---
+title: "PRA et PCA : survivre à la perte d'un data center"
+description: "Plan de reprise et plan de continuité d'activité vus par une équipe réseau : RTO et RPO, l'analyse d'impact, les stratégies de secours du site froid à l'actif/actif, réplication et sauvegardes (règle 3-2-1, copie immuable contre les rançongiciels), ce que le réseau doit préparer (adressage, DNS, BGP, firewalls, accès), l'ordre de redémarrage, et les tests."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, pra, pca, disaster-recovery, backup, resilience, dci]
+vendor: [multi]
+order: 9
+---
+
+Un incendie dans une salle, une inondation, une coupure électrique qui dure, une erreur humaine qui efface un
+stockage, un rançongiciel qui chiffre tous les serveurs : un data center **peut** disparaître, d'un coup. La
+question n'est pas de savoir si cela arrivera, mais ce que l'entreprise aura préparé ce jour-là. C'est l'objet du
+**PCA** et du **PRA**. Ce sont d'abord des sujets de direction et de métiers, mais le réseau y tient une place
+centrale : sans lui, aucun site de secours n'est joignable.
+
+## PCA et PRA : deux plans complémentaires
+
+| | **PCA**, plan de continuité d'activité | **PRA**, plan de reprise d'activité |
+|---|---|---|
+| En anglais | *Business Continuity Plan* (BCP) | *Disaster Recovery Plan* (DRP) |
+| Objectif | **continuer** l'activité pendant la crise, sans interruption ou presque | **reprendre** l'activité après l'arrêt, dans un délai défini |
+| Périmètre | toute l'entreprise : locaux, personnel, fournisseurs, communication… et l'informatique | le plus souvent l'informatique : systèmes, données, réseau |
+| En informatique | des sites **actif / actif**, une panne absorbée sans bascule visible | une **bascule** vers un site de secours, avec une interruption acceptée |
+
+Le PCA englobe le PRA : la continuité de l'entreprise passe aussi par la capacité de l'informatique à repartir.
+
+## Deux chiffres pour tout décider : RTO et RPO
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { fields: [
+      { label: 'Dernière copie', sub: 'des données', span: 3, tone: 'emerald' },
+      { label: '← RPO →', sub: 'données perdues', span: 3, tone: 'rose' },
+      { label: 'Sinistre', sub: 'tout s\'arrête', span: 2, tone: 'slate' },
+      { label: '← RTO →', sub: 'durée d\'interruption', span: 4, tone: 'amber' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="Le RPO regarde en arrière : combien de données perd-on ? Le RTO regarde en avant : combien de temps avant de repartir ?"
+/>
+
+- <Term id="rto" /> (*Recovery Time Objective*) : la durée maximale d'interruption acceptable. « Le service de commande doit
+  repartir en moins de 4 heures. »
+- <Term id="rpo" /> (*Recovery Point Objective*) : la perte de données maximale acceptable, exprimée en temps. « On accepte de
+  perdre au plus 15 minutes de commandes. »
+
+On rencontre aussi leurs équivalents français : **DMIA** (durée maximale d'interruption admissible) et **PDMA** (perte
+de données maximale admissible).
+
+Ces chiffres ne sont pas techniques : ce sont les **métiers** qui les fixent, lors d'une **analyse d'impact sur
+l'activité** (BIA, *Business Impact Analysis*) : que coûte une heure d'arrêt de chaque service, en argent, en image,
+en obligations légales ? Un service de paie peut attendre deux jours ; un site de vente en ligne, pas deux heures.
+Chaque application reçoit ainsi son RTO et son RPO, et donc sa stratégie, avec son coût.
+
+## Les stratégies de secours
+
+| Stratégie | Principe | RTO | RPO | Coût |
+|---|---|---|---|---|
+| **Sauvegardes hors site** | des sauvegardes conservées ailleurs ; on reconstruit tout sur du matériel à trouver | jours à semaines | dernière sauvegarde (souvent 24 h) | faible |
+| **Site froid** | des locaux et du réseau prêts, pas de serveurs actifs | jours | dernière sauvegarde | modéré |
+| **Site tiède** | du matériel installé, données restaurées ou répliquées régulièrement | heures | heures | élevé |
+| **Site chaud** (actif / passif) | un site complet, données **répliquées** en continu, prêt à prendre le relais | minutes à heures | secondes à minutes | très élevé |
+| **Actif / actif** | les deux sites servent en permanence | proche de zéro | proche de zéro | le plus élevé |
+
+Le **cloud** a changé la donne : un site de secours peut être une infrastructure démarrée seulement en cas de
+sinistre, payée à l'usage.
+
+## Les données : réplication et sauvegardes
+
+### La réplication
+
+- **Synchrone** : une écriture n'est confirmée qu'une fois écrite **dans les deux sites**. RPO nul, mais chaque
+  écriture paie l'aller-retour entre les sites, ce qui limite la distance (le chapitre
+  [DCI](/formations/datacenter/dci) en fait le calcul).
+- **Asynchrone** : l'écriture est confirmée localement, puis envoyée à l'autre site. Pas de limite de distance, mais
+  un RPO de quelques secondes à quelques minutes.
+
+### Pourquoi la réplication ne suffit pas
+
+La réplication copie **tout**, y compris le pire : une table supprimée par erreur, ou des fichiers chiffrés par un
+rançongiciel, sont répliqués en quelques secondes vers le site de secours. Contre ces sinistres-là, seules les
+**sauvegardes** protègent, et à condition que l'attaquant ne puisse pas les atteindre.
+
+La règle classique, dite **3-2-1**, popularisée par le photographe Peter Krogh et reprise par l'agence américaine de
+cybersécurité (CISA) :
+
+- **3** copies des données (l'original et deux sauvegardes) ;
+- sur **2** supports différents ;
+- dont **1** hors site.
+
+S'y ajoutent aujourd'hui une copie **hors ligne ou immuable** (impossible à modifier ou à supprimer pendant sa durée
+de rétention, même par un administrateur), et des **tests de restauration** réguliers sans erreur.
+
+<Callout type="warning">
+Un rançongiciel cherche d'abord les sauvegardes, pour empêcher la reprise. Des sauvegardes joignables depuis le
+réseau de production, avec les mêmes comptes d'administration que les serveurs, seront chiffrées avec eux. Isolez le
+réseau et les comptes des sauvegardes, et gardez une copie qu'aucun accès réseau ne peut effacer.
+</Callout>
+
+## Ce que le réseau doit préparer
+
+Le jour de la bascule, chaque oubli réseau se paie en heures. La liste de ce qui doit exister **dans le site de
+secours**, ou être prévu à l'avance :
+
+### L'adressage
+
+Deux choix, à faire bien avant le sinistre :
+
+- **Garder les mêmes adresses** dans le site de secours : rien à changer dans les applications, mais il faut que le
+  réseau sache **déplacer** ces préfixes, par une annonce BGP depuis l'autre site ou des [VLAN étendus](/formations/datacenter/dci#étendre-un-vlan-entre-deux-sites--pourquoi-cest-risqué),
+  avec leurs risques.
+- **Changer d'adresses** : chaque site a ses réseaux, propres et routés. Plus robuste, mais toute dépendance à une
+  adresse IP (règles de firewall, configurations d'applications, licences) doit être recensée et adaptée.
+
+### L'accès des utilisateurs et des clients
+
+- **DNS** : des enregistrements à basculer vers les adresses du site de secours. Un TTL court sur les noms concernés,
+  fixé **à l'avance** ([chapitre DNS](/formations/fundamentals/dns)), sinon les clients gardent l'ancienne adresse
+  pendant des heures.
+- **GSLB** ou adresse **anycast** : un [load balancer global](/formations/proxy/load-balancing) dirige
+  automatiquement vers le site disponible.
+- **Internet** : les préfixes publics annoncés en BGP depuis les deux sites, le site de secours avec un chemin moins
+  préféré (*AS path prepend*), pour qu'il prenne le relais seul si le principal disparaît.
+- **Accès distants** : concentrateurs VPN et accès des sites distants (SD-WAN) vers le site de secours.
+
+### Les services d'infrastructure
+
+Tout ce dont les applications ont besoin pour démarrer doit **déjà tourner** dans le site de secours : DNS, annuaire
+(Active Directory), [NTP](/formations/operations/ntp), DHCP et IPAM, authentification (TACACS+, RADIUS), autorité de
+certification, supervision. Une application restaurée qui ne trouve pas son annuaire ne démarre pas.
+
+### La sécurité
+
+- Les **règles de firewall** du site de secours sont tenues à jour au même rythme que celles du site principal. Un
+  écart découvert le jour de la bascule bloque des applications entières.
+- Les **certificats** sont valables pour les noms et adresses utilisés dans le site de secours.
+
+### Les outils et l'accès de l'équipe réseau
+
+- Les [sauvegardes des configurations](/formations/automation/config-backup), le dépôt Git, la documentation, les
+  schémas : **accessibles sans le site principal**. Un dépôt hébergé dans le data center détruit ne sert à rien.
+- Les **mots de passe** de secours : le coffre doit être joignable, ou une copie hors ligne disponible
+  ([chapitre Vault](/formations/automation/vault#le-piège-réseau--le-coffre-pendant-la-panne)).
+- L'[accès hors bande](/formations/operations/oob) au site de secours, qui ne dépend pas du site principal.
+
+## L'ordre de redémarrage
+
+Les applications dépendent les unes des autres. Le PRA décrit l'**ordre** de redémarrage, du bas vers le haut :
+
+1. **Réseau** : cœur, firewalls, accès Internet et WAN ;
+2. **Services d'infrastructure** : DNS, annuaire, NTP, authentification ;
+3. **Stockage** : bascule de la réplication, présentation des volumes ;
+4. **Bases de données** ;
+5. **Applications**, des plus critiques aux moins critiques ;
+6. **Accès des utilisateurs** : bascule DNS, GSLB, annonces BGP.
+
+Chaque étape a ses vérifications, son responsable et une procédure écrite (*runbook*), suivie pas à pas le jour J,
+par des équipes sous pression, peut-être en pleine nuit.
+
+## Tester, encore et toujours
+
+Un PRA jamais testé ne fonctionne pas : les dépendances oubliées, les règles de firewall manquantes et les mots de
+passe introuvables ne se découvrent qu'en essayant. Trois niveaux de tests :
+
+| Test | Principe | Fréquence indicative |
+|---|---|---|
+| **Sur table** | dérouler le scénario en réunion, procédure en main, sans rien toucher | plusieurs fois par an |
+| **Partiel** | basculer une application, ou un service d'infrastructure, vers le site de secours | régulièrement |
+| **Complet** | couper réellement le site principal, ou le simuler, et faire tourner l'activité depuis le secours | au moins une fois par an |
+
+Chaque test mesure le **RTO et le RPO réellement obtenus**, et se conclut par une liste de corrections. Les
+réglementations l'exigent d'ailleurs dans certains secteurs : pour la finance, le règlement européen **DORA**,
+applicable depuis le 17 janvier 2025, impose une politique de continuité, des plans de reprise testés au moins une
+fois par an, et des restaurations sur des systèmes séparés de ceux d'origine.
+
+<Callout type="field">
+Le test qui révèle le plus de problèmes : le **retour**. Basculer vers le secours est préparé ; revenir vers le site
+principal, avec des données qui ont changé entre-temps, l'est rarement. Le PRA doit décrire les deux sens.
+</Callout>
+
+## Les pièges classiques
+
+| Symptôme le jour de la bascule | Cause |
+|---|---|
+| Les clients vont encore sur l'ancien site pendant des heures | TTL DNS longs, jamais réduits à l'avance |
+| Les applications démarrent mais refusent les connexions | règles de firewall du site de secours pas à jour |
+| Rien ne démarre faute d'annuaire ou de DNS | services d'infrastructure absents du site de secours |
+| Les données du secours sont chiffrées elles aussi | seule protection : la réplication, sans sauvegarde isolée ni immuable |
+| L'équipe ne trouve ni la procédure ni les mots de passe | documentation et coffre hébergés dans le site sinistré |
+| Le RTO réel est trois fois le RTO prévu | plan jamais testé, ordre de redémarrage inconnu |
+| Les deux sites servent en même temps après la coupure du lien | pas de témoin pour départager : split-brain |
+
+## À vous de jouer
+
+1. Un service accepte de perdre 5 minutes de données et doit repartir en 1 heure. Quelle stratégie et quel mode de
+   réplication proposez-vous ?
+2. Pourquoi une réplication synchrone entre deux sites ne protège-t-elle pas contre un rançongiciel ? Que faut-il
+   en plus ?
+3. Listez cinq éléments réseau à vérifier dans le site de secours avant un test de bascule.
+4. Le site public de l'entreprise doit basculer vers le site de secours. Comparez une bascule par DNS et une bascule
+   par BGP : avantages et limites.
+
+## À retenir
+
+- **PCA** : continuer pendant la crise ; **PRA** : reprendre après, dans un délai défini. Le PCA englobe le PRA.
+- **RTO** (durée d'interruption) et **RPO** (perte de données) sont fixés par les **métiers**, après une **analyse
+  d'impact**, et dictent la stratégie : des sauvegardes hors site à l'actif / actif.
+- La **réplication** copie aussi les erreurs et les rançongiciels : il faut des **sauvegardes 3-2-1**, dont une copie
+  **hors ligne ou immuable**, testées.
+- Le réseau prépare l'**adressage**, le **DNS** (TTL), le **BGP** et le GSLB, les **firewalls**, les **services
+  d'infrastructure** et l'**accès de l'équipe** au site de secours.
+- Un PRA se **teste**, dans les deux sens, et se corrige après chaque test.
+
+Prochain chapitre : **l'interconnexion de data centers**, le lien qui rend le site de secours joignable et la
+réplication possible.

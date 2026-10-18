@@ -1,0 +1,257 @@
+---
+title: "QoS in the data center"
+description: "Deciding which traffic goes first when a link fills up: classification and marking (DSCP, CoS), the trust boundary, traffic classes and queues, strict or weighted scheduling, ECN and its thresholds, PFC for a lossless class and its watchdog, ETS and DCBX, a typical data center QoS plan, and the Arista EOS configuration."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, qos, dscp, ecn, pfc, dcb, congestion]
+vendor: [arista]
+order: 11
+---
+
+export const dscpDefault = `DSCP           0-7   8-15  16-23  24-31  32-39  40-47  48-55  56-63
+Traffic class    1     0      2      3      4      5      6      7`;
+
+In a data center, links are fast and bandwidth plentiful: why bother with **quality of service**
+(<Term id="qos" />)? Because congestion doesn't need to last to hurt. The
+[Switch buffers](/en/courses/datacenter/buffers) chapter showed it: an incast of a few hundred microseconds is enough
+to fill a buffer and lose packets. QoS doesn't create bandwidth; it decides **who goes first**, **who waits** and
+**who gets dropped** during those moments. For network control, storage and AI, it is the difference between an
+incident and nothing at all.
+
+## What QoS must protect
+
+| Traffic | What it handles badly | What it gets |
+|---|---|---|
+| **Network control** (BGP, BFD, LACP) | the slightest loss: a session that drops makes routing fail over | a priority class, always served |
+| **Storage** (iSCSI, NVMe/TCP) | loss and latency: every write waits | a guaranteed share of bandwidth |
+| **RDMA** (RoCE, NVMe/RoCE, AI) | **any** loss: performance collapses | a **lossless** class (PFC) and ECN |
+| **Applications** | variable latency | the default service |
+| **Backups, bulk replication** | nothing in particular: they can wait | a "less than default" class |
+
+## A packet's path through a switch
+
+<PacketFormat
+  cols={10}
+  rows={[
+    { fields: [
+      { label: '1. Classify', sub: 'DSCP, CoS, ACL', span: 2, tone: 'violet' },
+      { label: '2. Mark', sub: 'rewrite DSCP or CoS', span: 2, tone: 'violet' },
+      { label: '3. Queue', sub: 'class → egress queue', span: 2, tone: 'sky' },
+      { label: '4. Manage congestion', sub: 'ECN, PFC, drop', span: 2, tone: 'amber' },
+      { label: '5. Schedule', sub: 'strict or weighted', span: 2, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="40rem"
+  caption="On ingress, the switch decides which class the packet belongs to; on egress, each class has its queue, and the scheduler picks which queue to serve."
+/>
+
+## Classifying and marking
+
+### DSCP and CoS
+
+The packet carries its own class, in two possible fields:
+
+- <Term id="dscp" /> (*Differentiated Services Code Point*): 6 bits of the **IP** header, i.e. 64 values. It survives
+  routing: it is the reference marking.
+- **CoS** (*Class of Service*, or PCP, 802.1p standard): 3 bits in a frame's **802.1Q tag**, i.e. 8 values. It only
+  exists on tagged links, and disappears at the first router.
+
+DSCP values have names, from the IETF's recommendations (RFC 4594):
+
+| Name | DSCP | Usual use |
+|---|---|---|
+| **CS6** | 48 | network control (BGP, OSPF, BFD) |
+| **EF** | 46 | voice, real time |
+| **AF41** | 34 | interactive video |
+| **AF31** / **CS3** | 26 / 24 | important data; often storage or RDMA in a data center |
+| **AF21** | 18 | low-latency data |
+| **Default** (CS0) | 0 | everything else |
+| **CS1** | 8 | "less than default": backups, bulk transfers |
+
+### The trust boundary
+
+A server can mark its packets however it likes, including CS6 to jump ahead of everyone. The **trust boundary** is
+where the network decides whether or not to believe the marking it receives:
+
+- on **server ports**, trust only the servers that must mark (storage, RDMA), or **re-mark** yourself based on the
+  port, the VLAN or an access list;
+- **between fabric switches**, trust DSCP: it was already checked on ingress.
+
+On Arista EOS, a port trusts **CoS** by default when it is switched, and **DSCP** when it is routed. `qos trust dscp`
+forces it to read DSCP, `no qos trust` to ignore any marking.
+
+### From traffic classes to queues
+
+The switch translates the marking into an internal **traffic class** (0 to 7), then each class into an **egress
+queue** (*tx-queue*). EOS's default mapping, according to its documentation:
+
+<CliOutput
+  title="Default DSCP → traffic class mapping (Arista EOS)"
+  output={dscpDefault}
+  notes={[
+    { line: 2, text: 'DSCP 0 to 7 (default traffic) goes to class 1, and DSCP 8 to 15 (CS1) to class 0: "less than default" is indeed below default.', match: '1     0', tone: 'amber' },
+    { line: 2, text: 'AF31 and CS3 (24 to 31) land in class 3, CS6 (48) in class 6.', match: '3      4', tone: 'sky' },
+  ]}
+/>
+
+By default, classes then go to the queue with the same number. Both mappings can be changed
+(`qos map dscp … to traffic-class …`, `qos map traffic-class … to tx-queue …`), but starting from the default and
+marking accordingly is often simplest.
+
+## Serving the queues: scheduling
+
+Each port has up to **eight queues** on egress. The scheduler picks which one to serve:
+
+- **Strict priority**: a priority queue is always served first. Ideal for **small, vital** traffic (network
+  control), dangerous for large volumes: it can **starve** every other queue.
+- **Weighted sharing** (weighted round robin, DWRR): each queue gets a **guaranteed share** of bandwidth when the link
+  is saturated, and can take more when it isn't.
+
+```text title="Arista EOS: a guaranteed share for queue 3 (Jericho platforms, tx-queue syntax)"
+interface Ethernet3/5/1
+   tx-queue 3
+      no priority
+      bandwidth percent 30
+   tx-queue 2
+      bandwidth percent 10
+```
+
+`no priority` switches the queue to weighted sharing (and, according to the documentation, every lower-priority queue
+with it). **Shaping** (`shape rate`, in kbps) caps a queue or a port, for example towards a slower link.
+
+<Callout type="note">
+The syntax depends on the switch's chip. On Trident and Tomahawk platforms, unicast and multicast queues are separate
+(`uc-tx-queue`, `mc-tx-queue`), some settings differ, and ECN thresholds accept other units. Always check the
+documentation for your model.
+</Callout>
+
+## Managing congestion: ECN
+
+When a queue fills up, rather than waiting for it to overflow and drop packets, the switch can **mark** packets with
+<Term id="ecn" /> (*Explicit Congestion Notification*, RFC 3168): two bits of the IP header signal congestion to the
+receiver, which tells the sender, which slows down. No loss, and a queue that stays short.
+
+Marking follows two **thresholds**:
+
+- below the **minimum threshold**, nothing is marked;
+- between the two thresholds, an increasing share of packets is marked;
+- above the **maximum threshold**, every packet is marked.
+
+```text title="Arista EOS: ECN on queue 3 (based on Arista's documentation)"
+interface Ethernet3/5/1
+   tx-queue 3
+      random-detect ecn minimum-threshold 128 kbytes maximum-threshold 1280 kbytes
+```
+
+The right thresholds depend on the port speed, the chip's memory and the traffic: start from the vendor's
+recommendations for your case (storage, RoCE), then adjust by watching the counters. Thresholds too low slow senders
+down for no reason; too high, the queue overflows before the slowdown takes effect. ECN only works if **both ends**
+support it: DCTCP for TCP, DCQCN for RoCE.
+
+## A lossless class: PFC
+
+For RDMA, slowing down isn't enough: **no** packet may be lost. <Term id="pfc" /> (*Priority-based Flow Control*,
+IEEE 802.1Qbb) sends the neighbor a **pause** for a single class when its queue reaches a threshold; the neighbor stops
+sending that class, and only that one, until room comes back. Other classes carry on.
+
+```text title="Arista EOS: PFC on priority 3, with watchdog (based on Arista's documentation)"
+interface Ethernet1/1
+   priority-flow-control on
+   priority-flow-control priority 3 no-drop
+   tx-queue 3
+      bandwidth guaranteed 100
+!
+priority-flow-control pause watchdog default timeout 10
+priority-flow-control pause watchdog action drop
+```
+
+- `priority-flow-control on` enables PFC on the port; `priority 3 no-drop` makes priority 3 **lossless**.
+- The **watchdog** watches for queues stuck by pauses: past the timeout, it acts (`drop`, `errdisable` or just a
+  notification). The documentation states that the watched queue needs guaranteed bandwidth.
+- PFC replaces classic Ethernet flow control (802.3x) on the port: the two are incompatible.
+
+<Callout type="warning">
+PFC is powerful and dangerous, as the buffers chapter showed: a pause spreads from neighbor to neighbor, a slow server
+can block flows that have nothing to do with it, and a **pause storm** can freeze part of the fabric. Golden rules:
+PFC on **a single class** (the RDMA one), **ECN** on that same class to slow senders down before reaching the pause
+thresholds, and a **watchdog** everywhere.
+</Callout>
+
+## ETS and DCBX
+
+PFC belongs to a set of standards called **DCB** (*Data Center Bridging*):
+
+- **ETS** (*Enhanced Transmission Selection*, IEEE 802.1Qaz) shares bandwidth between groups of classes, like the
+  weighted sharing above.
+- **DCBX** is the exchange protocol that carries these settings over LLDP, so the switch tells the server's card which
+  priorities are lossless and how bandwidth is shared. On EOS: `dcbx mode ieee` on the port, with LLDP enabled.
+
+Whether you configure QoS by hand on both sides (switch and server) or let DCBX propagate it, what matters is that both
+sides **agree**, otherwise the server sends RoCE in a class the switch treats as lossy.
+
+## A typical data center QoS plan
+
+| Class | Marking | Treatment |
+|---|---|---|
+| Network control | CS6 (48) | strict priority, low volume |
+| RDMA (RoCE, NVMe/RoCE) | AF31 (26) | **lossless**: PFC, ECN, guaranteed share |
+| RoCE congestion notifications (CNP) | CS6 (48), depending on the vendor | priority, so the slowdown arrives fast |
+| TCP storage (iSCSI, NVMe/TCP) | CS3 or AF21 | guaranteed share, ECN if the servers use it |
+| Default | 0 | the rest of the bandwidth |
+| Backups, bulk | CS1 (8) | "less than default" |
+
+The fewer classes, the better: each extra class must be configured, documented and troubleshot on every port of the
+fabric. Three to five classes are almost always enough.
+
+<Callout type="field">
+QoS is deployed **everywhere or nowhere**: a single fabric switch forgotten, and the lossless class is no longer
+lossless on every path crossing it. It's a textbook case for automation: generate QoS from a model (AVD), and check it
+with tests (ANTA) on every port.
+</Callout>
+
+## Observing
+
+| What you are looking for | Arista EOS command |
+|---|---|
+| The markings a port trusts | `show qos interfaces ethernet 1/1 trust` |
+| DSCP, class and queue mappings | `show qos maps` |
+| Each queue's configuration (share, priority, ECN) | `show qos interfaces ethernet 1/1` |
+| PFC: state and pause counters | `show priority-flow-control status`, `show priority-flow-control counters` |
+| The PFC watchdog | `show priority-flow-control counters watchdog` |
+| The DCBX exchange with the server | `show dcbx ethernet 1/1` |
+
+Continuous **PFC pauses** on a port signal a receiver that can't keep up: a symptom to deal with, not normal
+operation.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| The priority class starves everything else | too much traffic in strict priority |
+| One server jumps ahead of everyone | no trust boundary: its marking is believed as is |
+| RoCE loses packets despite PFC | a switch on the path without the configuration, or the server sending in a priority other than the one declared lossless |
+| Part of the fabric freezes | PFC pause storm, no watchdog |
+| ECN configured, no effect | servers don't support it (no DCTCP or DCQCN) |
+| BGP sessions drop during congestion | network control in the default class |
+| The marking disappears after a router | marking with CoS only, instead of DSCP |
+
+## Your turn
+
+1. Why shouldn't storage be put in strict priority?
+2. A server port receives packets marked CS6 by an application. What happens with and without `qos trust dscp`? What
+   do you propose?
+3. With EOS's default mapping, which class does a packet marked AF31 land in? And a CS1 packet?
+4. Explain to a colleague why ECN **and** PFC are configured on the RoCE class, not just PFC.
+
+## Key takeaways
+
+- QoS decides **who goes, who waits, who gets dropped** during congestion, even very short.
+- **DSCP** (6 bits, survives routing) is the reference marking; **CoS** (802.1p) disappears at the first router. The
+  **trust boundary** decides which markings to believe.
+- Marking → **traffic class** → **egress queue**; **strict priority** for control, **guaranteed shares** for the rest.
+- **ECN** marks instead of dropping, between two thresholds; it needs DCTCP or DCQCN at the ends.
+- **PFC** makes **one** class lossless through pauses; always with ECN and a **watchdog**. DCBX and ETS align switch
+  and server.
+- Few classes, configured **everywhere**, ideally generated and tested automatically.
+
+Next chapter: **the storage network**, the first big customer of these service classes.
