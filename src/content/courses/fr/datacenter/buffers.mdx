@@ -1,0 +1,202 @@
+---
+title: "Les buffers des switches"
+description: "La mémoire où un switch range les paquets en attente : pourquoi il en faut (différence de débits, incast, micro-rafales), buffers partagés et deep buffers, ce qui se passe quand ils débordent, ECN, DCTCP et PFC pour les fabrics de stockage et d'IA, et comment observer la congestion."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, buffers, congestion, qos, ecn, pfc, rdma]
+vendor: [arista, cisco]
+order: 6
+---
+
+Un switch reçoit des paquets sur ses ports d'entrée et les renvoie sur ses ports de sortie. Tant que chaque port de sortie
+a le temps d'envoyer ce qui lui arrive, tout va bien. Mais si, pendant une fraction de seconde, plus de trafic arrive pour
+un port qu'il ne peut en envoyer, le switch doit **ranger** les paquets en trop quelque part en attendant : c'est le
+**buffer**, la mémoire tampon. Quand il déborde, les paquets sont perdus. Ces pertes ne se voient pas dans un graphe
+d'utilisation à 30 %, et pourtant elles ralentissent les applications : c'est l'une des causes les plus fréquentes de
+« lenteurs inexpliquées » dans un data center.
+
+## Pourquoi un switch a besoin de mémoire
+
+Trois situations remplissent un buffer :
+
+- **Les débits différents** : un leaf reçoit du trafic d'un spine à 100 Gb/s pour un serveur raccordé à 25 Gb/s. Le
+  port de sortie vide quatre fois moins vite qu'il ne se remplit, tant que la rafale dure.
+- **L'incast**, ou « plusieurs vers un » : un client interroge dix serveurs de stockage en même temps, et les dix
+  répondent au même instant vers son unique port. Dix ports d'entrée à pleine vitesse convergent vers un seul port de
+  sortie.
+- **Les micro-rafales** (*microbursts*) : des pics de quelques microsecondes à quelques millisecondes, où un port est
+  saturé alors que sa moyenne sur cinq minutes est faible. Ils sont invisibles dans les graphes habituels.
+
+<Topology
+  width={760}
+  height={320}
+  nodes={[
+    { id: 's1', type: 'server', x: 90, y: 40, label: 'stockage 1' },
+    { id: 's2', type: 'server', x: 90, y: 120, label: 'stockage 2' },
+    { id: 's3', type: 'server', x: 90, y: 200, label: '…' },
+    { id: 's4', type: 'server', x: 90, y: 280, label: 'stockage 10' },
+    { id: 'leaf', type: 'switch', x: 400, y: 160, label: 'leaf1', sub: 'buffer du port Et5', tone: 'amber' },
+    { id: 'c', type: 'host', x: 680, y: 160, label: 'client', sub: '25 Gb/s', tone: 'violet' },
+  ]}
+  links={[
+    { from: 's1', to: 'leaf' }, { from: 's2', to: 'leaf' }, { from: 's3', to: 'leaf' }, { from: 's4', to: 'leaf' },
+    { from: 'leaf', to: 'c', label: 'Et5' },
+  ]}
+  flows={[
+    { from: 'leaf', to: 'c', label: '25 Gb/s en sortie', tone: 'rose', offset: -18 },
+  ]}
+  notes={[{ x: 270, y: 22, text: '10 × 25 Gb/s en entrée, au même instant', tone: 'slate' }]}
+  caption="L'incast : dix serveurs répondent en même temps au même client. Jusqu'à 250 Gb/s arrivent pour un port qui n'en envoie que 25 : le reste attend dans le buffer, ou est perdu."
+/>
+
+### Faire le calcul
+
+Un buffer se mesure en octets, mais il vaut mieux le penser en **temps** : combien de temps il permet d'absorber une
+rafale à pleine vitesse.
+
+| Mémoire | Débit du port | Temps d'absorption |
+|---|---|---|
+| 1 Mo | 25 Gb/s | 320 µs |
+| 32 Mo | 100 Gb/s | 2,56 ms |
+| 4 Go | 100 Gb/s | 320 ms |
+
+Reprenons l'incast du schéma : dix serveurs envoient chacun **1 Mo** à 25 Gb/s vers le même client. Les 10 Mo arrivent en
+320 µs ; pendant ce temps, le port de sortie n'en envoie que 1 Mo. Le buffer doit donc absorber **9 Mo** pour ce seul port,
+sinon des paquets sont perdus.
+
+## Où est la mémoire : buffers partagés et deep buffers
+
+Deux familles de switches s'opposent :
+
+| | Petits buffers (*shallow buffer*) | Gros buffers (*deep buffer*) |
+|---|---|---|
+| Mémoire | quelques dizaines de Mo, **dans** la puce, partagés entre tous les ports | plusieurs Go de **mémoire externe** à la puce |
+| Latence | très faible, constante | plus élevée quand les files se remplissent |
+| Coût, consommation | plus bas | plus élevés |
+| Usage typique | la plupart des leafs et des spines d'une fabric | border leafs, interconnexion de data centers, bordure WAN, fabrics de stockage très chargées |
+
+Dans un switch à petits buffers, la mémoire est **partagée** : chaque port ne reçoit pas une part fixe, il puise dans un
+réservoir commun selon des seuils **dynamiques**. Un port congestionné peut emprunter beaucoup de mémoire tant que les
+autres n'en ont pas besoin. C'est efficace, mais un port très chargé peut aussi priver les autres. Les switches à gros
+buffers, eux, organisent souvent la mémoire en **files virtuelles de sortie** (*Virtual Output Queues*, VOQ) : les paquets
+attendent à l'**entrée**, dans une file propre à chaque port de sortie, et ne traversent la puce que lorsque ce port est
+prêt.
+
+<Callout type="note">
+Plus de mémoire n'est pas toujours mieux. Un buffer de 4 Go plein, sur un port à 100 Gb/s, retient les paquets pendant
+320 ms : un délai énorme pour une application interactive, et qui retarde aussi la réaction de TCP à la congestion. On
+parle de *bufferbloat*. Les gros buffers servent là où les débits changent fortement (100G vers un lien WAN à 10G) et où
+les délais aller-retour sont longs, pas à l'intérieur d'une fabric homogène.
+</Callout>
+
+## Quand le buffer déborde
+
+Un buffer plein **jette** les paquets suivants : c'est le *tail drop*. Pour TCP, une perte est un signal de congestion :
+l'émetteur réduit fortement son débit, puis renvoie les paquets perdus. Une perte isolée passe inaperçue. Mais dans le cas
+de l'incast, c'est plus grave :
+
+- les dix serveurs perdent des paquets en même temps et ralentissent tous ;
+- si les derniers paquets d'une réponse sont perdus, l'émetteur ne s'en rend compte qu'à l'expiration de son
+  temporisateur de retransmission, qui vaut au minimum **200 ms** sous Linux par défaut ;
+- une réponse qui devait prendre une milliseconde en prend deux cents : le débit utile s'effondre. C'est l'**effondrement
+  par incast** (*TCP incast collapse*).
+
+<Callout type="field">
+Le symptôme classique : « l'application est lente, mais le réseau est à 20 % ». Les graphes SNMP sur cinq minutes lissent
+les rafales, et le port semble presque vide. Les compteurs de **pertes en sortie** (*output discards*) du port, eux,
+augmentent. Regardez-les toujours avant de conclure que le réseau n'y est pour rien.
+</Callout>
+
+## Gérer la congestion au lieu de la subir
+
+### Les files et la QoS
+
+Un port n'a pas une seule file, mais plusieurs (souvent huit), associées à des classes de trafic selon le marquage
+**DSCP** des paquets. On peut donner plus de buffer ou plus de priorité au stockage qu'aux sauvegardes, ou protéger le trafic
+de contrôle (BGP, BFD) pour qu'il ne soit jamais perdu dans une congestion.
+
+### ECN : prévenir plutôt que jeter
+
+Avec **ECN** (*Explicit Congestion Notification*), le switch ne jette pas le paquet quand la file commence à se remplir : il
+le **marque** (deux bits de l'en-tête IP). Le récepteur renvoie l'information à l'émetteur, qui ralentit **avant** que le
+buffer ne déborde. Plus de pertes, plus de temporisateurs de 200 ms.
+
+**DCTCP** (*Data Center TCP*) pousse l'idée plus loin : il mesure la **proportion** de paquets marqués et ralentit en
+conséquence, finement, au lieu de diviser son débit par deux. Les files restent courtes, la latence basse, et le débit
+élevé. Il demande que les switches marquent ECN et que les serveurs utilisent DCTCP : c'est réaliste à l'intérieur d'un
+data center qu'on maîtrise de bout en bout.
+
+### PFC : un réseau sans perte pour le stockage et l'IA
+
+Certains protocoles supportent très mal la moindre perte : le stockage et le calcul distribué en **RDMA sur Ethernet**
+(RoCEv2), très utilisés dans les fabrics d'IA. Pour eux, on rend le réseau **sans perte** avec **PFC** (*Priority-based
+Flow Control*, IEEE 802.1Qbb) : quand le buffer d'une classe atteint un seuil, le switch envoie une **pause** au voisin pour
+cette classe seulement, qui arrête d'émettre au lieu de voir ses paquets perdus.
+
+<Callout type="warning">
+PFC est efficace mais dangereux. Une pause se propage de voisin en voisin, et un seul serveur lent peut bloquer des flux
+qui n'ont rien à voir avec lui (*head-of-line blocking*), voire déclencher une **tempête de pauses** qui fige une partie de
+la fabric. On ne l'active que sur la classe de trafic qui en a besoin, avec ECN pour ralentir les émetteurs avant d'en
+arriver aux pauses (c'est le principe de DCQCN pour RoCE), et avec un **watchdog** qui coupe PFC sur un port bloqué trop
+longtemps. Les nouvelles approches pour l'IA, comme celles de l'Ultra Ethernet Consortium, cherchent justement à se passer
+de PFC.
+</Callout>
+
+## Observer les buffers
+
+| Ce qu'on cherche | Où le voir |
+|---|---|
+| Des paquets perdus faute de buffer | les compteurs de pertes en sortie : `show interfaces counters discards` sur Arista EOS, *Total output drops* dans `show interfaces` sur Cisco IOS |
+| L'occupation des files dans le temps | les outils de surveillance des files du constructeur, comme LANZ chez Arista (`show queue-monitor length`), selon la plateforme |
+| Les micro-rafales | la [télémétrie en flux continu](/formations/operations/telemetry), à intervalle court, plutôt que SNMP toutes les cinq minutes |
+| Le marquage ECN et les pauses PFC | les compteurs ECN et PFC par interface et par classe |
+
+La règle : un graphe de débit moyen ne dit **rien** des buffers. Il faut regarder les **pertes** et l'**occupation des
+files**, à la bonne échelle de temps.
+
+## Choisir son switch
+
+- **Leafs et spines d'une fabric homogène** (mêmes débits, faibles distances) : des switches à petits buffers suffisent
+  presque toujours, avec une sursouscription raisonnable (voir [L'architecture spine/leaf](/formations/datacenter/spine-leaf))
+  et ECN si les applications s'y prêtent.
+- **Stockage distribué, analytique, sauvegardes massives** (beaucoup d'incast) : regardez les compteurs de pertes. Si elles
+  sont réelles, ECN, une meilleure répartition des classes, ou des leafs à plus gros buffers.
+- **Border leafs, interconnexion de data centers, bordure WAN** (passage d'un débit élevé à un débit bas, longs délais) :
+  le terrain naturel des **deep buffers**.
+- **Fabrics d'IA en RoCE** : une conception dédiée (classes de trafic, ECN, PFC maîtrisé, sursouscription nulle), sur des
+  switches prévus pour.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Application lente, liens peu chargés en moyenne | micro-rafales ou incast : pertes en sortie invisibles dans les graphes de débit |
+| Lenteurs régulières lors des sauvegardes ou des traitements de nuit | incast massif vers quelques serveurs, buffer insuffisant pour ces rafales |
+| Latence élevée et variable, sans perte | gros buffers trop remplis (*bufferbloat*) |
+| Une partie de la fabric figée, trafic RoCE bloqué | tempête de pauses PFC, ou blocage en tête de file |
+| Le trafic de contrôle (BGP, BFD) tombe pendant une congestion | pas de classe protégée pour le trafic de contrôle |
+
+## À vous de jouer
+
+1. Vingt serveurs envoient chacun 500 Ko au même instant vers un client raccordé en 25 Gb/s, depuis des ports à 25 Gb/s.
+   Quelle quantité de buffer faut-il pour ce port ?
+2. Un switch partage 32 Mo entre 56 ports. Si tous les ports sont congestionnés en même temps, combien chacun reçoit-il,
+   et combien de temps cela représente-t-il à 25 Gb/s ?
+3. Un utilisateur se plaint de lenteurs, le lien de son serveur est à 15 % en moyenne. Quels compteurs regardez-vous, et
+   à quelle échelle de temps ?
+4. Pourquoi un border leaf vers un lien WAN à 10 Gb/s profite-t-il d'un deep buffer, alors qu'un leaf serveur n'en a pas
+   besoin ?
+
+## À retenir
+
+- Le **buffer** retient les paquets quand un port de sortie reçoit plus qu'il ne peut envoyer : **différence de débits**,
+  **incast**, **micro-rafales**.
+- Pensez-le en **temps** : 32 Mo à 100 Gb/s, c'est 2,56 ms. Un incast de 10 × 1 Mo demande environ 9 Mo pour un seul
+  port.
+- **Petits buffers partagés** pour la plupart des fabrics ; **deep buffers** (Go de mémoire externe, VOQ) pour les
+  bordures et les changements de débit. Trop de buffer ajoute de la latence.
+- Un buffer qui déborde **perd** des paquets ; avec l'incast, TCP peut s'effondrer à cause des retransmissions sur
+  temporisateur.
+- **ECN** et **DCTCP** évitent les pertes en ralentissant tôt ; **PFC** rend une classe sans perte pour RoCE, mais se
+  manie avec prudence.
+- Observez les **pertes en sortie** et l'**occupation des files**, pas le débit moyen.

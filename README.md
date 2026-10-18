@@ -261,8 +261,9 @@ Mise en route (une seule fois) :
 - [x] Data center, chapitre 3 « L'infrastructure physique » (`physical`) en FR et EN : baies, allées chaudes et froides, ventilation, top of rack, top of 3 racks, middle / end of row, câbles, optiques, éclatement, alimentation ; composant `<RackElevation>`
 - [x] Data center, chapitre 4 « La connectique » (`cabling`) en FR et EN : fibres OM et OS, UPC et APC, LC et MPO (genre, clé, polarité A, B, C), transceivers et leurs noms, DOM, DAC, AOC et FEC, éclatement, budget optique, nettoyage et tests 
 - [x] Data center, chapitre 5 « Le multiplexage en longueur d'onde (WDM) » (`wdm`) en FR et EN : mux et demux, CWDM et DWDM (grilles UIT-T), optiques colorées, accordables et cohérentes (400ZR), OADM, budget, interconnexion de data centers ; composant `<FiberDiagram view="modes|wavelengths|wdm" />`, aussi utilisé dans la connectique (VxLAN et EVPN décalés en 6 et 7)
+- [x] Data center, chapitre 6 « Les buffers des switches » (`buffers`) en FR et EN : différence de débits, incast et micro-rafales (calculs vérifiés), petits buffers partagés et deep buffers (VOQ), tail drop et effondrement par incast, QoS, ECN, DCTCP, PFC et RoCE, observation des pertes (VxLAN et EVPN décalés en 7 et 8)
 - [x] Tutoriel « Qu'est-ce qu'une RFC ? » (`rfc`) en FR et EN, lié depuis chaque section « Documentation officielle »
-- [ ] Contenus à venir : Vault, buffers des switches (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
+- [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---
 
@@ -283,18 +284,6 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - Bonnes pratiques : aucun secret dans Git en clair, rotation, moindre privilège, secrets différents par environnement.
 - Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
   le fichier produit commence bien par `$ANSIBLE_VAULT`.
-
-### Formation Data center : les buffers des switches (nouveau chapitre ou section, après l'infrastructure physique)
-
-- Ce qu'est un buffer : la mémoire où un switch range les paquets quand un port de sortie est déjà occupé.
-- Pourquoi il en faut : la congestion par **incast** (plusieurs serveurs qui répondent en même temps au même client,
-  typique du stockage distribué et des clusters), les débits différents entre ports (25G vers 100G), les rafales.
-- Buffers **partagés** et **par port**, allocation dynamique ; switches à petits buffers (puces « shallow buffer »,
-  faible latence) et à gros buffers (« deep buffer », plusieurs Go, pour les border leafs, le WAN, le stockage).
-- Ce qui se passe quand le buffer est plein : pertes (*tail drop*), retransmissions TCP, latence ; ECN et le contrôle de
-  congestion (DCQCN, PFC pour RoCE et les fabrics IA), avec leurs pièges (*head-of-line blocking*, tempêtes PFC).
-- Observer : compteurs de pertes en sortie (*output discards*), compteurs de file, télémétrie de la profondeur des files.
-- Choisir : quand un switch « deep buffer » se justifie, et quand il ne sert à rien.
 
 ---
 
