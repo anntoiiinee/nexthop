@@ -1,0 +1,367 @@
+---
+title: "Encryption: keys, signatures and certificates"
+description: "Understanding the cryptography networks rely on, with Alice and Bob: symmetric and asymmetric encryption, public and private keys, hashes, signatures, Diffie-Hellman key exchange, and why certificates are needed. With OpenSSL to practice."
+pubDate: 2026-10-18
+level: beginner
+tags: [cryptography, tls, pki, ssh, ipsec, security]
+vendor: []
+order: 11
+---
+
+{/* Output declared in JavaScript: MDX strips leading whitespace inside tags */}
+export const fingerprints = `SHA2-256(stdin)= 3ce3fb98f578bd1ed079574092bf68304060f35077192c769eeb35448aa3038e
+SHA2-256(stdin)= 25920099c9dcb663babb316ce3715adf8c5e3271c7b1764adaff2f9164be9010`;
+
+A packet crossing a network goes through many hands: switches, routers, carriers, public Wi-Fi access points. Any
+of these intermediaries can read it, copy it or change it. Encryption is what makes that journey safe, and you meet
+it everywhere in the job: HTTPS, IPsec VPNs, SSH to devices, SNMPv3, WPA Wi-Fi, and certificates that always expire
+at the worst moment. This chapter explains the four mechanisms all of this relies on, with the two characters every
+cryptography course has used since the 1970s: **Alice** and **Bob**.
+
+## Alice, Bob and Eve
+
+Alice wants to send a message to Bob. Between them, a network they don't control, and **Eve** (the *eavesdropper*),
+who listens to everything passing by. Sometimes even **Mallory** (*malicious*), who doesn't just listen: she changes
+messages, or impersonates one of them.
+
+Alice and Bob need three guarantees:
+
+| Guarantee | The question | The mechanism |
+|---|---|---|
+| **Confidentiality** | Can Eve read the message? | encryption |
+| **Integrity** | Did Mallory change the message on the way? | the fingerprint (hashing) |
+| **Authenticity** | Does the message really come from Alice? | the signature, then the certificate |
+
+Encryption alone isn't enough: an encrypted message can be altered, or sent by someone else. Real protocols combine
+all three.
+
+## Symmetric encryption: a single key
+
+It is the oldest and most intuitive form: **the same key** encrypts and decrypts, like a combination padlock whose
+code both Alice and Bob know.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'key K' },
+    { id: 'e', label: 'Eve', sub: 'listening', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'key K', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Alice encrypts with key K', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: '8f3a…c41e', sub: 'encrypted message', tone: 'emerald' },
+    { note: 'Eve sees meaningless bytes go by', over: ['e', 'e'], tone: 'rose' },
+    { note: 'Bob decrypts with the same key K', over: ['b', 'b'], tone: 'violet' },
+  ]}
+  caption="Symmetric encryption: Eve intercepts the message, but without key K, it is unreadable."
+/>
+
+The reference algorithm is <Term id="aes" />, with a 128- or 256-bit key. It is **extremely fast**, often
+accelerated by the processor itself: it encrypts the data of an HTTPS session, an IPsec tunnel or an SSH
+connection, at several gigabits per second.
+
+Its problem isn't technical, it is logistical: **how do Alice and Bob exchange key K?** If they send it over the
+network, Eve reads it on the way. If they must meet to share it, encryption only works between people who already
+know each other. And with a hundred correspondents, you need a hundred different keys.
+
+<Callout type="note">
+The **pre-shared key** (PSK) of an IPsec VPN or a WPA2-Personal Wi-Fi network is exactly that: a secret the
+administrator typed in on both sides. It works for two sites, becomes painful for fifty, and every leak means
+changing the key everywhere.
+</Callout>
+
+## Asymmetric encryption: a key pair
+
+In 1976, Whitfield Diffie and Martin Hellman published an idea that changed everything: what if the key that
+encrypts were **not** the one that decrypts? Everyone then owns a **key pair**, mathematically linked:
+
+- a **private key**, which its owner keeps secret and never sends;
+- a **public key**, which they hand out to everyone, without any risk.
+
+What one key does, only the other can undo. The most telling analogy: Bob hands out **open padlocks** (his public
+key) to anyone, and keeps the only **key** that opens them (his private key).
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice' },
+    { id: 'e', label: 'Eve', sub: 'listening', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'Bob’s private key', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'b', to: 'a', label: 'Bob’s public key', sub: 'handed out to all, Eve included', tone: 'violet' },
+    { note: 'Alice encrypts with Bob’s public key', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: '5f14…cee4', sub: 'encrypted message', tone: 'emerald' },
+    { note: 'Having the public key doesn’t allow decryption', over: ['e', 'e'], tone: 'rose' },
+    { note: 'Only Bob’s private key decrypts', over: ['b', 'b'], tone: 'violet' },
+  ]}
+  caption="Asymmetric encryption: anyone can encrypt for Bob with his public key; only Bob can decrypt."
+/>
+
+The key exchange problem disappears: the public key can travel in clear text, Eve can copy it, it is useless to
+her. Common algorithms are <Term id="rsa" /> and **elliptic curve** ones (ECDSA, Ed25519, X25519), which offer the
+same security with much shorter keys.
+
+The downside: asymmetric encryption is **hundreds to thousands of times slower** than symmetric, and only encrypts
+small messages. You never encrypt a data stream with RSA.
+
+## The fingerprint: checking integrity
+
+A **hash function** turns any data, one byte or one terabyte, into a fixed-size **fingerprint**: 256 bits for
+SHA-256. It has three properties:
+
+- the same data **always** gives the same fingerprint;
+- the slightest change gives a **completely different** fingerprint;
+- it is practically impossible to recover the data from the fingerprint, or to craft two pieces of data with the
+  same fingerprint.
+
+Two messages differing by a single digit:
+
+<CliOutput
+  title="printf 'Virement de 100 euros a Bob' | openssl dgst -sha256 (then 900 euros)"
+  output={fingerprints}
+  notes={[
+    { line: 1, match: '3ce3fb98', text: 'Fingerprint of the "100 euros" message.', tone: 'sky' },
+    { line: 2, match: '25920099', text: 'A single character changed (100 becomes 900): the fingerprint keeps nothing of the previous one.', tone: 'rose' },
+  ]}
+/>
+
+That is how you check that a downloaded EOS image hasn't been corrupted or tampered with: compare its SHA-256
+fingerprint with the one Arista publishes. A fingerprint alone doesn't protect against Mallory, though: if she
+changes the message, she recomputes the fingerprint. It must be tied to a key, which is what a signature does.
+
+<Callout type="warning">
+A hash is **not** encryption: it can't be "decrypted", and it hides nothing in a reversible way. MD5 and SHA-1 are
+broken today (collisions can be crafted) and must no longer be used for security. Use SHA-256 or stronger.
+</Callout>
+
+## The signature: proving who wrote it
+
+A signature uses asymmetric keys **the other way round**. Alice computes her message's fingerprint and transforms
+it with **her private key**: that is the signature. Bob verifies with **Alice's public key**.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'Alice’s private key' },
+    { id: 'm', label: 'Mallory', sub: 'tampers', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'Alice’s public key', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Alice signs the message fingerprint with her private key', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: 'message + signature', tone: 'emerald' },
+    { note: 'Bob verifies with Alice’s public key: valid signature', over: ['b', 'b'], tone: 'violet' },
+    { from: 'm', to: 'b', label: 'changed message + old signature', style: 'blocked' },
+    { note: 'The fingerprint no longer matches: invalid signature', over: ['b', 'b'], tone: 'rose' },
+  ]}
+  caption="A signature proves two things at once: the message comes from the holder of the private key, and it hasn't been changed."
+/>
+
+Mallory can't forge a valid signature without Alice's private key, and if she changes the message, the old
+signature no longer matches. A signature thus provides **integrity** and **authenticity**.
+
+| | Encrypting for Bob | Signing as Alice |
+|---|---|---|
+| You use | the recipient's (Bob's) **public** key | the sender's (Alice's) **private** key |
+| Decrypted or verified with | Bob's **private** key | Alice's **public** key |
+| What you get | confidentiality | integrity and authenticity |
+
+That is the table to remember: it prevents the most common confusion about key pairs.
+
+## Diffie-Hellman: agreeing on a secret in public
+
+One problem remains: symmetric is fast but the key must be shared; asymmetric solves sharing but is slow. The
+**Diffie-Hellman exchange** lets Alice and Bob **build a common secret key together**, exchanging only public
+values. Eve sees everything go by, and can't deduce the key.
+
+The classic analogy uses paint: mixing two colors is easy, separating a mix is impossible.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'secret: red' },
+    { id: 'e', label: 'Eve', sub: 'sees everything', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'secret: blue', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Common public color: yellow', tone: 'slate' },
+    { from: 'a', to: 'b', label: 'yellow + red = orange', sub: 'Alice’s public mix', tone: 'emerald' },
+    { from: 'b', to: 'a', label: 'yellow + blue = green', sub: 'Bob’s public mix', tone: 'violet' },
+    { note: 'Alice: green + red. Bob: orange + blue. Same final color, never sent', tone: 'emerald' },
+    { note: 'Eve has yellow, orange and green, but can’t separate them', over: ['e', 'e'], tone: 'rose' },
+  ]}
+  caption="Diffie-Hellman in colors: each adds their secret to the other's mix, and both get the same color, which never traveled."
+/>
+
+In reality, colors are numbers, and mixing is a mathematical operation that is easy one way and impossible to
+reverse. The modern variant, ECDHE (on elliptic curves), is used by TLS 1.3, IPsec (IKEv2) and SSH. The final **E**
+means *ephemeral*: a new key is built for each session, then thrown away. If the server's private key is stolen one
+day, recorded past sessions stay unreadable: that is **forward secrecy**.
+
+## In practice: everything is hybrid
+
+No protocol uses a single technique. They combine them, each for what it does best:
+
+| Step | Technique | Why |
+|---|---|---|
+| 1. Agree on a session key | ephemeral Diffie-Hellman (ECDHE) | no key travels, and forward secrecy |
+| 2. Prove the server's identity | signature (RSA, ECDSA, Ed25519) + certificate | stop Mallory from impersonating it |
+| 3. Encrypt the data | symmetric (AES-GCM, ChaCha20) | speed |
+| 4. Check every packet | authentication code (built into AES-GCM) | detect any change on the way |
+
+That is exactly the TLS 1.3 handshake, detailed in the
+[TLS, certificates and inspection](/en/courses/proxy/tls-pki) chapter. IPsec (with IKEv2) and SSH follow the same
+pattern.
+
+## The weak link: whose public key is this?
+
+Everything relies on one assumption: when Alice encrypts with "Bob's public key", it **really** is Bob's. If Mallory
+manages to make her believe her own public key is Bob's, everything collapses: that is the **man-in-the-middle
+attack**.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice' },
+    { id: 'm', label: 'Mallory', sub: 'in the middle', tone: 'rose' },
+    { id: 'b', label: 'Bob', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'b', to: 'm', label: 'Bob’s public key', tone: 'violet' },
+    { from: 'm', to: 'a', label: 'Mallory’s public key', sub: '"here is Bob’s key"', style: 'blocked' },
+    { from: 'a', to: 'm', label: 'encrypted for Mallory', tone: 'emerald' },
+    { note: 'Mallory decrypts, reads, re-encrypts for Bob', over: ['m', 'm'], tone: 'rose' },
+    { from: 'm', to: 'b', label: 'encrypted for Bob', tone: 'rose' },
+  ]}
+  caption="Man in the middle: Alice and Bob believe they talk encrypted, and they do, but each with Mallory."
+/>
+
+Encryption works perfectly, and yet Mallory reads everything. The countermeasure: **bind a public key to an
+identity** in a verifiable way. Two approaches exist:
+
+- **the certificate**: a trusted third party, the certificate authority (<Term id="ca" />), signs a document saying
+  "this public key belongs to `www.example.com`". The browser checks that signature with the authority's public key,
+  already present in the system. That is the <Term id="pki" />, used by HTTPS and often by IPsec;
+- **the fingerprint checked by hand**: that is what SSH does. On the first connection, it shows the device key's
+  fingerprint and asks you to confirm it; then it remembers it in `known_hosts` and warns if it changes.
+
+<Callout type="field">
+The famous SSH warning `REMOTE HOST IDENTIFICATION HAS CHANGED` means exactly: "this device's public key is no
+longer the one I remembered". Most often, the device was replaced or reinstalled, and its new key is legitimate.
+But it is also precisely what you would see with a man in the middle. Before removing the old entry with
+`ssh-keygen -R <address>`, check that the change is expected.
+</Callout>
+
+## Where you meet them in networking
+
+| Use | What is encrypted or signed | The keys |
+|---|---|---|
+| **HTTPS, TLS** | web traffic, APIs (eAPI, NetBox) | server certificate, ECDHE, AES |
+| **SSH** | device administration | the device's host key, and your personal key instead of a password |
+| **IPsec VPN** | traffic between two sites | pre-shared key or certificates, IKEv2 and Diffie-Hellman, then AES (see [IPsec VPN](/en/courses/security/ipsec-vpn)) |
+| **SNMPv3** | monitoring | one authentication key and one encryption key per user |
+| **WPA2 / WPA3 Wi-Fi** | the radio link | shared key (Personal) or 802.1X with certificates (Enterprise) |
+| **MACsec** | an Ethernet link, between two devices | AES keys managed by MKA |
+| **Software images** | a downloaded file's integrity | SHA-256 fingerprint, sometimes the vendor's signature |
+
+### Key sizes
+
+| Use | Recommended today | Avoid |
+|---|---|---|
+| Symmetric | AES-128 or AES-256 (GCM mode) | DES, 3DES, RC4 |
+| Asymmetric RSA | 2048 bits minimum, 3072 to last | 1024 bits |
+| Elliptic curves | P-256, Ed25519, X25519 | |
+| Hashing | SHA-256, SHA-384 | MD5, SHA-1 |
+| Diffie-Hellman | groups 14 (2048 bits) and above, or ECDH (groups 19, 20, 31) | groups 1, 2 and 5 |
+
+<Callout type="note">
+A sufficiently powerful quantum computer would break RSA, elliptic curves and Diffie-Hellman. It doesn't exist yet,
+but an attacker can record exchanges today to decrypt them tomorrow. New so-called **post-quantum** algorithms
+(such as ML-KEM, standardized in 2024) are therefore starting to be deployed, first in browsers and TLS, alongside
+current algorithms. Symmetric encryption, for its part, stays solid with 256-bit keys.
+</Callout>
+
+## In the lab: Alice and Bob with OpenSSL
+
+All you need is a Linux terminal (or WSL) with OpenSSL, installed almost everywhere. The outputs below were obtained
+with OpenSSL 3.0; the keys generated on your machine will differ, which is expected.
+
+**1. Bob creates his key pair** (RSA), and extracts the public key to hand out:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out bob.key
+openssl pkey -in bob.key -pubout -out bob.pub
+```
+
+**2. Alice encrypts a message for Bob**, with Bob's public key only:
+
+```bash
+printf 'Rendez-vous au datacenter a 14h' > message.txt
+openssl pkeyutl -encrypt -pubin -inkey bob.pub -pkeyopt rsa_padding_mode:oaep -in message.txt -out message.enc
+wc -c message.txt message.enc
+```
+
+```text title="Result"
+ 31 message.txt
+384 message.enc
+```
+
+The 31-byte message becomes a 384-byte block (the RSA key size, 3072 bits) that looks like noise. Encrypt it twice:
+the result changes every time, thanks to OAEP's random padding.
+
+**3. Bob decrypts** with his private key, and gets `Rendez-vous au datacenter a 14h` back:
+
+```bash
+openssl pkeyutl -decrypt -inkey bob.key -pkeyopt rsa_padding_mode:oaep -in message.enc
+```
+
+**4. Alice signs**, this time with an Ed25519 key (elliptic curve), and Bob verifies with Alice's public key:
+
+```bash
+openssl genpkey -algorithm ed25519 -out alice.key
+openssl pkey -in alice.key -pubout -out alice.pub
+openssl pkeyutl -sign -inkey alice.key -rawin -in message.txt -out message.sig
+openssl pkeyutl -verify -pubin -inkey alice.pub -rawin -in message.txt -sigfile message.sig
+```
+
+```text title="Result"
+Signature Verified Successfully
+```
+
+**5. Mallory changes the message** (14h becomes 15h) and keeps the signature:
+
+```bash
+printf 'Rendez-vous au datacenter a 15h' > fake.txt
+openssl pkeyutl -verify -pubin -inkey alice.pub -rawin -in fake.txt -sigfile message.sig
+```
+
+```text title="Result"
+Signature Verification Failure
+```
+
+**6. Your own SSH key**, to log into devices without a password:
+
+```bash
+ssh-keygen -t ed25519 -C "first@laptop"
+ssh-keygen -lf ~/.ssh/id_ed25519.pub
+```
+
+```text title="Result (your fingerprint will differ)"
+256 SHA256:egVafpgIwgiWwJZs83f8qXnbu4nq8q/bjEx5D27S+lY first@laptop (ED25519)
+```
+
+The `id_ed25519.pub` file is the public key: copy it to devices (on Arista EOS, with `username <name> ssh-key
+<key>`). The `id_ed25519` file, with no extension, is the private key: it never leaves your computer.
+
+## Key takeaways
+
+- Three guarantees: **confidentiality** (encryption), **integrity** (fingerprint), **authenticity** (signature,
+  certificate).
+- **Symmetric**: a single key, very fast (AES), but it must be shared.
+- **Asymmetric**: a **public key** you hand out and a **private key** you keep; slow, used for small messages,
+  signatures and key exchanges.
+- **Encrypting for Bob**: with Bob's public key. **Signing as Alice**: with Alice's private key.
+- **Diffie-Hellman** builds a common key without sending it; in its ephemeral form, it provides forward secrecy.
+- Protocols are **hybrid**: Diffie-Hellman for the key, signature and certificate for identity, AES for the data.
+- Without a verified link between a key and an identity, the **man in the middle** wins: that is the role of
+  **certificates** and SSH fingerprints.

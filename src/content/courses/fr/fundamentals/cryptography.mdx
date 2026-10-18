@@ -1,0 +1,377 @@
+---
+title: "Le chiffrement : clés, signatures et certificats"
+description: "Comprendre la cryptographie qu'utilise le réseau, avec Alice et Bob : chiffrement symétrique et asymétrique, clés publiques et privées, empreintes, signatures, échange Diffie-Hellman, et pourquoi il faut des certificats. Avec OpenSSL pour pratiquer."
+pubDate: 2026-10-18
+level: beginner
+tags: [cryptography, tls, pki, ssh, ipsec, security]
+vendor: []
+order: 11
+---
+
+{/* Sorties déclarées en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const empreintes = `SHA2-256(stdin)= 3ce3fb98f578bd1ed079574092bf68304060f35077192c769eeb35448aa3038e
+SHA2-256(stdin)= 25920099c9dcb663babb316ce3715adf8c5e3271c7b1764adaff2f9164be9010`;
+
+Un paquet qui traverse un réseau passe entre de nombreuses mains : switches, routeurs, opérateurs, points
+d'accès Wi-Fi publics. N'importe lequel de ces intermédiaires peut le lire, le copier ou le modifier. Le
+chiffrement est ce qui rend ce voyage sûr, et on le retrouve partout dans le métier : HTTPS, VPN IPsec, SSH vers
+les équipements, SNMPv3, Wi-Fi WPA, et les certificats qui expirent toujours au mauvais moment. Ce chapitre
+explique les quatre mécanismes sur lesquels tout cela repose, avec les deux personnages qu'utilisent tous les
+cours de cryptographie depuis les années 1970 : **Alice** et **Bob**.
+
+## Alice, Bob et Ève
+
+Alice veut envoyer un message à Bob. Entre eux, un réseau qu'ils ne contrôlent pas, et **Ève**
+(*eavesdropper*, l'oreille indiscrète), qui écoute tout ce qui passe. Parfois même **Mallory** (*malicious*), qui
+ne se contente pas d'écouter : elle modifie les messages, ou se fait passer pour l'un des deux.
+
+Alice et Bob ont besoin de trois garanties :
+
+| Garantie | La question | Le mécanisme |
+|---|---|---|
+| **Confidentialité** | Ève peut-elle lire le message ? | le chiffrement |
+| **Intégrité** | Mallory a-t-elle modifié le message en route ? | l'empreinte (le hachage) |
+| **Authenticité** | Le message vient-il vraiment d'Alice ? | la signature, puis le certificat |
+
+Le chiffrement seul ne suffit pas : un message chiffré peut être altéré, ou envoyé par quelqu'un d'autre. Les
+protocoles réels combinent les trois.
+
+## Le chiffrement symétrique : une seule clé
+
+C'est la forme la plus ancienne et la plus intuitive : **la même clé** sert à chiffrer et à déchiffrer, comme un
+cadenas à code dont Alice et Bob connaissent tous les deux la combinaison.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'clé K' },
+    { id: 'e', label: 'Ève', sub: 'écoute', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'clé K', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Alice chiffre avec la clé K', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: '8f3a…c41e', sub: 'message chiffré', tone: 'emerald' },
+    { note: 'Ève voit passer des octets sans signification', over: ['e', 'e'], tone: 'rose' },
+    { note: 'Bob déchiffre avec la même clé K', over: ['b', 'b'], tone: 'violet' },
+  ]}
+  caption="Chiffrement symétrique : Ève intercepte le message, mais sans la clé K, il est illisible."
+/>
+
+L'algorithme de référence est <Term id="aes" />, avec une clé de 128 ou 256 bits. Il est **extrêmement rapide**,
+souvent accéléré par le processeur lui-même : c'est lui qui chiffre les données d'une session HTTPS, d'un tunnel
+IPsec ou d'une connexion SSH, à plusieurs gigabits par seconde.
+
+Son problème n'est pas technique, il est logistique : **comment Alice et Bob s'échangent-ils la clé K ?** S'ils
+l'envoient sur le réseau, Ève la lit au passage. S'ils doivent se rencontrer pour la partager, le chiffrement ne
+fonctionne qu'entre gens qui se connaissent déjà. Et avec cent correspondants, il faut cent clés différentes.
+
+<Callout type="note">
+La **clé pré-partagée** (*pre-shared key*, PSK) d'un VPN IPsec ou d'un réseau Wi-Fi WPA2-Personal est exactement
+cela : un secret que l'administrateur a saisi lui-même des deux côtés. Cela fonctionne pour deux sites, devient
+pénible pour cinquante, et chaque fuite oblige à changer la clé partout.
+</Callout>
+
+## Le chiffrement asymétrique : une paire de clés
+
+En 1976, Whitfield Diffie et Martin Hellman publient une idée qui change tout : et si la clé qui chiffre n'était
+**pas** celle qui déchiffre ? Chacun possède alors une **paire de clés**, liées mathématiquement :
+
+- une **clé privée**, que son propriétaire garde secrète et ne transmet jamais ;
+- une **clé publique**, qu'il distribue à tout le monde, sans aucun risque.
+
+Ce qu'une clé fait, seule l'autre peut le défaire. L'analogie la plus parlante : Bob distribue des **cadenas
+ouverts** (sa clé publique) à qui veut, et garde pour lui l'unique **clé** qui les ouvre (sa clé privée).
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice' },
+    { id: 'e', label: 'Ève', sub: 'écoute', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'clé privée de Bob', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'b', to: 'a', label: 'Clé publique de Bob', sub: 'distribuée à tous, Ève compris', tone: 'violet' },
+    { note: 'Alice chiffre avec la clé publique de Bob', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: '5f14…cee4', sub: 'message chiffré', tone: 'emerald' },
+    { note: 'Avoir la clé publique ne permet pas de déchiffrer', over: ['e', 'e'], tone: 'rose' },
+    { note: 'Seule la clé privée de Bob déchiffre', over: ['b', 'b'], tone: 'violet' },
+  ]}
+  caption="Chiffrement asymétrique : n'importe qui peut chiffrer pour Bob avec sa clé publique ; seul Bob peut déchiffrer."
+/>
+
+Le problème de l'échange de clé disparaît : la clé publique peut circuler en clair, Ève peut la copier, cela ne
+lui sert à rien. Les algorithmes courants sont <Term id="rsa" /> et ceux à **courbes elliptiques** (ECDSA,
+Ed25519, X25519), qui offrent la même sécurité avec des clés bien plus courtes.
+
+Le revers : le chiffrement asymétrique est **des centaines à des milliers de fois plus lent** que le symétrique, et
+il ne chiffre que de petits messages. On ne chiffre donc jamais un flux de données avec RSA.
+
+## L'empreinte : vérifier l'intégrité
+
+Une **fonction de hachage** transforme n'importe quelle donnée, d'un octet ou d'un téraoctet, en une
+**empreinte** de taille fixe : 256 bits pour SHA-256. Elle a trois propriétés :
+
+- la même donnée donne **toujours** la même empreinte ;
+- le moindre changement donne une empreinte **complètement différente** ;
+- il est impossible, en pratique, de retrouver la donnée à partir de l'empreinte, ou de fabriquer deux données qui
+  ont la même empreinte.
+
+Deux messages qui ne diffèrent que d'un chiffre :
+
+<CliOutput
+  title="printf 'Virement de 100 euros a Bob' | openssl dgst -sha256 (puis 900 euros)"
+  output={empreintes}
+  notes={[
+    { line: 1, match: '3ce3fb98', text: 'Empreinte du message « 100 euros ».', tone: 'sky' },
+    { line: 2, match: '25920099', text: 'Un seul caractère modifié (100 devient 900) : l’empreinte ne garde rien de la précédente.', tone: 'rose' },
+  ]}
+/>
+
+C'est ainsi qu'on vérifie qu'une image EOS téléchargée n'a pas été corrompue ou altérée : on compare son empreinte
+SHA-256 à celle publiée par Arista. Une empreinte seule ne protège pourtant pas contre Mallory : si elle modifie
+le message, elle recalcule l'empreinte. Il faut l'associer à une clé, ce que fait la signature.
+
+<Callout type="warning">
+Un hachage n'est **pas** un chiffrement : il ne se « déchiffre » pas, et il ne cache rien de façon réversible.
+MD5 et SHA-1 sont aujourd'hui cassés (on sait fabriquer des collisions) et ne doivent plus servir à la sécurité.
+On utilise SHA-256 ou plus.
+</Callout>
+
+## La signature : prouver qui a écrit
+
+La signature utilise les clés asymétriques **dans l'autre sens**. Alice calcule l'empreinte de son message, et la
+transforme avec **sa clé privée** : c'est la signature. Bob vérifie avec la **clé publique d'Alice**.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'clé privée d’Alice' },
+    { id: 'm', label: 'Mallory', sub: 'modifie', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'clé publique d’Alice', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Alice signe l’empreinte du message avec sa clé privée', over: ['a', 'a'], tone: 'emerald' },
+    { from: 'a', to: 'b', label: 'message + signature', tone: 'emerald' },
+    { note: 'Bob vérifie avec la clé publique d’Alice : signature valide', over: ['b', 'b'], tone: 'violet' },
+    { from: 'm', to: 'b', label: 'message modifié + ancienne signature', style: 'blocked' },
+    { note: 'L’empreinte ne correspond plus : signature invalide', over: ['b', 'b'], tone: 'rose' },
+  ]}
+  caption="Une signature prouve deux choses à la fois : le message vient du détenteur de la clé privée, et il n'a pas été modifié."
+/>
+
+Mallory ne peut pas fabriquer de signature valide sans la clé privée d'Alice, et si elle modifie le message,
+l'ancienne signature ne correspond plus. La signature apporte ainsi **intégrité** et **authenticité**.
+
+| | Chiffrer pour Bob | Signer en tant qu'Alice |
+|---|---|---|
+| On utilise | la clé **publique** du destinataire (Bob) | la clé **privée** de l'émettrice (Alice) |
+| On vérifie ou déchiffre avec | la clé **privée** de Bob | la clé **publique** d'Alice |
+| Ce qu'on obtient | la confidentialité | l'intégrité et l'authenticité |
+
+C'est le tableau à retenir : il évite la confusion la plus fréquente sur les paires de clés.
+
+## Diffie-Hellman : se mettre d'accord sur un secret en public
+
+Reste un problème : le symétrique est rapide mais il faut partager la clé ; l'asymétrique règle le partage mais il
+est lent. L'**échange Diffie-Hellman** permet à Alice et Bob de **fabriquer ensemble une clé secrète commune**, en
+ne s'échangeant que des valeurs publiques. Ève voit tout passer, et ne peut pas en déduire la clé.
+
+L'analogie classique utilise des pots de peinture : mélanger deux couleurs est facile, séparer un mélange est
+impossible.
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice', sub: 'secret : rouge' },
+    { id: 'e', label: 'Ève', sub: 'voit tout passer', tone: 'rose' },
+    { id: 'b', label: 'Bob', sub: 'secret : bleu', tone: 'violet' },
+  ]}
+  messages={[
+    { note: 'Couleur commune et publique : jaune', tone: 'slate' },
+    { from: 'a', to: 'b', label: 'jaune + rouge = orange', sub: 'mélange public d’Alice', tone: 'emerald' },
+    { from: 'b', to: 'a', label: 'jaune + bleu = vert', sub: 'mélange public de Bob', tone: 'violet' },
+    { note: 'Alice : vert + rouge. Bob : orange + bleu. Même couleur finale, jamais transmise', tone: 'emerald' },
+    { note: 'Ève a jaune, orange et vert, mais ne sait pas les séparer', over: ['e', 'e'], tone: 'rose' },
+  ]}
+  caption="Diffie-Hellman en couleurs : chacun ajoute son secret au mélange de l'autre, et tous deux obtiennent la même couleur, qui n'a jamais circulé."
+/>
+
+En vrai, les couleurs sont des nombres, et le mélange une opération mathématique facile dans un sens et
+impossible à inverser. La variante moderne, ECDHE (sur courbes elliptiques), est utilisée par TLS 1.3, IPsec
+(IKEv2) et SSH. Le **E** final signifie *éphémère* : une nouvelle clé est fabriquée pour chaque session, puis
+jetée. Si la clé privée du serveur est volée un jour, les anciennes sessions enregistrées restent illisibles : c'est
+la **confidentialité persistante** (*forward secrecy*).
+
+## En pratique : tout est hybride
+
+Aucun protocole n'utilise une seule technique. Ils les combinent, chacune pour ce qu'elle fait de mieux :
+
+| Étape | Technique | Pourquoi |
+|---|---|---|
+| 1. Se mettre d'accord sur une clé de session | Diffie-Hellman éphémère (ECDHE) | aucune clé ne circule, et la confidentialité persistante |
+| 2. Prouver l'identité du serveur | signature (RSA, ECDSA, Ed25519) + certificat | empêcher Mallory de se faire passer pour lui |
+| 3. Chiffrer les données | symétrique (AES-GCM, ChaCha20) | la vitesse |
+| 4. Vérifier chaque paquet | code d'authentification (inclus dans AES-GCM) | détecter toute modification en route |
+
+C'est exactement la poignée de main TLS 1.3, détaillée au chapitre
+[TLS, certificats et inspection](/formations/proxy/tls-pki). IPsec (avec IKEv2) et SSH suivent le même schéma.
+
+## Le maillon faible : à qui appartient cette clé publique ?
+
+Tout repose sur une hypothèse : quand Alice chiffre avec « la clé publique de Bob », c'est **vraiment** celle de
+Bob. Si Mallory parvient à lui faire croire que sa propre clé publique est celle de Bob, tout s'écroule : c'est
+l'**attaque de l'homme du milieu** (*man in the middle*).
+
+<Sequence
+  width={660}
+  actors={[
+    { id: 'a', label: 'Alice' },
+    { id: 'm', label: 'Mallory', sub: 'au milieu', tone: 'rose' },
+    { id: 'b', label: 'Bob', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'b', to: 'm', label: 'clé publique de Bob', tone: 'violet' },
+    { from: 'm', to: 'a', label: 'clé publique de Mallory', sub: '« voici la clé de Bob »', style: 'blocked' },
+    { from: 'a', to: 'm', label: 'chiffré pour Mallory', tone: 'emerald' },
+    { note: 'Mallory déchiffre, lit, rechiffre pour Bob', over: ['m', 'm'], tone: 'rose' },
+    { from: 'm', to: 'b', label: 'chiffré pour Bob', tone: 'rose' },
+  ]}
+  caption="L'homme du milieu : Alice et Bob croient se parler en chiffré, et c'est vrai, mais chacun avec Mallory."
+/>
+
+Le chiffrement fonctionne parfaitement, et pourtant Mallory lit tout. La parade : **lier une clé publique à une
+identité** de façon vérifiable. Deux approches existent :
+
+- **le certificat** : un tiers de confiance, l'autorité de certification (<Term id="ca" />), signe un document qui
+  dit « cette clé publique appartient à `www.example.com` ». Le navigateur vérifie cette signature avec la clé
+  publique de l'autorité, déjà présente dans le système. C'est la <Term id="pki" />, utilisée par HTTPS et souvent
+  par IPsec ;
+- **l'empreinte vérifiée à la main** : c'est ce que fait SSH. À la première connexion, il affiche l'empreinte de la
+  clé de l'équipement et demande de la confirmer ; ensuite, il la mémorise dans `known_hosts` et alerte si elle
+  change.
+
+<Callout type="field">
+Le fameux avertissement SSH `REMOTE HOST IDENTIFICATION HAS CHANGED` signifie exactement : « la clé publique de cet
+équipement n'est plus celle que j'ai mémorisée ». Le plus souvent, l'équipement a été remplacé ou réinstallé, et
+sa nouvelle clé est légitime. Mais c'est aussi précisément ce qu'on verrait en cas d'homme du milieu. Avant de
+supprimer l'ancienne entrée avec `ssh-keygen -R <adresse>`, vérifiez que le changement est attendu.
+</Callout>
+
+## Où on les rencontre dans le réseau
+
+| Usage | Ce qui est chiffré ou signé | Les clés |
+|---|---|---|
+| **HTTPS, TLS** | les échanges web, les API (eAPI, NetBox) | certificat du serveur, ECDHE, AES |
+| **SSH** | l'administration des équipements | clé d'hôte de l'équipement, et votre clé personnelle à la place d'un mot de passe |
+| **VPN IPsec** | le trafic entre deux sites | clé pré-partagée ou certificats, IKEv2 et Diffie-Hellman, puis AES (voir [VPN IPsec](/formations/security/ipsec-vpn)) |
+| **SNMPv3** | la supervision | une clé d'authentification et une clé de chiffrement par utilisateur |
+| **Wi-Fi WPA2 / WPA3** | le lien radio | clé partagée (Personal) ou 802.1X avec certificats (Enterprise) |
+| **MACsec** | un lien Ethernet, entre deux équipements | clés AES gérées par MKA |
+| **Images logicielles** | l'intégrité d'un fichier téléchargé | empreinte SHA-256, parfois signature du constructeur |
+
+### Les tailles de clés
+
+| Usage | Recommandé aujourd'hui | À éviter |
+|---|---|---|
+| Symétrique | AES-128 ou AES-256 (en mode GCM) | DES, 3DES, RC4 |
+| Asymétrique RSA | 2048 bits au minimum, 3072 pour durer | 1024 bits |
+| Courbes elliptiques | P-256, Ed25519, X25519 | |
+| Hachage | SHA-256, SHA-384 | MD5, SHA-1 |
+| Diffie-Hellman | groupes 14 (2048 bits) et plus, ou ECDH (groupes 19, 20, 31) | groupes 1, 2 et 5 |
+
+<Callout type="note">
+Un ordinateur quantique suffisamment puissant casserait RSA, les courbes elliptiques et Diffie-Hellman. Il n'existe
+pas encore, mais un attaquant peut enregistrer aujourd'hui des échanges pour les déchiffrer demain. Les nouveaux
+algorithmes dits **post-quantiques** (comme ML-KEM, normalisé en 2024) commencent donc à être déployés, d'abord
+dans les navigateurs et TLS, en complément des algorithmes actuels. Le chiffrement symétrique, lui, reste solide
+avec des clés de 256 bits.
+</Callout>
+
+## Dans le lab : Alice et Bob avec OpenSSL
+
+Il suffit d'un terminal Linux (ou WSL) avec OpenSSL, installé presque partout. Les sorties ci-dessous ont été
+obtenues avec OpenSSL 3.0 ; les clés générées chez vous seront différentes, c'est normal.
+
+**1. Bob crée sa paire de clés** RSA, et extrait la clé publique à distribuer :
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out bob.key
+openssl pkey -in bob.key -pubout -out bob.pub
+```
+
+**2. Alice chiffre un message pour Bob**, avec la clé publique de Bob seulement :
+
+```bash
+printf 'Rendez-vous au datacenter a 14h' > message.txt
+openssl pkeyutl -encrypt -pubin -inkey bob.pub -pkeyopt rsa_padding_mode:oaep -in message.txt -out message.enc
+wc -c message.txt message.enc
+```
+
+```text title="Résultat"
+ 31 message.txt
+384 message.enc
+```
+
+Le message de 31 octets devient un bloc de 384 octets (la taille de la clé RSA, 3072 bits) qui ressemble à du
+bruit. Chiffrez-le deux fois : le résultat change à chaque fois, grâce au bourrage aléatoire OAEP.
+
+**3. Bob déchiffre** avec sa clé privée, et retrouve `Rendez-vous au datacenter a 14h` :
+
+```bash
+openssl pkeyutl -decrypt -inkey bob.key -pkeyopt rsa_padding_mode:oaep -in message.enc
+```
+
+**4. Alice signe**, cette fois avec une clé Ed25519 (courbe elliptique), et Bob vérifie avec la clé publique
+d'Alice :
+
+```bash
+openssl genpkey -algorithm ed25519 -out alice.key
+openssl pkey -in alice.key -pubout -out alice.pub
+openssl pkeyutl -sign -inkey alice.key -rawin -in message.txt -out message.sig
+openssl pkeyutl -verify -pubin -inkey alice.pub -rawin -in message.txt -sigfile message.sig
+```
+
+```text title="Résultat"
+Signature Verified Successfully
+```
+
+**5. Mallory modifie le message** (14 h devient 15 h) et garde la signature :
+
+```bash
+printf 'Rendez-vous au datacenter a 15h' > faux.txt
+openssl pkeyutl -verify -pubin -inkey alice.pub -rawin -in faux.txt -sigfile message.sig
+```
+
+```text title="Résultat"
+Signature Verification Failure
+```
+
+**6. Votre propre clé SSH**, pour vous connecter aux équipements sans mot de passe :
+
+```bash
+ssh-keygen -t ed25519 -C "prenom@poste"
+ssh-keygen -lf ~/.ssh/id_ed25519.pub
+```
+
+```text title="Résultat (l'empreinte sera différente chez vous)"
+256 SHA256:egVafpgIwgiWwJZs83f8qXnbu4nq8q/bjEx5D27S+lY prenom@poste (ED25519)
+```
+
+Le fichier `id_ed25519.pub` est la clé publique : on la copie sur les équipements (sur Arista EOS, avec
+`username <nom> ssh-key <clé>`). Le fichier `id_ed25519`, sans extension, est la clé privée : il ne quitte jamais
+votre poste.
+
+## À retenir
+
+- Trois garanties : **confidentialité** (chiffrement), **intégrité** (empreinte), **authenticité** (signature,
+  certificat).
+- **Symétrique** : une seule clé, très rapide (AES), mais il faut la partager.
+- **Asymétrique** : une **clé publique** qu'on distribue et une **clé privée** qu'on garde ; lent, réservé aux petits
+  messages, aux signatures et aux échanges de clés.
+- **Chiffrer pour Bob** : avec la clé publique de Bob. **Signer en tant qu'Alice** : avec la clé privée d'Alice.
+- **Diffie-Hellman** fabrique une clé commune sans la transmettre ; en version éphémère, il apporte la
+  confidentialité persistante.
+- Les protocoles sont **hybrides** : Diffie-Hellman pour la clé, signature et certificat pour l'identité, AES pour
+  les données.
+- Sans lien vérifié entre une clé et une identité, l'**homme du milieu** gagne : c'est le rôle des **certificats**
+  et des empreintes SSH.
