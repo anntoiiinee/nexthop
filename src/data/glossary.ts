@@ -56,6 +56,13 @@ export const glossary = {
       en: "Autonomous system: a set of networks run by one organization with a common routing policy, identified by a number (ASN).",
     },
   },
+  'atomic-clock': {
+    term: 'Horloge atomique',
+    definition: {
+      fr: "Horloge qui compte les oscillations d'un atome (césium, rubidium) quand il change d'état d'énergie, une fréquence fixée par la physique : la seconde est définie depuis 1967 par 9 192 631 770 oscillations de l'atome de césium 133. Les meilleures ne dérivent pas d'une seconde en cent millions d'années ; les satellites GNSS en embarquent plusieurs.",
+      en: "A clock that counts the oscillations of an atom (caesium, rubidium) as it changes energy state, a frequency set by physics: since 1967, the second has been defined as 9,192,631,770 oscillations of the caesium-133 atom. The best ones drift by less than a second in a hundred million years; GNSS satellites carry several.",
+    },
+  },
   avd: {
     term: 'AVD',
     expansion: 'Arista Validated Designs',
