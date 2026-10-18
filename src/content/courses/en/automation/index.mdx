@@ -1,9 +1,9 @@
 ---
 title: "Network automation"
-description: "Managing your network as code: Python, Ansible, GitOps backups, break-glass account rotation, naming conventions and IPAM, NetBox as the source of truth and Arista AVD, with a lab and ready-to-use scripts."
+description: "Managing your network as code: Python, Ansible, GitOps backups, secrets with HashiCorp Vault, break-glass account rotation, naming conventions and IPAM, NetBox as the source of truth and Arista AVD, with a lab and ready-to-use scripts."
 pubDate: 2026-10-17
 level: intermediate
-tags: [automation, python, ansible, gitops, netbox, avd]
+tags: [automation, python, ansible, gitops, vault, netbox, avd]
 vendor: [arista, netbox]
 order: 0
 ---
@@ -46,10 +46,11 @@ into devices one by one, and to build a complete toolchain:
 | **1. Python for networking** | Connect to devices with Netmiko, use JSON output, work in parallel |
 | **2. Ansible for networking** | Write an inventory and playbooks, understand idempotency, protect secrets with Vault |
 | **3. GitOps backups** | Back up every configuration to Git each day with a GitLab CI pipeline |
-| **4. Break-glass account rotation** | Remove the default admin account, create a single break-glass account and rotate it automatically |
-| **5. Naming conventions and IPAM** | Set naming rules and the addressing plan, and have the CI check them |
-| **6. NetBox, the source of truth** | Model your network in NetBox and derive inventories and configurations from it |
-| **7. Arista AVD** | Generate, document and validate a fabric's configurations from a YAML model |
+| **4. Secrets with HashiCorp Vault** | Store automation secrets in a central vault, with per-path permissions, versions and an audit log |
+| **5. Break-glass account rotation** | Remove the default admin account, create a single break-glass account and rotate it automatically |
+| **6. Naming conventions and IPAM** | Set naming rules and the addressing plan, and have the CI check them |
+| **7. NetBox, the source of truth** | Model your network in NetBox and derive inventories and configurations from it |
+| **8. Arista AVD** | Generate, document and validate a fabric's configurations from a YAML model |
 
 ## Prerequisites
 

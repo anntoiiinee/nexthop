@@ -160,7 +160,8 @@ ansible-playbook site.yml --ask-vault-pass        # ou : ANSIBLE_VAULT_PASSWORD_
 ```
 
 Un fichier chiffré peut être commité dans Git : sans le mot de passe du coffre, il est illisible.
-On s'en sert au chapitre 4 pour stocker les mots de passe du compte de secours.
+Au chapitre 4, on passe à un vrai coffre-fort de secrets, **HashiCorp Vault**, avec des droits par personne et
+un journal de chaque lecture.
 
 ## Python ou Ansible ?
 

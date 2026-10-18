@@ -156,8 +156,8 @@ ansible-vault rekey group_vars/eos/vault.yml      # change the vault password
 ansible-playbook site.yml --ask-vault-pass        # or: ANSIBLE_VAULT_PASSWORD_FILE=…
 ```
 
-An encrypted file can be committed to Git: without the vault password, it is unreadable. Chapter 4 uses it
-to store the break-glass account passwords.
+An encrypted file can be committed to Git: without the vault password, it is unreadable. Chapter 4 moves on
+to a real secrets vault, **HashiCorp Vault**, with per-person permissions and a log of every read.
 
 ## Python or Ansible?
 

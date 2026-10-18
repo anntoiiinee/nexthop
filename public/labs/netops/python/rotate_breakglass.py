@@ -1,56 +1,46 @@
 #!/usr/bin/env python3
 """Rotation du compte local de secours (break-glass) sur tous les équipements.
 
-Étapes, dans cet ordre pour ne jamais se retrouver enfermé dehors :
-  1. générer un mot de passe aléatoire et unique par équipement ;
-  2. l'écrire, chiffré, dans le coffre « en attente » (vault/breakglass.pending.yml),
-     AVANT de toucher aux équipements ;
+Pour chaque équipement, dans cet ordre pour ne jamais se retrouver enfermé dehors :
+  1. générer un mot de passe aléatoire et unique ;
+  2. l'écrire dans HashiCorp Vault avec le statut « pending », AVANT de toucher à l'équipement ;
   3. l'appliquer sur l'équipement ;
   4. vérifier qu'on se connecte avec, par une connexion indépendante ;
   5. (option) supprimer le compte « admin » par défaut ;
-  6. si tout a réussi, le coffre en attente devient le coffre courant (vault/breakglass.yml).
+  6. enregistrer la configuration, puis passer le secret au statut « active ».
 
-Le coffre est au format Ansible Vault : lisible avec « ansible-vault view vault/breakglass.yml »
-et utilisable tel quel par les playbooks.
+Chaque équipement a son secret dans le moteur KV v2 : secret/netops/breakglass/<équipement>.
+Vault garde les versions précédentes : si la rotation échoue, l'ancien mot de passe reste lisible
+(vault kv get -version=<n> …).
 
 Prérequis :
-  NET_USER / NET_PASSWORD        compte de service utilisé pour se connecter
-  ANSIBLE_VAULT_PASSWORD_FILE    fichier contenant le mot de passe du coffre
+  NET_USER / NET_PASSWORD             compte de service utilisé pour se connecter aux équipements
+  VAULT_ADDR                          adresse de Vault, par exemple http://172.20.30.70:8200
+  VAULT_TOKEN                         jeton Vault…
+  ou VAULT_ROLE_ID / VAULT_SECRET_ID  …ou identité AppRole (pipeline)
 
 Usage : python3 python/rotate_breakglass.py [--remove-default-admin]
 """
 import argparse
-import os
 import secrets
 import string
 import sys
-from pathlib import Path
 
-import yaml
-from ansible.parsing.vault import VaultLib, VaultSecret
 from netmiko import ConnectHandler
 
-from netops import LAB_DIR, credentials, device, load_inventory
+from netops import credentials, device, load_inventory
+from vault_client import VaultClient, VaultError
 
 BREAKGLASS_USER = "nh-breakglass"  # choisissez un nom propre à votre entreprise, pas « admin »
-VAULT_DIR = LAB_DIR / "vault"
+VAULT_MOUNT = "secret"             # moteur KV v2
+VAULT_PATH = "netops/breakglass"   # un secret par équipement sous ce chemin
 # Lettres, chiffres et quelques symboles sans danger pour la CLI (« ? » y déclenche l'aide)
 ALPHABET = string.ascii_letters + string.digits + "-_.+="
 
 
-def open_vault() -> VaultLib:
-    path = os.environ.get("ANSIBLE_VAULT_PASSWORD_FILE")
-    if not path:
-        sys.exit("Définissez ANSIBLE_VAULT_PASSWORD_FILE (fichier contenant le mot de passe du coffre).")
-    secret = Path(path).expanduser().read_bytes().strip()
-    return VaultLib([("default", VaultSecret(secret))])
-
-
-def write_vault(vault: VaultLib, path: Path, data: dict) -> None:
-    """Chiffre en mémoire puis écrit : le mot de passe ne touche jamais le disque en clair."""
-    path.parent.mkdir(exist_ok=True)
-    path.write_bytes(vault.encrypt(yaml.safe_dump(data, sort_keys=False)))
-    path.chmod(0o600)
+def store(vault: VaultClient, name: str, password: str, status: str) -> int:
+    """Écrit une nouvelle version du secret de l'équipement et renvoie son numéro de version."""
+    return vault.put(f"{VAULT_PATH}/{name}", {"username": BREAKGLASS_USER, "password": password, "status": status})
 
 
 def new_password(length: int = 32) -> str:
@@ -82,27 +72,30 @@ def main() -> None:
 
     user, password = credentials()
     inventory = load_inventory()
-    vault = open_vault()
-
-    passwords = {name: new_password() for name in inventory}
-    pending = VAULT_DIR / "breakglass.pending.yml"
-    write_vault(vault, pending, {"breakglass_user": BREAKGLASS_USER, "breakglass_passwords": passwords})
-    print(f"Nouveaux mots de passe enregistrés (chiffrés) dans {pending.relative_to(LAB_DIR)}")
+    try:
+        vault = VaultClient.from_env(VAULT_MOUNT)
+    except VaultError as exc:
+        sys.exit(str(exc))
 
     # En série, pas en parallèle : au premier problème, on s'arrête avant de toucher aux autres
     for name, host in inventory.items():
+        new_pw = new_password()
+        version = store(vault, name, new_pw, "pending")  # au coffre AVANT d'appliquer
         try:
-            rotate(host, user, password, passwords[name], args.remove_default_admin)
-            print(f"OK    {name}")
+            rotate(host, user, password, new_pw, args.remove_default_admin)
         except Exception as exc:  # noqa: BLE001 - on veut s'arrêter quelle que soit l'erreur
             print(f"ÉCHEC {name} : {exc}", file=sys.stderr)
+            previous = f" (version {version - 1})" if version > 1 else ""
             sys.exit(
-                f"Rotation interrompue. {pending.name} contient les nouveaux mots de passe des équipements "
-                "déjà traités ; les autres ont gardé l'ancien (vault/breakglass.yml)."
+                f"Rotation interrompue sur {name}. Son nouveau mot de passe est la version {version} "
+                f"de {VAULT_MOUNT}/{VAULT_PATH}/{name} (statut pending) : il a peut-être été appliqué. "
+                f"Sinon, l'équipement a gardé l'ancien{previous}. "
+                "Les équipements suivants n'ont pas été modifiés."
             )
+        version = store(vault, name, new_pw, "active")
+        print(f"OK    {name}  (version {version})")
 
-    pending.replace(VAULT_DIR / "breakglass.yml")
-    print("Rotation terminée : vault/breakglass.yml est à jour.")
+    print(f"Rotation terminée : les mots de passe sont dans Vault, sous {VAULT_MOUNT}/{VAULT_PATH}/.")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ pubDate: 2026-10-18
 level: beginner
 tags: [cryptography, tls, pki, ssh, ipsec, security]
 vendor: []
-order: 12
+order: 14
 ---
 
 {/* Output declared in JavaScript: MDX strips leading whitespace inside tags */}
@@ -365,3 +365,6 @@ The `id_ed25519.pub` file is the public key: copy it to devices (on Arista EOS, 
 - Protocols are **hybrid**: Diffie-Hellman for the key, signature and certificate for identity, AES for the data.
 - Without a verified link between a key and an identity, the **man in the middle** wins: that is the role of
   **certificates** and SSH fingerprints.
+
+Well done, you have finished the fundamentals! The logical next step: teaching routers to discover the
+network on their own with [dynamic routing](/en/courses/routing) (OSPF, then BGP).

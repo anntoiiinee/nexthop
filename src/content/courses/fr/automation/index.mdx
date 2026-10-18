@@ -1,9 +1,9 @@
 ---
 title: "L'automatisation réseau"
-description: "Gérer son réseau comme du code : Python, Ansible, sauvegardes GitOps, rotation des comptes de secours, conventions de nommage et IPAM, NetBox comme source de vérité et Arista AVD, avec un lab et des scripts prêts à l'emploi."
+description: "Gérer son réseau comme du code : Python, Ansible, sauvegardes GitOps, secrets avec HashiCorp Vault, rotation des comptes de secours, conventions de nommage et IPAM, NetBox comme source de vérité et Arista AVD, avec un lab et des scripts prêts à l'emploi."
 pubDate: 2026-10-17
 level: intermediate
-tags: [automation, python, ansible, gitops, netbox, avd]
+tags: [automation, python, ansible, gitops, vault, netbox, avd]
 vendor: [arista, netbox]
 order: 0
 ---
@@ -46,10 +46,11 @@ connecter équipement par équipement, et se doter d'une chaîne d'outils compl�
 | **1. Python pour le réseau** | Se connecter à des équipements avec Netmiko, exploiter des sorties JSON, travailler en parallèle |
 | **2. Ansible pour le réseau** | Écrire un inventaire et des playbooks, comprendre l'idempotence, protéger ses secrets avec Vault |
 | **3. Sauvegardes GitOps** | Sauvegarder chaque jour toutes les configurations dans Git avec un pipeline GitLab CI |
-| **4. Rotation du compte de secours** | Supprimer le compte admin par défaut, créer un compte de secours unique et le faire tourner automatiquement |
-| **5. Conventions de nommage et IPAM** | Fixer les règles de nommage et le plan d'adressage, et les faire vérifier par la CI |
-| **6. NetBox, source de vérité** | Modéliser son réseau dans NetBox et en tirer inventaires et configurations |
-| **7. Arista AVD** | Générer, documenter et valider les configurations d'une fabric à partir d'un modèle YAML |
+| **4. Les secrets avec HashiCorp Vault** | Ranger les secrets de l'automatisation dans un coffre central, avec des droits par chemin, des versions et un journal d'audit |
+| **5. Rotation du compte de secours** | Supprimer le compte admin par défaut, créer un compte de secours unique et le faire tourner automatiquement |
+| **6. Conventions de nommage et IPAM** | Fixer les règles de nommage et le plan d'adressage, et les faire vérifier par la CI |
+| **7. NetBox, source de vérité** | Modéliser son réseau dans NetBox et en tirer inventaires et configurations |
+| **8. Arista AVD** | Générer, documenter et valider les configurations d'une fabric à partir d'un modèle YAML |
 
 ## Prérequis
 

@@ -1,0 +1,321 @@
+---
+title: "Les secrets avec HashiCorp Vault"
+description: "Ranger les secrets de l'automatisation dans un coffre central : pourquoi Ansible Vault ne suffit plus, le fonctionnement de HashiCorp Vault (scellement, méthodes d'authentification, politiques, moteurs de secrets, audit), le moteur KV v2 et ses versions, l'accès depuis Python, Ansible et un pipeline, et la question de la disponibilité du coffre pendant une panne réseau."
+pubDate: 2026-10-18
+level: intermediate
+tags: [vault, secrets, security, automation, python, ansible, cicd]
+vendor: [arista]
+order: 4
+---
+
+export const kvGet = `=========== Secret Path ===========
+secret/data/netops/breakglass/leaf1
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-10-18T18:36:29.899944496Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            8
+
+====== Data ======
+Key         Value
+---         -----
+password    ChmVKOr3N4XB14MPI2H=vEyAOhv=Mo21
+status      active
+username    nh-breakglass`;
+
+export const auditLine = `{
+  "time": "2026-10-18T18:36:43.069962182Z",
+  "type": "response",
+  "auth": {
+    "display_name": "userpass-alice",
+    "policies": ["default", "netops-breakglass-read"]
+  },
+  "request": {
+    "operation": "read",
+    "path": "secret/data/netops/breakglass/leaf1",
+    "remote_address": "127.0.0.1"
+  },
+  "response": {
+    "data": {
+      "data": {
+        "password": "hmac-sha256:58d5d7d6eab0b7f7526f323e8302041ff077403565a13ce85b018a39e33df9dc",
+        …
+      }
+    }
+  }
+}`;
+
+L'automatisation manipule des secrets en permanence : le mot de passe du compte de service des scripts, les clés
+<Term id="tacacs" />, les identifiants SNMPv3, les jetons d'<Term id="api" /> de NetBox ou de GitLab, les mots de
+passe du compte de secours. Au chapitre [Ansible](/formations/automation/ansible), on les a rangés dans un fichier
+chiffré avec **Ansible Vault**. C'est un bon début, mais il montre vite ses limites quand l'équipe et le nombre
+de scripts grandissent. Ce chapitre présente **HashiCorp Vault**, le coffre-fort de secrets le plus répandu,
+et prépare le chapitre suivant, qui l'utilise pour la rotation du compte de secours.
+
+## Les limites d'un fichier chiffré
+
+Ansible Vault chiffre un fichier avec **un seul mot de passe**. Tout le reste en découle :
+
+- **Tout ou rien** : qui connaît le mot de passe du fichier lit **tous** les secrets qu'il contient. Impossible
+  de donner au script de sauvegarde le compte de service sans lui donner aussi les mots de passe de secours.
+- **Aucune trace des lectures** : Git montre qui a **modifié** le fichier, mais personne ne sait qui l'a **lu**.
+- **Un départ coûte cher** : le mot de passe du fichier est partagé. Quand un collègue part, il faut le changer
+  (`ansible-vault rekey`), puis le redistribuer à tous et dans chaque pipeline.
+- **Des secrets figés** : un mot de passe reste valable jusqu'à ce que quelqu'un pense à le changer.
+
+## Ce que fait un coffre-fort de secrets
+
+**HashiCorp Vault** est un serveur qui garde les secrets et ne les rend qu'à ceux qui en ont le droit, au moment
+où ils en ont besoin. On l'interroge par son API HTTPS, sa ligne de commande `vault` ou son interface web.
+
+<Topology
+  width={760}
+  height={330}
+  groups={[{ x: 300, y: 30, w: 220, h: 280, label: 'Vault', tone: 'amber' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 100, y: 80, label: 'Ingénieure', sub: 'SSO + MFA' },
+    { id: 'ci', type: 'server', x: 100, y: 170, label: 'Pipeline', sub: 'AppRole ou JWT' },
+    { id: 'script', type: 'host', x: 100, y: 270, label: 'Script', sub: 'jeton court' },
+    { id: 'auth', type: 'server', x: 410, y: 170, label: 'Authentification', sub: 'qui es-tu ?', tone: 'sky' },
+    { id: 'pol', type: 'server', x: 410, y: 75, label: 'Politiques', sub: 'que peux-tu lire ?', tone: 'violet' },
+    { id: 'kv', type: 'server', x: 410, y: 265, label: 'Moteurs de secrets', sub: 'KV, PKI, SSH…', tone: 'emerald' },
+    { id: 'audit', type: 'server', x: 650, y: 170, label: "Journal d'audit", sub: 'chaque requête', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'eng', to: 'auth' }, { from: 'ci', to: 'auth' }, { from: 'script', to: 'auth' },
+    { from: 'auth', to: 'pol' }, { from: 'auth', to: 'kv' },
+    { from: 'auth', to: 'audit', style: 'dashed', tone: 'rose' },
+  ]}
+  caption="Chaque client prouve son identité, reçoit un jeton limité par des politiques, et chaque requête est journalisée."
+/>
+
+Le parcours d'une demande est toujours le même :
+
+1. Le client **s'authentifie** avec une méthode adaptée à ce qu'il est : un humain par l'annuaire de
+   l'entreprise, un pipeline par son identité de job, un serveur par son rôle.
+2. Vault lui remet un **jeton** (*token*) à durée de vie courte, auquel sont attachées des **politiques**.
+3. Avec ce jeton, le client lit ou écrit des secrets, dans la limite de ses politiques.
+4. Chaque requête, acceptée ou refusée, est écrite dans le **journal d'audit**.
+
+| | Ansible Vault | HashiCorp Vault |
+|---|---|---|
+| Forme | un fichier chiffré, dans le dépôt Git | un serveur, interrogé par API |
+| Accès | un mot de passe partagé, tout ou rien | une identité par personne ou par script, des droits par chemin |
+| Traçabilité | aucune pour les lectures | chaque lecture et chaque écriture journalisées |
+| Départ d'un collègue | changer et redistribuer le mot de passe du fichier | désactiver son compte dans l'annuaire |
+| Historique | celui de Git | les versions de chaque secret |
+| Secrets générés à la demande | non | oui : certificats, identifiants temporaires |
+| Exploitation | rien à installer | un service critique à rendre disponible et à sauvegarder |
+
+<Callout type="note">
+Ansible Vault garde sa place : pour un lab, une petite équipe, ou les quelques secrets nécessaires pour **démarrer**
+(l'accès au coffre lui-même), c'est simple et suffisant. HashiCorp Vault devient intéressant dès que plusieurs
+équipes, plusieurs pipelines et des exigences d'audit entrent en jeu.
+</Callout>
+
+## Les notions clés
+
+### Scellé et descellé
+
+Vault chiffre tout ce qu'il écrit sur son disque. Au démarrage, il est **scellé** (*sealed*) : il ne connaît pas
+la clé qui déchiffre ses données, et refuse toute requête. Pour le **desceller**, il faut lui fournir un nombre
+minimum de **clés de descellement**, remises à des personnes différentes lors de l'initialisation (par défaut,
+3 parts sur 5, selon le partage de secret de Shamir). Personne ne détient seul la clé du coffre.
+
+En production, on utilise souvent le **descellement automatique** (*auto-unseal*) : la clé est protégée par un
+service de clés externe (KMS d'un cloud, boîtier HSM), et Vault redémarre sans intervention humaine.
+
+### Les méthodes d'authentification
+
+| Qui | Méthode | Pourquoi |
+|---|---|---|
+| Un ingénieur | **OIDC** (SSO de l'entreprise) ou **LDAP** | un compte nominatif, avec <Term id="mfa" />, désactivé automatiquement au départ |
+| Un pipeline GitLab | **JWT** | le job présente un jeton signé par GitLab : aucun secret à stocker dans le pipeline |
+| Un script sur un serveur | **AppRole** | un `role_id` (l'identifiant) et un `secret_id` (le mot de passe), révocables |
+| Un conteneur Kubernetes | **Kubernetes** | le compte de service du pod |
+
+Le jeton obtenu a une **durée de vie** (`ttl`) : quelques minutes pour un script, quelques heures pour un humain.
+Un jeton volé devient vite inutilisable.
+
+### Les politiques
+
+Une politique liste des **chemins** et ce qu'on a le droit d'y faire. Tout ce qui n'est pas autorisé est **refusé
+par défaut**. Celle du script de rotation du chapitre suivant :
+
+<CodeFile lab="netops" file="vault/netops-rotation.hcl" />
+
+Les ingénieurs, eux, ont une politique en **lecture seule** sur les mêmes chemins : ils peuvent récupérer un mot
+de passe de secours en cas de besoin, pas le modifier.
+
+### Les moteurs de secrets
+
+Vault range les secrets dans des **moteurs** (*secrets engines*), montés sur des chemins :
+
+| Moteur | Ce qu'il fait | Usage réseau |
+|---|---|---|
+| **KV v2** | stocke des paires clé-valeur, **avec un historique des versions** | mots de passe, clés TACACS+, jetons d'API |
+| **PKI** | une autorité de certification qui délivre des certificats à la demande | certificats des API eAPI, gNMI, RESTCONF des équipements |
+| **SSH** | signe des clés SSH avec une durée de validité courte | accès SSH aux serveurs sans clés permanentes |
+| **Bases de données**, **AWS**… | crée des identifiants temporaires à chaque demande, puis les supprime | comptes d'outils de supervision, accès cloud |
+
+Les deux derniers sont des **secrets dynamiques** : le secret n'existe que le temps de son usage, il n'y a plus rien
+à faire tourner. Pour les équipements réseau, qui ne savent pas demander un mot de passe à Vault, on reste le plus
+souvent sur des secrets **statiques** dans KV v2, changés régulièrement par un script.
+
+### Le journal d'audit
+
+Chaque requête est journalisée, avec l'identité de l'appelant, le chemin et l'opération. Les valeurs sensibles
+sont remplacées par leur **empreinte** (HMAC) : le journal permet de savoir qu'Alice a lu le mot de passe de
+leaf1, sans contenir ce mot de passe.
+
+<CliOutput
+  title="Journal d'audit du lab : Alice lit le mot de passe de secours de leaf1 (extrait)"
+  output={auditLine}
+/>
+
+## Le moteur KV v2 en pratique
+
+Dans le lab, chaque équipement a son secret sous `secret/netops/breakglass/<équipement>` :
+
+```bash
+vault kv put secret/netops/breakglass/leaf1 username=nh-breakglass password='…' status=active
+vault kv get secret/netops/breakglass/leaf1                 # la dernière version
+vault kv get -field=password secret/netops/breakglass/leaf1 # une seule valeur, pour un script
+vault kv get -version=7 secret/netops/breakglass/leaf1      # une version précédente
+vault kv metadata get secret/netops/breakglass/leaf1        # l'historique : qui, quand
+```
+
+<CliOutput title="vault kv get secret/netops/breakglass/leaf1 (lab)" output={kvGet} />
+
+Chaque écriture crée une **nouvelle version**, et Vault garde les précédentes (10 par défaut dans le lab). C'est
+précieux pour une rotation : si elle échoue au milieu, l'ancien mot de passe est toujours là.
+
+## Utiliser Vault depuis l'automatisation
+
+En **Python**, la bibliothèque `hvac` parle à l'API de Vault. Plutôt que de répéter la connexion et les appels
+dans chaque script, le lab les regroupe dans une petite classe, `VaultClient` : connexion par jeton, utilisateur
+ou AppRole, lecture et écriture de secrets KV v2, et création d'un secret s'il n'existe pas encore.
+
+<CodeFile lab="netops" file="python/vault_client.py" />
+
+Un script n'a plus qu'à l'importer :
+
+```python
+import secrets
+
+from vault_client import VaultClient
+
+vault = VaultClient.from_env()       # VAULT_ADDR, puis VAULT_TOKEN ou VAULT_ROLE_ID / VAULT_SECRET_ID
+password = vault.get("netops/service-account")["password"]
+snmp_key = vault.get_or_create("netops/snmp", "auth_key", generate=lambda: secrets.token_urlsafe(24))
+```
+
+Quelques choix à reprendre dans vos propres scripts :
+
+- **La vérification TLS reste active** (`verify=True`, ou le certificat de l'autorité interne via `VAULT_CACERT`).
+  La désactiver, c'est accepter qu'un faux serveur récupère le jeton et les secrets.
+- **Aucune valeur de secret dans les journaux** : on journalise un chemin, jamais un contenu.
+- **`put` remplace tout le secret**, `patch` ne change que les clés données. `patch` relit d'abord le secret, puis
+  écrit avec un *check-and-set* (`cas`) : si quelqu'un l'a modifié entre-temps, Vault refuse au lieu d'écraser.
+- **L'authentification est vérifiée une fois**, à la connexion, pas avant chaque opération : chaque vérification
+  est une requête de plus vers le coffre.
+- **Pas de code exécuté à l'import** du module : l'importer ne doit ni se connecter, ni lire un secret.
+
+En **Ansible**, la collection `community.hashi_vault` fournit des *lookups* et des modules. Le mot de passe du
+compte de service ne vient plus d'une variable d'environnement, mais du coffre :
+
+```yaml title="group_vars/eos.yml (variante avec Vault)"
+ansible_password: "{{ lookup('community.hashi_vault.vault_kv2_get', 'netops/service-account').secret.password }}"
+```
+
+L'adresse du coffre et le jeton sont lus dans l'environnement (`ANSIBLE_HASHI_VAULT_ADDR` ou `VAULT_ADDR`, et
+`VAULT_TOKEN`).
+
+Dans un **pipeline GitLab**, le mieux est de ne stocker **aucun** secret dans les variables du projet. Le job
+demande un jeton d'identité signé par GitLab (`id_tokens`) et l'échange contre un jeton Vault, avec la méthode
+JWT. Vault vérifie la signature, le projet et la branche avant d'accorder la politique :
+
+```yaml title=".gitlab-ci.yml (extrait)"
+rotate-breakglass:
+  image: python:3.12-slim
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: https://vault.example.com
+  script:
+    - pip install -q -r requirements.txt
+    - export VAULT_TOKEN=$(python3 -c "import hvac, os; c = hvac.Client(url=os.environ['VAULT_ADDR']); print(c.auth.jwt.jwt_login(role='netops-rotation', jwt=os.environ['VAULT_ID_TOKEN'])['auth']['client_token'])")
+    - python3 python/rotate_breakglass.py
+```
+
+À défaut, l'AppRole fonctionne partout : le `role_id` et le `secret_id` sont alors des variables masquées et
+protégées du pipeline.
+
+## Le piège réseau : le coffre pendant la panne
+
+<Callout type="warning">
+Le compte de secours sert **quand le réseau va mal**. Si son mot de passe n'est que dans Vault, et que Vault
+n'est joignable qu'**à travers** le réseau en panne, la porte de secours est fermée au moment où l'on en a
+besoin. Avant d'y ranger les mots de passe de secours :
+
+- rendez le coffre joignable par le [réseau hors bande](/formations/operations/oob), pas seulement par le réseau de
+  production ;
+- déployez-le en **cluster** (3 ou 5 nœuds, stockage intégré Raft), idéalement répliqué sur un second site ;
+- testez ce scénario : « le cœur de réseau est tombé, je dois me connecter en console sur un switch ». Où est le
+  mot de passe ?
+- pour les quelques équipements les plus critiques, gardez une copie hors ligne et scellée (enveloppe au coffre-fort
+  physique, coffre de mots de passe hors ligne), renouvelée à chaque rotation.
+</Callout>
+
+Vault devient un service **critique** : il faut le superviser, le sauvegarder (instantanés Raft), et tester sa
+restauration, comme le DNS ou l'authentification.
+
+## Licence et alternatives
+
+Depuis 2023, Vault est publié sous **Business Source License** (BSL) : il reste gratuit pour un usage interne,
+mais n'est plus un logiciel libre au sens strict. **OpenBao**, une copie de Vault maintenue sous l'égide de la
+Linux Foundation, est restée sous licence libre (MPL 2.0) et garde la même API et la même ligne de commande pour
+l'essentiel. HashiCorp propose aussi une version hébergée (HCP Vault). Les principes de ce chapitre s'appliquent
+aux deux, et à la plupart des coffres d'entreprise (CyberArk, Delinea, les gestionnaires de secrets des clouds).
+
+## Dans le lab
+
+Le lab `netops` contient un conteneur `vault` en **mode dev** : en mémoire, déjà descellé, avec un jeton root
+connu (`netops-root`). C'est fait pour apprendre, jamais pour la production. Au démarrage, un script le configure :
+journal d'audit, politiques, AppRole du script de rotation, et un compte `alice` en lecture seule.
+
+<CodeFile lab="netops" file="vault/setup.sh" />
+
+1. Déployez le lab, puis ouvrez l'interface web `http://172.20.30.70:8200/ui` avec le jeton `netops-root`.
+2. Sans installer la ligne de commande, utilisez celle du conteneur :
+   `alias vault='docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN clab-netops-vault vault'`,
+   puis `export VAULT_TOKEN=netops-root`.
+3. Rangez le compte de service des scripts :
+   `vault kv put secret/netops/service-account username=admin password=admin`, puis relisez-le.
+4. Prenez l'identité d'Alice :
+   `export VAULT_TOKEN=$(vault login -method=userpass -field=token username=alice password=alice-lab)`.
+   Pouvez-vous lire `secret/netops/service-account` ? Pourquoi ? Pouvez-vous le modifier ?
+   Revenez ensuite au jeton root : `export VAULT_TOKEN=netops-root`.
+5. Modifiez trois fois le secret (avec le jeton root), puis affichez la version 1 et l'historique.
+6. Lisez la dernière ligne du journal d'audit : `docker exec clab-netops-vault tail -n 1 /vault/logs/audit.log`.
+7. Obtenez l'identité AppRole du script de rotation, elle servira au chapitre suivant :
+   `vault read auth/approle/role/netops-rotation/role-id` et `vault write -f auth/approle/role/netops-rotation/secret-id`.
+
+<Lab name="netops" lang="fr" />
+
+## À retenir
+
+- Un fichier chiffré (Ansible Vault) est **tout ou rien**, sans trace des lectures, et coûteux à chaque départ.
+- **HashiCorp Vault** : chaque client **s'authentifie** (OIDC, LDAP, AppRole, JWT), reçoit un **jeton court**
+  limité par des **politiques**, et chaque requête est **journalisée**.
+- Au démarrage, Vault est **scellé** : clés de descellement partagées, ou descellement automatique par KMS ou HSM.
+- **KV v2** garde l'**historique des versions** de chaque secret ; **PKI**, **SSH** et les secrets **dynamiques**
+  délivrent des secrets à durée de vie courte.
+- Depuis un pipeline, préférez l'authentification **JWT** : aucun secret stocké dans GitLab.
+- Un coffre qui garde les mots de passe de secours doit rester **joignable pendant une panne réseau** : hors bande,
+  en cluster, avec une copie hors ligne pour les équipements critiques.
+
+Prochain chapitre : la **rotation du compte de secours**, avec ses mots de passe rangés dans Vault.

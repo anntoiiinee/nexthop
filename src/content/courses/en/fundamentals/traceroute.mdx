@@ -1,0 +1,279 @@
+---
+title: "Traceroute: following a packet's path"
+description: "How traceroute discovers the routers on a path with the TTL and ICMP messages, its UDP, ICMP and TCP variants, reading a trace, then every reason why it lies or doesn't work: filtering, ICMP rate limiting, asymmetric paths, ECMP, MPLS and tunnels. With mtr and real outputs."
+pubDate: 2026-10-18
+level: beginner
+tags: [traceroute, icmp, ttl, mtr, troubleshooting, routing]
+vendor: [arista, cisco]
+order: 13
+---
+
+export const mtrOut = `Start: 2026-10-18T18:48:02+0000
+HOST: tr-client                   Loss%   Snt   Last   Avg  Best  Wrst StDev
+  1.|-- 10.10.1.254               55.0%    20    0.0   0.1   0.0   0.1   0.0
+  2.|-- 10.10.12.2                90.0%    20    0.1   0.1   0.1   0.1   0.0
+  3.|-- 10.10.2.10                 0.0%    20    0.1   0.1   0.1   0.1   0.0`;
+
+"The site is slow", "the application doesn't respond": before looking for a culprit, you want to know **which way
+the packets go** and **where they stop**. `traceroute` (`tracert` on Windows) lists the routers crossed, hop by
+hop. It is one of the most used tools… and one of the most misread. This chapter explains how it works, then why
+it is so often misleading, or unusable.
+
+## The principle: the TTL and ICMP messages
+
+Every IP packet carries a **TTL** field (*Time To Live*, called *Hop Limit* in IPv6). Each router that forwards the
+packet decreases it by 1. If it reaches 0, the router drops the packet and sends the sender an <Term id="icmp" />
+**Time Exceeded** message (type 11), with its own address as the source. The TTL exists so that a packet caught in
+a routing loop eventually disappears.
+
+Traceroute hijacks this mechanism:
+
+1. it sends a packet with a **TTL of 1**: the first router drops it and answers "Time Exceeded". Hop 1 is known;
+2. then a packet with a **TTL of 2**: it gets past the first router, dies on the second, which reveals itself;
+3. and so on, until the **destination** itself answers, or the maximum is reached (30 hops by default).
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'c', label: 'Client', sub: '10.10.1.10' },
+    { id: 'r1', label: 'R1', sub: '10.10.1.254' },
+    { id: 'r2', label: 'R2', sub: '10.10.12.2' },
+    { id: 's', label: 'Server', sub: '10.10.2.10', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'c', to: 'r1', label: 'UDP, TTL 1', tone: 'sky' },
+    { from: 'r1', to: 'c', label: 'ICMP Time Exceeded', style: 'dashed', tone: 'amber' },
+    { from: 'c', to: 'r2', label: 'UDP, TTL 2', tone: 'sky' },
+    { from: 'r2', to: 'c', label: 'ICMP Time Exceeded', style: 'dashed', tone: 'amber' },
+    { from: 'c', to: 's', label: 'UDP, TTL 3, port 33440', tone: 'sky' },
+    { from: 's', to: 'c', label: 'ICMP Port Unreachable', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="Each TTL reveals one more router. The destination answers with a different error: that's how traceroute knows it has arrived."
+/>
+
+How does traceroute know it has arrived? It depends on the probe type:
+
+| Variant | Probe sent | Destination's answer | Command |
+|---|---|---|---|
+| **UDP** | UDP to an unlikely port (33434 and up) | ICMP **Port Unreachable**: no service listens on that port | `traceroute` on Linux, Cisco and Arista |
+| **ICMP** | ICMP **Echo Request**, like a ping | ICMP **Echo Reply** | `tracert` on Windows, `traceroute -I` on Linux |
+| **TCP** | TCP **SYN** to a real port (443, 22…) | **SYN-ACK** if the port is open, **RST** if closed | `traceroute -T -p 443`, `tcptraceroute` |
+
+In every case, intermediate routers answer the same way: **Time Exceeded**. By default, traceroute sends **three
+probes** per hop, hence the three times shown.
+
+## Reading a trace
+
+All the outputs in this chapter come from a small network of Linux containers: a client, two routers and a server,
+built for the occasion.
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'c', type: 'host', x: 80, y: 100, label: 'client', sub: '10.10.1.10' },
+    { id: 'r1', type: 'router', x: 290, y: 100, label: 'R1', sub: '10.10.1.254 · 10.10.12.11' },
+    { id: 'r2', type: 'router', x: 490, y: 100, label: 'R2', sub: '10.10.12.2 · 10.10.2.254' },
+    { id: 's', type: 'server', x: 690, y: 100, label: 'server', sub: '10.10.2.10', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'c', to: 'r1', label: '10.10.1.0/24' },
+    { from: 'r1', to: 'r2', label: '10.10.12.0/24' },
+    { from: 'r2', to: 's', label: '10.10.2.0/24' },
+  ]}
+  caption="The example network: two routers between the client and the server."
+/>
+
+```text title="client:~# traceroute -n 10.10.2.10"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  1.665 ms  1.499 ms  1.463 ms
+ 2  10.10.12.2  1.404 ms  1.258 ms  1.182 ms
+ 3  10.10.2.10  1.114 ms  0.968 ms  0.885 ms
+```
+
+- Each line is a **hop**, with the address that answered and the round-trip time of each of the three probes.
+- The address shown is usually the router's **ingress interface**, the one the probe arrived on: R1 appears as
+  `10.10.1.254`, R2 as `10.10.12.2`. Not its loopback address, nor its egress one.
+- `-n` skips the reverse lookup of each address. Without it, traceroute shows names (the
+  [PTR records](/en/courses/fundamentals/dns#ptr-from-an-address-to-a-name)), often very telling on the Internet,
+  but each lookup slows down the trace.
+- A star `*` means: **no answer within the timeout** (5 seconds by default). Not necessarily packet loss, as we'll
+  see.
+
+## Why traceroute lies, or doesn't work
+
+Traceroute relies on error messages that nobody is required to send, or to let through. It only sees devices that
+**decrement the TTL and agree to answer**, and only on the **forward** path. Here are the cases you will meet.
+
+### 1. A router doesn't answer, but forwards just fine
+
+R2 is configured not to send "Time Exceeded" messages, a very common practice to be less visible:
+
+```text title="R2 no longer sends Time Exceeded"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  0.109 ms  0.021 ms  0.018 ms
+ 2  * * *
+ 3  10.10.2.10  0.095 ms  0.076 ms  0.069 ms
+```
+
+Hop 2 is silent, but hop 3 answers: **traffic gets through**. Stars in the middle of a trace that continues are
+**never** a problem in themselves.
+
+### 2. The destination doesn't answer the probes
+
+This time, the server filters incoming UDP, like many servers and firewalls:
+
+```text title="The server filters UDP (traceroute -n -m 6)"
+traceroute to 10.10.2.10 (10.10.2.10), 6 hops max, 60 byte packets
+ 1  10.10.1.254  0.847 ms  0.789 ms  0.766 ms
+ 2  10.10.12.2  0.745 ms  0.672 ms  0.639 ms
+ 3  * * *
+ 4  * * *
+ 5  * * *
+ 6  * * *
+```
+
+It looks like the path stops after R2. In reality, the server does receive the probes: it just doesn't answer.
+Change the probe type, and the trace completes:
+
+```text title="Same network, ICMP probes (traceroute -n -I) or TCP probes (traceroute -n -T -p 443)"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  0.076 ms  0.023 ms  0.013 ms
+ 2  10.10.12.2  0.032 ms  0.018 ms  0.019 ms
+ 3  10.10.2.10  0.033 ms  0.023 ms  0.048 ms
+```
+
+<Callout type="field">
+To test an application's path, run a **TCP trace to the application's port** (`traceroute -T -p 443`, or
+`tcptraceroute`): it crosses the same firewalls and follows the same rules as the real traffic. A UDP or ICMP trace
+may be blocked where the application gets through, or the other way round.
+</Callout>
+
+### 3. ICMP answers are rate-limited
+
+A router forwards packets with its hardware chips, but **builds** ICMP messages with its CPU, slowly and at low
+priority. To protect itself, it **limits their number** (on Cisco and Arista, that's the job of *Control Plane
+Policing*, CoPP). Linux does it too by default. `mtr`, which repeats traceroute continuously, shows it well:
+
+<CliOutput
+  title="client:~# mtr -n -r -c 20 10.10.2.10"
+  output={mtrOut}
+  notes={[
+    { line: 3, text: 'R1 only answers one probe in two: Linux\'s default ICMP limit, with no rule added.', match: '55.0%', tone: 'amber' },
+    { line: 4, text: 'R2 has a stricter limit: 90% "loss".', match: '90.0%', tone: 'amber' },
+    { line: 5, text: 'The destination: 0% loss. No packet was actually lost.', match: '0.0%', tone: 'emerald' },
+  ]}
+/>
+
+The reading rule: **only loss that carries on to the destination counts**. Loss, or high latency, on an
+intermediate hop that disappears at the following hops comes from the router **answering** slowly, not from a
+**forwarding** problem.
+
+### 4. The return path is invisible
+
+Traceroute shows the **forward** path. Answers come back along the path the routers choose, which can be
+completely different: that's **asymmetric routing**, very common on the Internet and between sites. The times shown
+are round trips, so they include this unknown return path. A "slow" hop may be slow because of the return. To see
+the return, you need a trace run **from the other end**, or the carrier's *looking glass*.
+
+### 5. Several paths at once (ECMP)
+
+When several equal-cost paths exist (<Term id="ecmp" />), routers spread flows by hashing addresses and **ports**.
+But UDP traceroute changes the destination port with every probe: each probe may take a different path. As a
+result, a single line mixes several routers, and the trace draws a path that doesn't exist:
+
+```text title="Trace across two ECMP paths (illustration, made-up addresses)"
+ 3  198.51.100.1  4.1 ms  198.51.100.5  4.3 ms  198.51.100.1  4.0 ms
+ 4  198.51.100.9  5.2 ms  5.1 ms  198.51.100.13  5.4 ms
+```
+
+**Paris traceroute** and `mtr` in TCP or UDP mode with a fixed port keep the same ports for every probe, and
+therefore the same path.
+
+### 6. Hidden hops: MPLS, tunnels and overlays
+
+- **MPLS**: carriers may not copy the TTL into the MPLS label. The whole core network then appears as **a single
+  hop**, or disappears. Others show it, with the labels in the answer.
+- **Tunnels** (IPsec, GRE, VXLAN, SD-WAN): the original packet is encapsulated, and its TTL only drops at both ends
+  of the tunnel. Ten routers between two sites become **a single hop**.
+- **Cloud networks**: providers' virtual networks don't show their internal devices.
+
+### 7. Devices that don't count
+
+Anything that doesn't **route** is invisible: layer 2 switches, but also firewalls in transparent mode, and some
+devices that forward without decrementing the TTL. Conversely, a **proxy** or **load balancer** that terminates TCP
+connections answers a TCP trace itself: it stops on it, not on the server behind.
+
+### 8. Misleading addresses
+
+The router answers with the address of its choice: the ingress interface, sometimes another, sometimes a **private**
+address (`10.x`, `172.16.x`) in the middle of an Internet path, impossible to reach or identify. Reverse names are
+written by carriers, sometimes outdated. Cross-check before concluding.
+
+## What traceroute really says
+
+| What you see | What it means |
+|---|---|
+| `* * *` in the middle, then the trace continues | a router that doesn't answer: **no problem** |
+| `* * *` all the way, from one hop onwards | traffic stops there… **or** just stops answering. Change the probe (`-I`, `-T`) |
+| High latency on one hop, normal afterwards | slow ICMP answer from that router: **ignore** |
+| Latency that rises at one hop and **stays** high afterwards | the delay is real: a long link (ocean, satellite) or congestion at that point |
+| Loss on one hop, 0% at the destination | ICMP rate limiting: **ignore** |
+| Loss starting at one hop and **continuing** to the destination | real loss, around that hop |
+| `!H`, `!N`, `!X` after a time | the router answers "host unreachable", "network unreachable" or "prohibited" (filtering) |
+| The same addresses repeating in a loop | a **routing loop** |
+
+<Callout type="warning">
+A trace is not proof. Before blaming a carrier or a team, confirm with what the devices themselves say: the routing
+table (`show ip route`), interface error and drop counters, a packet capture, or the firewall's flow logs.
+</Callout>
+
+## On network devices
+
+```text title="Arista EOS"
+traceroute 10.10.2.10
+traceroute vrf MGMT 192.0.2.53
+```
+
+```text title="Cisco IOS"
+traceroute 10.10.2.10
+traceroute 10.10.2.10 source Loopback0
+```
+
+The **source** matters: a trace run from a router uses its egress interface address by default, which isn't
+necessarily advertised in the network. Answers then can't find their way back, and the trace only shows stars. Use
+a reachable source, such as the loopback.
+
+For traceroute to work through your firewalls, they must let back the ICMP **Time Exceeded** and **Destination
+Unreachable** messages related to the probes. Modern firewalls do so by tying them to the original session.
+
+## mtr: continuous traceroute
+
+`mtr` (*My Traceroute*) combines ping and traceroute: it sends probes in a loop and shows, for each hop, the loss
+rate and latency statistics. It is the ideal tool for an **intermittent** problem: `mtr -n -r -c 100 destination`
+produces a report after 100 probes, to attach to a ticket with a carrier. `mtr -T -P 443` uses TCP probes. The
+reading rules are the same: only loss that carries on to the destination counts.
+
+## Your turn
+
+1. A trace to an Internet server shows `* * *` at hops 4 and 5, then normal answers up to hop 12, the destination.
+   Is there a problem?
+2. A trace to a company server stops after the data center firewall, with stars up to 30. Yet the server's website
+   works. How do you prove it with traceroute?
+3. `mtr` shows 40% loss at hop 6, and 0% at hops 7 to 10. What do you tell the user who sends you this screenshot?
+4. Between two sites connected by an IPsec VPN, the trace shows only three hops, although the path crosses a
+   carrier. Why?
+
+## Key takeaways
+
+- Traceroute sends probes with an **increasing TTL**; each router where the TTL reaches 0 answers **ICMP Time
+  Exceeded**, the destination answers **Port Unreachable** (UDP), **Echo Reply** (ICMP) or **SYN-ACK / RST** (TCP).
+- Linux, Cisco and Arista use **UDP** by default, Windows **ICMP**; `-T -p <port>` follows an application's real
+  path.
+- It only sees devices that **decrement the TTL and answer**, and only the **forward** path.
+- **Stars**, **loss** or **latency** on an intermediate hop that don't carry on to the destination are not problems:
+  filtering or ICMP rate limiting.
+- **ECMP**, **MPLS**, **tunnels**, **cloud** and **proxies** distort or hide the path. Always cross-check with
+  routing tables and counters.
+
+Next chapter: **encryption**, keys, signatures and certificates.

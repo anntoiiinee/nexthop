@@ -24,6 +24,8 @@ const eosUserSecurity = ref('Arista', 'EOS User Manual · User Security (AAA, TA
 const eosSessionCommands = ref('Arista', 'EOS User Manual · Session Management Commands', 'https://www.arista.com/en/um-eos/eos-session-management-commands');
 const ianaPorts = ref('IANA', 'Service Name and Transport Protocol Port Number Registry', 'https://www.iana.org/assignments/service-names-port-numbers');
 const netboxDocs = ref('NetBox', 'NetBox documentation', 'https://netboxlabs.com/docs/netbox/');
+const vaultKv2 = ref('HashiCorp', 'Vault · KV secrets engine, version 2', 'https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2');
+const hashiVaultCollection = ref('Ansible', 'community.hashi_vault collection', 'https://docs.ansible.com/projects/ansible/latest/collections/community/hashi_vault/index.html');
 const avdDocs = ref('Arista', 'Arista AVD documentation', 'https://avd.arista.com/');
 const nist80041 = ref('NIST', 'SP 800-41 Rev. 1 · Guidelines on Firewalls and Firewall Policy', 'https://csrc.nist.gov/pubs/sp/800/41/r1/final');
 const nist800207 = ref('NIST', 'SP 800-207 · Zero Trust Architecture', 'https://csrc.nist.gov/pubs/sp/800/207/final');
@@ -73,6 +75,28 @@ export const references: Record<string, Reference[]> = {
     rfc(768, 'User Datagram Protocol'),
     rfc(1191, 'Path MTU Discovery'),
     ianaPorts,
+  ],
+  'courses/fundamentals/dns': [
+    rfc(1034, 'Domain Names · Concepts and Facilities'),
+    rfc(1035, 'Domain Names · Implementation and Specification'),
+    rfc(3596, 'DNS Extensions to Support IP Version 6 (AAAA, ip6.arpa)'),
+    rfc(2181, 'Clarifications to the DNS Specification'),
+    rfc(1912, 'Common DNS Operational and Configuration Errors'),
+    rfc(2308, 'Negative Caching of DNS Queries (DNS NCACHE)'),
+    rfc(8305, 'Happy Eyeballs Version 2: Better Connectivity Using Concurrency'),
+    rfc(7858, 'Specification for DNS over Transport Layer Security (TLS)'),
+    rfc(8484, 'DNS Queries over HTTPS (DoH)'),
+    rfc(6761, 'Special-Use Domain Names (.example, .test, .invalid)'),
+    ref('IANA', 'Root Servers', 'https://www.iana.org/domains/root/servers'),
+    ref('ISC', 'BIND 9 documentation', 'https://bind9.readthedocs.io/'),
+  ],
+  'courses/fundamentals/traceroute': [
+    rfc(792, 'Internet Control Message Protocol (ICMP)'),
+    rfc(4443, 'Internet Control Message Protocol (ICMPv6) for IPv6'),
+    rfc(1812, 'Requirements for IP Version 4 Routers (TTL, ICMP rate limiting)'),
+    rfc(4950, 'ICMP Extensions for Multiprotocol Label Switching'),
+    ref('Paris traceroute', 'Paris traceroute', 'https://paris-traceroute.net/'),
+    ref('mtr', 'mtr · a network diagnostic tool', 'https://github.com/traviscross/mtr'),
   ],
   'courses/fundamentals/cryptography': [
     ref('NIST', 'FIPS 197 · Advanced Encryption Standard (AES)', 'https://csrc.nist.gov/pubs/fips/197/final'),
@@ -168,10 +192,25 @@ export const references: Record<string, Reference[]> = {
     ref('GitLab', 'Scheduled pipelines', 'https://docs.gitlab.com/ci/pipelines/schedules/'),
     ref('Git', 'Pro Git book', 'https://git-scm.com/book/en/v2'),
   ],
+  'courses/automation/vault': [
+    ref('HashiCorp', 'Vault documentation', 'https://developer.hashicorp.com/vault/docs'),
+    ref('HashiCorp', 'Vault · Seal/Unseal', 'https://developer.hashicorp.com/vault/docs/concepts/seal'),
+    ref('HashiCorp', 'Vault · Policies', 'https://developer.hashicorp.com/vault/docs/concepts/policies'),
+    ref('HashiCorp', 'Vault · AppRole auth method', 'https://developer.hashicorp.com/vault/docs/auth/approle'),
+    ref('HashiCorp', 'Vault · JWT/OIDC auth method', 'https://developer.hashicorp.com/vault/docs/auth/jwt'),
+    vaultKv2,
+    ref('HashiCorp', 'Vault · Audit devices', 'https://developer.hashicorp.com/vault/docs/audit'),
+    ref('HashiCorp', 'Vault · Dev server mode', 'https://developer.hashicorp.com/vault/docs/concepts/dev-server'),
+    ref('hvac', 'hvac · Python client for HashiCorp Vault', 'https://python-hvac.org/en/stable/'),
+    hashiVaultCollection,
+    ref('GitLab', 'OpenID Connect (OIDC) authentication using ID tokens', 'https://docs.gitlab.com/ci/secrets/id_token_authentication/'),
+    ref('OpenBao', 'OpenBao', 'https://openbao.org/'),
+  ],
   'courses/automation/breakglass-rotation': [
     eosUserSecurity,
     rfc(8907, 'The Terminal Access Controller Access-Control System Plus (TACACS+) Protocol'),
-    ref('Ansible', 'Protecting sensitive data with Ansible Vault', 'https://docs.ansible.com/projects/ansible/latest/vault_guide/index.html'),
+    vaultKv2,
+    hashiVaultCollection,
   ],
   'courses/automation/naming-ipam': [
     rfc(1918, 'Address Allocation for Private Internets'),
@@ -240,6 +279,16 @@ export const references: Record<string, Reference[]> = {
     rfc(2136, 'Dynamic Updates in the Domain Name System (DNS UPDATE)'),
     ref('ISC', 'Kea DHCP documentation', 'https://kea.readthedocs.io/'),
     ref('ISC', 'BIND 9 documentation', 'https://bind9.readthedocs.io/'),
+  ],
+  'courses/operations/ntp': [
+    rfc(5905, 'Network Time Protocol Version 4: Protocol and Algorithms Specification'),
+    rfc(8633, 'Network Time Protocol Best Current Practices'),
+    rfc(8915, 'Network Time Security for the Network Time Protocol'),
+    ref('IEEE', 'IEEE 1588 · Precision Clock Synchronization Protocol (PTP)', 'https://standards.ieee.org/ieee/1588/6825/'),
+    ref('Arista', 'EOS User Manual · System Clock and Time Protocols', 'https://www.arista.com/en/um-eos/eos-system-clock-and-time-protocols'),
+    ref('chrony', 'chrony documentation', 'https://chrony-project.org/documentation.html'),
+    ref('NTP Pool', 'pool.ntp.org', 'https://www.ntppool.org/'),
+    ref('Cloudflare', 'Cloudflare Time Services · NTP and NTS', 'https://developers.cloudflare.com/time-services/ntp/'),
   ],
   'courses/operations/oob': [
     eosSessionCommands,
