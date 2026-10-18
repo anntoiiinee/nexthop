@@ -1,0 +1,229 @@
+---
+title: "Qu'est-ce qu'une RFC ?"
+description: "Les RFC sont les normes d'Internet : qui les écrit (IETF), pourquoi elles existent, comment un brouillon devient une norme, leurs catégories, pourquoi une RFC ne change jamais, comment en lire une (MUST, SHOULD, MAY), et les autres organismes (IEEE, UIT, IANA)."
+pubDate: 2026-10-18
+level: beginner
+tags: [rfc, ietf, standards, fundamentals]
+vendor: []
+---
+
+{/* En-tête déclarée en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const header9293 = `Internet Engineering Task Force (IETF)                      W. Eddy, Ed.
+STD: 7                                                       MTI Systems
+Request for Comments: 9293                                   August 2022
+Obsoletes: 793, 879, 2873, 6093, 6429, 6528,
+           6691
+Updates: 1011, 1122, 5961
+Category: Standards Track
+ISSN: 2070-1721
+
+                  Transmission Control Protocol (TCP)`;
+
+En bas de chaque chapitre de ce site, la section « Documentation officielle » cite des **RFC** : RFC 8200 pour IPv6,
+RFC 4271 pour BGP, RFC 7348 pour VXLAN. Les constructeurs aussi en parlent sans cesse : « conforme à la RFC 7432 »,
+« prend en charge la RFC 8092 ». Une RFC est l'un des documents qui définissent comment fonctionne Internet. Savoir ce
+que c'est, et savoir en lire une, permet de trancher un désaccord entre deux constructeurs, de comprendre pourquoi un
+protocole se comporte ainsi, ou de vérifier une affirmation trouvée sur un forum.
+
+## Pourquoi des normes
+
+Un switch Arista échange du BGP avec un routeur Cisco, un téléphone Android joint un serveur web Linux, une box
+Free parle à un site hébergé aux États-Unis. Rien de cela ne fonctionnerait si chaque constructeur inventait sa
+propre façon de construire un paquet IP ou une session TCP. Il faut des **règles écrites, publiques et communes** :
+le format des en-têtes, l'ordre des messages, la signification de chaque champ, le comportement attendu en cas
+d'erreur. C'est ce qu'on appelle l'**interopérabilité**, et c'est elle qui permet à un réseau d'entreprise d'être
+**multi-constructeur**.
+
+## Qui écrit les normes du réseau
+
+Plusieurs organismes se partagent le travail, chacun sur sa couche :
+
+| Organisme | Ce qu'il normalise | Exemples |
+|---|---|---|
+| **IETF** (*Internet Engineering Task Force*) | les protocoles d'Internet, de la couche 3 aux applications | IP, TCP, UDP, BGP, OSPF, DNS, TLS, HTTP, VXLAN, EVPN, publiés en **RFC** |
+| **IEEE** | les couches 1 et 2 des réseaux locaux | Ethernet (802.3), VLAN (802.1Q), LACP (802.1AX), LLDP (802.1AB), Wi-Fi (802.11) |
+| **UIT-T** et **ISO** | les télécommunications et les modèles de référence | le modèle OSI (X.200, ISO/IEC 7498-1), les réseaux téléphoniques |
+| **IANA** | les **registres** de valeurs uniques | numéros de protocole, ports TCP et UDP, numéros d'AS, blocs d'adresses |
+| **RIR** (RIPE NCC en Europe, ARIN, APNIC…) | l'attribution des adresses IP et des numéros d'AS par région | votre préfixe /48 IPv6, votre numéro d'AS public |
+
+Ce tutoriel se concentre sur les RFC de l'IETF, les plus nombreuses et les plus citées en réseau.
+
+## D'où vient le nom
+
+**RFC** signifie *Request for Comments*, « demande de commentaires ». Le nom vient de 1969 : de jeunes chercheurs qui
+construisaient ARPANET, l'ancêtre d'Internet, voulaient partager leurs notes techniques sans paraître imposer quoi
+que ce soit. Steve Crocker publie la **RFC 1**, « Host Software », le 7 avril 1969, comme une simple invitation à la
+discussion. Le nom est resté, même si les RFC décrivent aujourd'hui des normes utilisées par des milliards
+d'appareils. Il y en a désormais plus de 9 000.
+
+## Comment un brouillon devient une RFC
+
+L'IETF est une communauté ouverte : il n'y a pas d'adhésion, n'importe qui peut participer aux listes de diffusion et
+aux réunions. Le travail suit un parcours précis :
+
+<Sequence
+  width={680}
+  actors={[
+    { id: 'a', label: 'Auteurs', sub: 'ingénieurs' },
+    { id: 'wg', label: 'Groupe de travail', sub: 'IETF', tone: 'violet' },
+    { id: 'i', label: 'IESG', sub: 'direction technique', tone: 'emerald' },
+    { id: 'r', label: 'RFC Editor', tone: 'amber' },
+  ]}
+  messages={[
+    { from: 'a', to: 'wg', label: 'Internet-Draft', sub: 'brouillon public, expire après 6 mois', tone: 'sky' },
+    { note: 'Discussions, versions successives, implémentations de test', over: ['a', 'wg'], tone: 'slate' },
+    { from: 'wg', to: 'i', label: 'consensus du groupe', tone: 'violet' },
+    { note: 'Relecture par toute l’IETF (Last Call), puis évaluation par l’IESG', over: ['wg', 'i'], tone: 'slate' },
+    { from: 'i', to: 'r', label: 'approbation', tone: 'emerald' },
+    { from: 'r', to: 'a', label: 'publication : RFC n°', style: 'dashed', tone: 'amber' },
+  ]}
+  caption="Le parcours d'une RFC sur le chemin des normes : du brouillon public à la publication, avec une décision prise par consensus."
+/>
+
+1. Une idée prend la forme d'un **Internet-Draft** (un brouillon), public, numéroté par sa version. Un brouillon
+   expire au bout de six mois s'il n'est pas mis à jour : ce n'est jamais une norme.
+2. Un **groupe de travail** (BGP a le sien, IPv6 aussi) discute, amende et produit des versions successives.
+3. Quand le groupe atteint un **consensus**, le document passe en relecture par toute l'IETF, puis par l'**IESG**, qui
+   valide sa qualité technique.
+4. Le **RFC Editor** le publie avec un **numéro** définitif.
+
+La devise de l'IETF résume l'esprit : *« rough consensus and running code »*, un consensus large plutôt qu'un vote, et
+du code qui fonctionne plutôt que des théories. Les constructeurs implémentent souvent un protocole **dès le stade du
+brouillon** : EVPN sur VXLAN a été déployé à grande échelle pendant des années avant de devenir la RFC 8365.
+
+## Les catégories de RFC
+
+Toutes les RFC ne sont pas des normes. Chaque RFC porte une **catégorie** dans son en-tête :
+
+| Catégorie | Ce que c'est | Exemple |
+|---|---|---|
+| **Proposed Standard** | une norme, stable et implémentable | la plupart des protocoles que vous utilisez, comme VXLAN-EVPN (RFC 8365) |
+| **Internet Standard** | une norme mûre, largement déployée ; elle reçoit aussi un numéro **STD** | TCP (STD 7), IPv6 (STD 86) |
+| **Best Current Practice** (BCP) | une bonne pratique opérationnelle | BCP 38 (filtrer les adresses usurpées en entrée), BCP 14 (le sens de MUST et SHOULD) |
+| **Informational** | une information, une description, sans valeur de norme | la RFC 7938 sur BGP dans les data centers |
+| **Experimental** | une expérimentation | des protocoles en test |
+| **Historic** | une RFC dépassée, à ne plus utiliser | d'anciennes versions de protocoles |
+
+<Callout type="note">
+« Proposed Standard » n'est pas une norme au rabais : c'est le niveau de la grande majorité des protocoles en
+production. Le niveau intermédiaire « Draft Standard » a même été supprimé en 2011 (RFC 6410) : il ne reste que deux
+étapes sur le chemin des normes.
+</Callout>
+
+## Une RFC ne change jamais
+
+C'est la règle qui surprend le plus : une RFC publiée **n'est jamais modifiée**. Pour corriger ou faire évoluer un
+protocole, on publie une **nouvelle** RFC, qui déclare dans son en-tête la relation avec l'ancienne :
+
+- **Obsoletes** : la nouvelle RFC **remplace** l'ancienne, qu'il ne faut plus lire comme référence. TCP était décrit
+  par la RFC 793 depuis 1981 ; la RFC 9293, en 2022, la rend obsolète. IPv6 est passé de la RFC 2460 à la RFC 8200 en
+  2017.
+- **Updates** : la nouvelle RFC **complète** l'ancienne, qui reste valable. Il faut alors lire les deux.
+- Les **errata** recensent les erreurs signalées après publication, sur la page de chaque RFC.
+
+L'avantage est énorme : « RFC 4271 » désigne toujours exactement le même texte, que vous le lisiez aujourd'hui ou dans
+vingt ans. L'inconvénient : il faut toujours vérifier qu'une RFC n'a pas été remplacée ou complétée avant de s'y
+fier.
+
+## Lire une RFC
+
+### L'en-tête
+
+L'en-tête dit presque tout ce qu'il faut savoir avant de lire. Voici celle de la RFC qui décrit TCP aujourd'hui :
+
+<CliOutput
+  title="En-tête de la RFC 9293 (rfc-editor.org)"
+  output={header9293}
+  notes={[
+    { line: 2, match: 'STD: 7', text: 'Une Internet Standard, avec son numéro STD : la norme TCP, quelle que soit la RFC qui la décrit.', tone: 'emerald' },
+    { line: 3, match: 'Request for Comments: 9293', text: 'Le numéro de la RFC, définitif.', tone: 'sky' },
+    { line: 4, match: 'Obsoletes: 793', text: 'Elle remplace la RFC 793 de 1981 et six autres : ce sont elles qu’il ne faut plus citer.', tone: 'rose' },
+    { line: 6, match: 'Updates: 1011, 1122, 5961', text: 'Elle complète ces RFC, qui restent valables.', tone: 'amber' },
+    { line: 7, match: 'Standards Track', text: 'La catégorie : une RFC du chemin des normes.', tone: 'violet' },
+  ]}
+/>
+
+### MUST, SHOULD, MAY
+
+Les RFC normatives emploient des mots-clés en majuscules, au sens précis défini par la **RFC 2119** et la **RFC 8174**
+(regroupées dans la BCP 14) :
+
+| Mot-clé | Signification |
+|---|---|
+| **MUST**, REQUIRED, SHALL | obligatoire : une implémentation qui ne le fait pas n'est pas conforme |
+| **MUST NOT**, SHALL NOT | interdit |
+| **SHOULD**, RECOMMENDED | recommandé : on peut s'en écarter, mais seulement pour une bonne raison, en connaissant les conséquences |
+| **SHOULD NOT**, NOT RECOMMENDED | déconseillé, avec la même nuance |
+| **MAY**, OPTIONAL | facultatif : une implémentation peut le faire ou non |
+
+La RFC 9293 va jusqu'à numéroter chacune de ses exigences. Par exemple, sur la somme de contrôle de TCP :
+
+> The TCP checksum is never optional. The sender MUST generate it (MUST-2) and the receiver MUST check it (MUST-3).
+
+<Callout type="tip">
+Ces mots-clés n'ont ce sens qu'en **majuscules**, et seulement quand la RFC déclare les utiliser (elle le dit au début,
+en citant la BCP 14). Certaines RFC, comme la RFC 8200 sur IPv6, écrivent leurs exigences en toutes lettres, sans ces
+mots-clés : il faut alors lire les phrases attentivement.
+</Callout>
+
+### La structure
+
+Une RFC suit presque toujours le même plan : un résumé (*Abstract*), le statut, une introduction avec la
+terminologie, le cœur technique (souvent avec des **schémas d'en-têtes en ASCII**, bit par bit), les considérations de
+sécurité (obligatoires), les actions demandées à l'IANA (les nouvelles valeurs à enregistrer), puis les références.
+Pour comprendre un protocole, on lit d'abord l'introduction et les schémas ; pour trancher un détail, on cherche le
+mot-clé dans le texte.
+
+## Où trouver les RFC
+
+- **rfc-editor.org** : le site officiel de publication, avec chaque RFC en texte, HTML et PDF, sa page d'information
+  (catégorie, RFC qui la remplacent ou la complètent) et ses errata.
+- **datatracker.ietf.org** : le suivi des brouillons et des groupes de travail, pour savoir ce qui est en cours et où
+  en est un document.
+- Le moteur de recherche du RFC Editor retrouve une RFC par numéro, titre ou mot-clé.
+
+## Norme et implémentation
+
+Une norme dit ce qu'un protocole **doit** faire. Elle ne garantit pas que deux constructeurs se comportent
+**pareil** :
+
+- les éléments en **SHOULD** et **MAY** laissent des choix, et les valeurs par défaut diffèrent (temporisateurs,
+  options activées) ;
+- les constructeurs ajoutent des **extensions** propriétaires, ou implémentent un **brouillon** avant la RFC finale ;
+- une fiche produit qui dit « conforme à la RFC 7432 » ne précise pas toujours quelles parties sont prises en charge.
+
+Quand deux équipements ne s'entendent pas, la RFC sert d'**arbitre** : elle dit lequel des deux sort de la norme. C'est
+souvent le premier argument d'un ticket ouvert chez un constructeur.
+
+## Les RFC du 1er avril
+
+L'IETF a aussi de l'humour. Chaque 1er avril, quelques RFC parodiques paraissent, écrites avec le plus grand sérieux
+apparent :
+
+- la **RFC 1149** (1990) décrit la transmission de datagrammes IP par **pigeons voyageurs** ; elle a même été testée
+  en vrai, en Norvège, en 2001 ;
+- la **RFC 2324** (1998) définit HTCPCP, le protocole de contrôle des **cafetières**, et son code d'erreur **418 « I'm
+  a teapot »**, que certains serveurs web renvoient encore aujourd'hui.
+
+Elles sont classées *Informational* : de vraies RFC, mais pas des normes.
+
+## À vous de jouer
+
+1. Ouvrez la page de la RFC 8200 sur rfc-editor.org. Quelle RFC remplace-t-elle ? A-t-elle des errata ?
+2. Ouvrez la RFC 9293 et cherchez **MUST-2**, puis cherchez un **SHOULD** : quelle liberté laisse-t-il ?
+3. Sur datatracker.ietf.org, trouvez le groupe de travail qui s'occupe de BGP (son nom commence par *idr*) et un
+   brouillon en cours.
+4. Le chapitre [VxLAN](/formations/datacenter/vxlan) annonce que VXLAN ajoute 50 octets à chaque trame. Dans la
+   RFC 7348, citée en bas du chapitre, trouvez la taille de l'en-tête VXLAN lui-même, puis retrouvez les 50 octets en
+   ajoutant les en-têtes Ethernet, IP et UDP.
+
+## À retenir
+
+- Une **RFC** est un document publié par l'**IETF** ; certaines sont des normes, d'autres des bonnes pratiques ou
+  des informations : la **catégorie** est dans l'en-tête.
+- Le parcours : **Internet-Draft**, groupe de travail, **consensus**, IESG, publication avec un numéro définitif.
+- Une RFC **ne change jamais** : on publie une nouvelle RFC qui la rend **obsolète** ou la **met à jour**. Vérifiez
+  toujours les deux mentions.
+- **MUST** est obligatoire, **SHOULD** recommandé, **MAY** facultatif (BCP 14), en majuscules seulement.
+- L'**IEEE** normalise Ethernet et le Wi-Fi, l'**IANA** tient les registres, les **RIR** attribuent les adresses.
+- La norme dit ce qui est attendu ; les implémentations diffèrent. La RFC sert d'arbitre.
