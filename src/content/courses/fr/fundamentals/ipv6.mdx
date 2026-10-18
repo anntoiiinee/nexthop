@@ -1,0 +1,326 @@
+---
+title: "IPv6 : adresses, types et découverte des voisins"
+description: "Comprendre IPv6 sans le craindre : format et écriture des adresses, structure préfixe et identifiant d'interface, adresses link-local, globales, ULA et multicast, NDP qui remplace ARP, SLAAC et DHCPv6, plan d'adressage en /64, et configuration sur Arista et Cisco."
+pubDate: 2026-10-18
+level: beginner
+tags: [ipv6, ndp, slaac, addressing, fundamentals]
+vendor: [arista, cisco]
+order: 9
+---
+
+{/* Sorties déclarées en JavaScript : MDX retire les espaces de début de ligne à l'intérieur des balises */}
+export const ipAddr = `6: eth0@if7: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default  link-netnsid 0
+    inet6 2001:db8:10::2/64 scope global nodad
+       valid_lft forever preferred_lft forever
+    inet6 fe80::42:acff:fe1f:6302/64 scope link proto kernel_ll
+       valid_lft forever preferred_lft forever`;
+export const ndp = `IP6 2001:db8:10::2 > ff02::1:ff00:3: ICMP6, neighbor solicitation, who has 2001:db8:10::3, length 32
+IP6 2001:db8:10::3 > 2001:db8:10::2: ICMP6, neighbor advertisement, tgt is 2001:db8:10::3, length 32
+IP6 2001:db8:10::2 > 2001:db8:10::3: ICMP6, echo request, id 4, seq 1, length 64
+IP6 2001:db8:10::3 > 2001:db8:10::2: ICMP6, echo reply, id 4, seq 1, length 64`;
+
+IPv4 offre un peu plus de quatre milliards d'adresses, et elles sont épuisées depuis des années : les registres
+régionaux n'en distribuent plus, et l'Internet tient grâce au <Term id="nat" />, qui fait partager une adresse publique
+à des milliers de machines. **IPv6** règle le problème à la racine, avec des adresses de 128 bits. Il est déjà
+partout : sur les box des opérateurs, les réseaux mobiles, chez les grands fournisseurs de cloud et de contenu. Ce
+chapitre en pose les bases, et montre qu'une fois quelques réflexes acquis, IPv6 est souvent **plus simple** qu'IPv4.
+
+## Ce qui change, ce qui ne change pas
+
+| | IPv4 | IPv6 |
+|---|---|---|
+| Taille d'une adresse | 32 bits | **128 bits** |
+| Écriture | décimale pointée : `192.168.10.37` | hexadécimale, groupes de 16 bits : `2001:db8:acad:10::37` |
+| Nombre d'adresses | environ 4,3 milliards | 2¹²⁸, soit environ 3,4 × 10³⁸ |
+| Taille d'un réseau local | variable (/24, /26…) | **toujours /64** |
+| Broadcast | oui | **non** : remplacé par le multicast |
+| Résolution d'adresse MAC | ARP | **NDP**, avec ICMPv6 |
+| Configuration automatique | DHCP | **SLAAC** (sans serveur) et/ou DHCPv6 |
+| NAT | omniprésent | inutile : chaque machine a une adresse globale |
+| Routage, TCP, UDP, DNS | identiques dans leurs principes | identiques dans leurs principes |
+
+Les couches au-dessus (TCP, UDP, les applications) et les protocoles de routage (OSPFv3, BGP) fonctionnent comme en
+IPv4. C'est surtout la couche 3 locale qui change : l'écriture, la découverte des voisins et l'attribution des
+adresses.
+
+## Écrire une adresse
+
+Une adresse IPv6 compte 128 bits, écrits en **8 groupes de 4 chiffres hexadécimaux**, séparés par des deux-points :
+
+```text
+2001:0db8:0000:0010:0000:0000:0000:0037
+```
+
+Deux règles d'abréviation la rendent lisible :
+
+1. dans chaque groupe, on supprime les **zéros de tête** : `0db8` devient `db8`, `0010` devient `10`, `0000` devient `0` ;
+2. **une seule fois** par adresse, une suite de groupes nuls est remplacée par `::`.
+
+```text
+2001:db8:0:10::37
+```
+
+La règle « une seule fois » est logique : avec deux `::`, on ne saurait pas combien de groupes nuls chacun remplace.
+La RFC 5952 fixe une écriture **canonique** : minuscules, et `::` sur la plus longue suite de zéros. C'est celle à
+utiliser dans la documentation et les configurations, pour qu'une recherche dans un fichier trouve toujours
+l'adresse. Le [calculateur IPv6](/outils/ipv6-calculator) l'affiche pour n'importe quelle adresse.
+
+<Callout type="tip">
+Un chiffre hexadécimal vaut exactement **4 bits**. Un préfixe aligné sur un chiffre (/48, /52, /56, /60, /64) se lit
+donc directement dans l'adresse : `2001:db8:acad::/48` couvre tout ce qui commence par `2001:db8:acad`. Les plans
+d'adressage IPv6 s'alignent sur ces frontières de 4 bits pour rester lisibles.
+</Callout>
+
+## La structure d'une adresse : préfixe et identifiant d'interface
+
+Une adresse globale se découpe en trois parties :
+
+<PacketFormat
+  cols={8}
+  rows={[
+    { fields: [
+      { label: 'Préfixe global', sub: '48 bits · attribué au site', span: 3, tone: 'violet' },
+      { label: 'Sous-réseau', sub: '16 bits', span: 1, tone: 'amber' },
+      { label: 'Identifiant d’interface', sub: '64 bits · la machine', span: 4, tone: 'emerald' },
+    ] },
+    { fields: [
+      { label: '2001:db8:acad', span: 3, tone: 'violet' },
+      { label: '10', span: 1, tone: 'amber' },
+      { label: '::37', span: 4, tone: 'emerald' },
+    ] },
+  ]}
+  minWidth="34rem"
+  caption="Une adresse globale typique : le site reçoit un /48, il le découpe en sous-réseaux /64, et chaque machine choisit ou reçoit ses 64 derniers bits."
+/>
+
+- Le **préfixe global** est attribué par l'opérateur ou le registre : un /48 pour une entreprise, un /56 ou un /60
+  pour une box résidentielle.
+- Le **sous-réseau** : avec un /48, il reste 16 bits, soit **65 536 réseaux /64**. Fini les calculs de VLSM pour
+  économiser des adresses.
+- L'**identifiant d'interface** occupe les 64 derniers bits. Un réseau local est **toujours un /64** : SLAAC et
+  plusieurs mécanismes en dépendent.
+
+## Les types d'adresses
+
+| Type | Préfixe | Rôle | Exemple |
+|---|---|---|---|
+| **Globale unicast** | `2000::/3` | adresse publique, routable sur Internet | `2001:db8:acad:10::37` |
+| **Link-local** | `fe80::/10` | valable sur un seul lien, jamais routée ; **chaque interface IPv6 en a une** | `fe80::42:acff:fe1f:6302` |
+| **Unique local (ULA)** | `fc00::/7` (en pratique `fd00::/8`) | l'équivalent des adresses privées, pour l'interne | `fd12:3456:789a:10::1` |
+| **Multicast** | `ff00::/8` | un groupe de destinataires | `ff02::1` (tous les nœuds du lien), `ff02::2` (tous les routeurs) |
+| **Loopback** | `::1/128` | la machine elle-même | `::1` |
+| **Non spécifiée** | `::/128` | « pas encore d'adresse » | `::` |
+| **Documentation** | `2001:db8::/32` | réservée aux exemples, comme dans ce chapitre | `2001:db8::1` |
+
+La **link-local** est la nouveauté qui surprend le plus. Elle existe sur chaque interface dès qu'IPv6 est actif, sans
+aucune configuration, et sert à tout ce qui se passe **sur le lien** : découverte des voisins, annonces des routeurs,
+et même les prochains sauts des routes. Une même interface porte donc normalement **plusieurs** adresses IPv6 : sa
+link-local, et une ou plusieurs adresses globales.
+
+<Callout type="note">
+Il n'y a **pas de broadcast** en IPv6. Ce que faisait le broadcast (ARP, DHCP) passe par des groupes multicast
+précis, que seules les machines concernées écoutent. Le réseau n'est plus inondé de requêtes que 99 % des machines
+ignorent.
+</Callout>
+
+## L'identifiant d'interface et EUI-64
+
+Comment une machine choisit-elle ses 64 derniers bits ? Historiquement, à partir de son **adresse MAC**, par la
+méthode **EUI-64** : on insère `ff:fe` au milieu des 48 bits de la MAC, et on inverse le septième bit du premier
+octet (le bit U/L).
+
+Voici l'interface d'un conteneur Linux, sur un réseau Docker en `2001:db8:10::/64` :
+
+<CliOutput
+  title="ip -6 addr show dev eth0 (MAC 02:42:ac:1f:63:02)"
+  output={ipAddr}
+  notes={[
+    { line: 2, match: '2001:db8:10::2/64', text: 'L’adresse globale, attribuée ici par Docker.', tone: 'violet' },
+    { line: 4, match: 'fe80::42:acff:fe1f:6302/64', text: 'La link-local, créée par le noyau sans configuration : `fe80::` suivi de l’identifiant EUI-64.', tone: 'emerald' },
+  ]}
+/>
+
+La MAC `02:42:ac:1f:63:02` devient l'identifiant `0042:acff:fe1f:6302` : `ff:fe` inséré au milieu, et `02`
+devenu `00` par l'inversion du bit U/L. Le [calculateur IPv6](/outils/ipv6-calculator) fait ce calcul pour n'importe
+quelle MAC.
+
+L'inconvénient est évident : la MAC, et donc la machine, se retrouve dans l'adresse, et on peut la suivre d'un
+réseau à l'autre. Les systèmes récents (Windows, macOS, Android, iOS, la plupart des Linux de bureau) génèrent donc
+plutôt des identifiants **aléatoires** : stables sur un réseau donné (RFC 7217), et des adresses **temporaires** qui
+changent régulièrement pour les connexions sortantes (RFC 8981). Les serveurs et les équipements réseau, eux, ont
+des adresses **fixes**, configurées à la main ou par DHCPv6.
+
+## NDP : la découverte des voisins remplace ARP
+
+En IPv4, [ARP](/formations/fundamentals/arp) trouve l'adresse MAC d'une adresse IP par un broadcast. En IPv6, c'est
+**NDP** (*Neighbor Discovery Protocol*), qui s'appuie sur des messages **ICMPv6** :
+
+| Message | Type ICMPv6 | Rôle |
+|---|---|---|
+| **Neighbor Solicitation** (NS) | 135 | « qui a l'adresse X ? », l'équivalent de la requête ARP |
+| **Neighbor Advertisement** (NA) | 136 | « c'est moi, voici ma MAC », l'équivalent de la réponse ARP |
+| **Router Solicitation** (RS) | 133 | « y a-t-il un routeur sur ce lien ? » |
+| **Router Advertisement** (RA) | 134 | « je suis un routeur, voici le préfixe du lien et comment configurer vos adresses » |
+| **Redirect** | 137 | « pour cette destination, passe plutôt par cet autre routeur » |
+
+La sollicitation n'est pas diffusée à tout le monde : elle part vers une adresse multicast dite **solicited-node**,
+`ff02::1:ffXX:XXXX`, formée des **24 derniers bits** de l'adresse cherchée. Seules les machines dont l'adresse se
+termine ainsi l'écoutent, en pratique une seule. Voici la capture du premier ping entre deux conteneurs :
+
+<CliOutput
+  title="tcpdump -nni eth0 icmp6 (ping de 2001:db8:10::2 vers 2001:db8:10::3)"
+  output={ndp}
+  notes={[
+    { line: 1, match: 'ff02::1:ff00:3', text: 'La sollicitation part vers l’adresse solicited-node : `ff02::1:ff` suivi des 24 derniers bits de la cible (`00:0003`).', tone: 'amber' },
+    { line: 2, match: 'neighbor advertisement', text: 'La cible répond directement, en unicast, avec sa MAC.', tone: 'emerald' },
+    { line: 3, match: 'echo request', text: 'Le ping peut partir : la MAC du voisin est connue.', tone: 'sky' },
+  ]}
+/>
+
+Le cache des voisins se lit comme le cache ARP : `ip -6 neigh` sur Linux, `show ipv6 neighbors` sur Arista et Cisco,
+`netsh interface ipv6 show neighbors` sur Windows.
+
+<Callout type="warning">
+En IPv4, bloquer ICMP « pour la sécurité » casse déjà la découverte de la MTU. En IPv6, c'est bien pire : **sans
+ICMPv6, plus de découverte des voisins, plus d'annonces de routeurs, plus rien ne fonctionne**. Un firewall filtre
+ICMPv6 avec finesse (en suivant la RFC 4890), il ne le bloque jamais en bloc.
+</Callout>
+
+## Obtenir une adresse : SLAAC et DHCPv6
+
+Sur un réseau IPv6, le **routeur** annonce régulièrement le préfixe du lien dans ses **Router Advertisements**. Ce
+message porte aussi deux indicateurs qui disent aux machines comment se configurer :
+
+| Méthode | Annonce du routeur | Ce que fait la machine |
+|---|---|---|
+| **SLAAC** (*Stateless Address Autoconfiguration*) | le préfixe, avec l'indicateur *autonomous* | elle fabrique elle-même son adresse : le préfixe + son identifiant d'interface |
+| **SLAAC + DHCPv6 sans état** | indicateur **O** (*Other configuration*) | adresse par SLAAC, et les autres paramètres (serveurs DNS, domaine) par DHCPv6 |
+| **DHCPv6 avec état** | indicateur **M** (*Managed*) | adresse attribuée par un serveur DHCPv6, comme en IPv4 |
+
+Dans tous les cas, **la passerelle par défaut vient du Router Advertisement**, jamais de DHCPv6 : c'est l'adresse
+link-local du routeur qui a émis l'annonce. Avant d'utiliser une adresse, la machine vérifie que personne d'autre ne
+l'a déjà, par une sollicitation sur sa propre adresse : la **détection d'adresse dupliquée** (DAD).
+
+<Callout type="field">
+En entreprise, on choisit souvent SLAAC pour les postes, DHCPv6 pour garder la trace des attributions, et des
+adresses fixes pour les serveurs. Attention : certains systèmes, Android en tête, ne prennent pas en charge DHCPv6
+avec attribution d'adresse. Sur un réseau où se connectent des téléphones, SLAAC doit rester disponible.
+</Callout>
+
+## Le plan d'adressage IPv6
+
+La logique change complètement : on ne compte plus les adresses, on organise les **réseaux**.
+
+| Usage | Taille | Pourquoi |
+|---|---|---|
+| Un site, une entreprise | /48 | la taille habituellement attribuée, 65 536 réseaux /64 |
+| Un VLAN, un réseau local | **/64**, toujours | SLAAC et NDP en dépendent ; peu importe le nombre de machines |
+| Un lien point à point entre routeurs | /127 (RFC 6164), souvent réservé dans un /64 | l'équivalent du /31 en IPv4 |
+| Une loopback | /128 | une adresse unique |
+
+Une règle simple rend le plan lisible : **encoder le VLAN dans le sous-réseau**. Avec le /48 `2001:db8:acad::/48` :
+
+| VLAN | Réseau IPv4 | Réseau IPv6 |
+|---|---|---|
+| 10 · utilisateurs | `10.10.10.0/24` | `2001:db8:acad:10::/64` |
+| 20 · Wi-Fi | `10.10.20.0/24` | `2001:db8:acad:20::/64` |
+| 30 · serveurs | `10.10.30.0/24` | `2001:db8:acad:30::/64` |
+
+La passerelle de chaque VLAN prend `::1`. En lisant une adresse, on sait immédiatement dans quel VLAN se trouve la
+machine. Les règles de nommage et d'adressage du chapitre [Conventions de nommage et IPAM](/formations/automation/naming-ipam)
+s'appliquent de la même façon.
+
+## Configurer IPv6 sur un routeur
+
+Les syntaxes d'Arista EOS et de Cisco IOS sont très proches :
+
+```text title="Arista EOS"
+ipv6 unicast-routing
+!
+interface Vlan10
+   ipv6 enable
+   ipv6 address 2001:db8:acad:10::1/64
+!
+ipv6 route ::/0 2001:db8:acad:ff::1
+```
+
+```text title="Cisco IOS"
+ipv6 unicast-routing
+!
+interface Vlan10
+ ipv6 address 2001:db8:acad:10::1/64
+!
+ipv6 route ::/0 2001:db8:acad:ff::1
+```
+
+`ipv6 unicast-routing` active le routage IPv6, qui n'est pas actif par défaut. L'adresse link-local de l'interface
+est créée automatiquement. Les commandes de vérification reprennent celles d'IPv4, avec `ipv6` :
+
+| Vérification | Arista EOS et Cisco IOS |
+|---|---|
+| Adresses des interfaces | `show ipv6 interface brief` |
+| Table de routage | `show ipv6 route` |
+| Cache des voisins (NDP) | `show ipv6 neighbors` |
+| Test | `ping ipv6 2001:db8:acad:10::37` (EOS) ou `ping 2001:db8:acad:10::37` (IOS) |
+
+<Callout type="note">
+Dans une table de routage IPv6, le prochain saut d'une route apprise par OSPFv3 ou annoncée par un routeur est
+souvent une adresse **link-local** (`fe80::…`), accompagnée du nom de l'interface. C'est normal : la link-local
+identifie le voisin sur le lien, et elle ne change pas même si on renumérote les adresses globales.
+</Callout>
+
+## Cohabiter avec IPv4
+
+Aucune entreprise ne bascule d'un coup. La méthode courante est la **double pile** (*dual stack*) : chaque
+interface a une adresse IPv4 **et** une adresse IPv6, et les deux protocoles fonctionnent côte à côte. Quand un nom
+DNS a les deux types d'enregistrements (A et AAAA), les systèmes préfèrent IPv6, et reviennent à IPv4 s'il ne
+répond pas assez vite (*Happy Eyeballs*).
+
+Quelques points de vigilance :
+
+- **la sécurité doit suivre** : un firewall configuré pour IPv4 seulement laisse IPv6 sans règles. Les politiques,
+  les ACL et la supervision doivent couvrir les deux protocoles ;
+- **pas de NAT ne veut pas dire pas de protection** : le firewall avec état reste en place et refuse les connexions
+  entrantes non sollicitées, exactement comme en IPv4 ;
+- **les annonces de routeur pirates** : n'importe quelle machine peut émettre un Router Advertisement et se poser en
+  passerelle. Les switches d'accès bloquent ces annonces sur les ports des postes (*RA Guard*), comme le *DHCP
+  snooping* en IPv4 ;
+- pour joindre des services encore en IPv4 seulement depuis un réseau en IPv6 seulement, il existe des mécanismes de
+  traduction (NAT64 et DNS64), utilisés notamment par les opérateurs mobiles.
+
+## Dans le lab : IPv6 avec Docker
+
+Pas besoin d'équipement : Docker sait créer un réseau IPv6. Ces commandes reproduisent les sorties de ce chapitre.
+
+```bash
+docker network create --ipv6 --subnet 2001:db8:10::/64 v6lab
+docker run -d --rm --cap-add NET_ADMIN --name pc1 --network v6lab nicolaka/netshoot:v0.13 sleep 3600
+docker run -d --rm --cap-add NET_ADMIN --name pc2 --network v6lab nicolaka/netshoot:v0.13 sleep 3600
+```
+
+1. Affichez les adresses de `pc1` : `docker exec pc1 ip -6 addr show dev eth0`. Retrouvez la link-local, et
+   vérifiez avec le [calculateur IPv6](/outils/ipv6-calculator) qu'elle correspond à la MAC (`ip link show eth0`).
+2. Lancez une capture sur `pc1`, puis un ping vers `pc2` depuis un second terminal :
+
+   ```bash
+   docker exec pc1 ip -6 neigh flush dev eth0
+   docker exec -it pc1 tcpdump -nni eth0 icmp6
+   docker exec pc1 ping -6 -c 1 2001:db8:10::3
+   ```
+
+   Repérez la sollicitation vers l'adresse solicited-node, puis l'annonce.
+3. Affichez le cache des voisins : `docker exec pc1 ip -6 neigh`.
+4. Pinguez tous les nœuds du lien d'un coup : `docker exec pc1 ping -6 -c 2 ff02::1%eth0`. Qui répond ?
+5. Nettoyez : `docker rm -f pc1 pc2`, puis `docker network rm v6lab`.
+
+## À retenir
+
+- Une adresse IPv6 fait **128 bits**, en 8 groupes hexadécimaux ; zéros de tête supprimés et **un seul `::`**.
+- Structure type : **/48** pour le site, **/64** pour chaque réseau local, **64 bits** d'identifiant d'interface.
+- Chaque interface a une adresse **link-local** (`fe80::/10`), en plus de ses adresses globales ou ULA.
+- **Pas de broadcast** : du multicast. **NDP** (ICMPv6) remplace ARP, via l'adresse **solicited-node**. Ne bloquez
+  jamais ICMPv6 en bloc.
+- Les machines obtiennent leur adresse par **SLAAC** ou **DHCPv6**, et leur passerelle par le **Router
+  Advertisement**.
+- Un plan d'adressage IPv6 organise des réseaux, pas des adresses : encodez le **VLAN dans le sous-réseau**.
+- En **double pile**, la sécurité et la supervision doivent couvrir IPv6 autant qu'IPv4.

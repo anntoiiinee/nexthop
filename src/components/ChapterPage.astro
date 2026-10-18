@@ -6,6 +6,7 @@ import { routes, t, type Lang } from '@/i18n/ui';
 import { courseUrl, chapterUrl, chapterSlugOf, type Course, type CourseEntry } from '@/lib/courses';
 import { cheatsheetsForChapter } from '@/data/cheatsheets';
 import CheatsheetCallout from './CheatsheetCallout.astro';
+import References from './References.astro';
 
 interface Props {
   lang: Lang;
@@ -44,6 +45,7 @@ const card = 'group rounded-xl border border-slate-200 p-4 transition hover:bord
 
   <Content components={mdxComponents} />
   <CheatsheetCallout sheets={sheets} lang={lang} />
+  <References refKey={`courses/${course.slug}/${chapterSlugOf(chapter)}`} lang={lang} />
 
   <nav slot="after" class="mt-16 grid gap-4 border-t border-slate-200 pt-8 sm:grid-cols-2 dark:border-slate-800">
     {prev ? (
