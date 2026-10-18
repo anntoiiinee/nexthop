@@ -78,6 +78,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'ngfw-basics', title: { fr: 'Les bases d’un firewall', en: 'Firewall basics' } },
       { slug: 'security-policies', title: { fr: 'Politiques de sécurité', en: 'Security policies' } },
       { slug: 'ipsec-vpn', title: { fr: 'VPN IPsec', en: 'IPsec VPN' } },
+      { slug: 'traffic-flows', title: { fr: 'Flux nord-sud et est-ouest', en: 'North-south and east-west traffic' } },
       { slug: 'segmentation', title: { fr: 'Segmentation', en: 'Segmentation' } },
     ],
   },

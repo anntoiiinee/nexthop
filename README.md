@@ -252,6 +252,7 @@ Mise en route (une seule fois) :
 - [x] Tutoriel `bgp-evpn-route-types` réécrit (types 1 à 5, champs, dépannage), sans sorties CLI
 - [ ] Tutoriel `bgp-evpn-route-types` : ajouter les vraies sorties du lab `dc-fabric` (`show bgp evpn route-type mac-ip|imet|ip-prefix ipv4`, `show vxlan flood vtep`), annotées avec `<CliOutput>`
 - [x] Tutoriels « Git et les branches » (`git-branches`, composant `<GitGraph>`) et « Jinja2 et le rendu de configuration dans NetBox » (`jinja-netbox`, gabarits dans `public/labs/netops/templates/`, rendus réellement avec Jinja2 3.1)
+- [x] Saut 5 · Sécurité : chapitre « Flux nord-sud et est-ouest » (`traffic-flows`) en FR et EN, avant Segmentation ; exercice sur le lab `security` (classement des règles de `fw-hq`, mouvement latéral par R15)
 - [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---
