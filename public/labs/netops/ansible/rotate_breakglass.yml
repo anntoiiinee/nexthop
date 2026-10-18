@@ -1,28 +1,44 @@
 ---
 # Rotation du compte local de secours (break-glass) : mêmes étapes que python/rotate_breakglass.py.
-#   1. un mot de passe aléatoire et unique par équipement ;
-#   2. écrit, chiffré, dans vault/breakglass.pending.yml AVANT de toucher aux équipements ;
-#   3. appliqué puis vérifié par une connexion eAPI indépendante, un équipement à la fois ;
+# Pour chaque équipement, un à la fois :
+#   1. un mot de passe aléatoire et unique ;
+#   2. écrit dans HashiCorp Vault (statut « pending ») AVANT de toucher à l'équipement ;
+#   3. appliqué puis vérifié par une connexion eAPI indépendante ;
 #   4. (option) suppression du compte admin par défaut ;
-#   5. si tout a réussi, vault/breakglass.pending.yml devient vault/breakglass.yml.
+#   5. configuration enregistrée, puis secret passé au statut « active ».
+# Secrets : moteur KV v2, secret/netops/breakglass/<équipement>. Vault garde les versions précédentes.
 #
 #   export NET_USER=svc-netops NET_PASSWORD='…'
-#   export ANSIBLE_VAULT_PASSWORD_FILE=$HOME/.vault_pass     # chemin absolu
+#   export VAULT_ADDR=http://172.20.30.70:8200
+#   export VAULT_TOKEN=…          # ou VAULT_ROLE_ID et VAULT_SECRET_ID (AppRole, dans un pipeline)
 #   ansible-playbook ansible/rotate_breakglass.yml -e remove_default_admin=true
 
-- name: 1. Générer et mettre en sécurité les nouveaux mots de passe
+- name: Rotation du compte de secours, un équipement à la fois
   hosts: eos
   gather_facts: false
-  vars: &rotation
+  serial: 1
+  any_errors_fatal: true
+  vars:
     breakglass_user: nh-breakglass        # choisissez un nom propre à votre entreprise
     remove_default_admin: false
-    vault_dir: "{{ playbook_dir }}/../vault"
+    vault_secret_path: "netops/breakglass/{{ inventory_hostname }}"
+    vault_role_id: "{{ lookup('ansible.builtin.env', 'VAULT_ROLE_ID') }}"
+
+  # Connexion à Vault commune à tous les modules community.hashi_vault : jeton (VAULT_TOKEN,
+  # lu automatiquement) ou AppRole si VAULT_ROLE_ID est défini
+  module_defaults:
+    group/community.hashi_vault.vault:
+      url: "{{ lookup('ansible.builtin.env', 'VAULT_ADDR') }}"
+      engine_mount_point: secret
+      auth_method: "{{ 'approle' if vault_role_id else 'token' }}"
+      role_id: "{{ vault_role_id or omit }}"
+      secret_id: "{{ lookup('ansible.builtin.env', 'VAULT_SECRET_ID') or omit }}"
 
   tasks:
-    - name: Vérifier que le mot de passe du coffre est disponible
+    - name: Vérifier que l'adresse de Vault est définie
       ansible.builtin.assert:
-        that: lookup('ansible.builtin.env', 'ANSIBLE_VAULT_PASSWORD_FILE') | length > 0
-        fail_msg: Définissez ANSIBLE_VAULT_PASSWORD_FILE (fichier contenant le mot de passe du coffre).
+        that: lookup('ansible.builtin.env', 'VAULT_ADDR') | length > 0
+        fail_msg: Définissez VAULT_ADDR, puis VAULT_TOKEN (ou VAULT_ROLE_ID et VAULT_SECRET_ID).
       run_once: true
       delegate_to: localhost
 
@@ -31,36 +47,16 @@
         new_breakglass_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits', '-_.+=']) }}"
       no_log: true
 
-    - name: Créer le dossier du coffre
-      ansible.builtin.file:
-        path: "{{ vault_dir }}"
-        state: directory
-        mode: "0700"
-      run_once: true
-      delegate_to: localhost
-
-    # Le contenu passe par l'entrée standard d'ansible-vault : il n'est jamais écrit en clair sur le disque
-    - name: Écrire le coffre en attente, chiffré, avant de toucher aux équipements
-      ansible.builtin.command:
-        cmd: ansible-vault encrypt --output {{ vault_dir }}/breakglass.pending.yml -
-        stdin: "{{ pending | to_nice_yaml }}"
-      changed_when: true
-      vars:
-        pending:
-          breakglass_user: "{{ breakglass_user }}"
-          breakglass_passwords: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'new_breakglass_password'))) }}"
-      run_once: true
+    - name: Mettre le mot de passe au coffre, avant de toucher à l'équipement
+      community.hashi_vault.vault_kv2_write:
+        path: "{{ vault_secret_path }}"
+        data:
+          username: "{{ breakglass_user }}"
+          password: "{{ new_breakglass_password }}"
+          status: pending
       delegate_to: localhost
       no_log: true
 
-- name: 2. Appliquer et vérifier, un équipement à la fois
-  hosts: eos
-  gather_facts: false
-  serial: 1
-  any_errors_fatal: true
-  vars: *rotation
-
-  tasks:
     - name: Créer ou mettre à jour le compte de secours
       arista.eos.eos_config:
         lines:
@@ -99,13 +95,12 @@
       arista.eos.eos_command:
         commands: write memory
 
-- name: 3. Valider la rotation
-  hosts: localhost
-  gather_facts: false
-
-  tasks:
-    - name: Le coffre en attente devient le coffre courant
-      ansible.builtin.command:
-        cmd: mv vault/breakglass.pending.yml vault/breakglass.yml
-        chdir: "{{ playbook_dir }}/.."
-      changed_when: true
+    - name: Valider le mot de passe dans le coffre
+      community.hashi_vault.vault_kv2_write:
+        path: "{{ vault_secret_path }}"
+        data:
+          username: "{{ breakglass_user }}"
+          password: "{{ new_breakglass_password }}"
+          status: active
+      delegate_to: localhost
+      no_log: true

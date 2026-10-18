@@ -1,0 +1,291 @@
+---
+title: "Traceroute : suivre le chemin d'un paquet"
+description: "Comment traceroute découvre les routeurs d'un chemin avec le TTL et les messages ICMP, ses variantes UDP, ICMP et TCP, la lecture d'une trace, puis toutes les raisons pour lesquelles il ment ou ne fonctionne pas : filtrage, limitation ICMP, chemins asymétriques, ECMP, MPLS et tunnels. Avec mtr et des sorties réelles."
+pubDate: 2026-10-18
+level: beginner
+tags: [traceroute, icmp, ttl, mtr, troubleshooting, routing]
+vendor: [arista, cisco]
+order: 13
+---
+
+export const mtrOut = `Start: 2026-10-18T18:48:02+0000
+HOST: tr-client                   Loss%   Snt   Last   Avg  Best  Wrst StDev
+  1.|-- 10.10.1.254               55.0%    20    0.0   0.1   0.0   0.1   0.0
+  2.|-- 10.10.12.2                90.0%    20    0.1   0.1   0.1   0.1   0.0
+  3.|-- 10.10.2.10                 0.0%    20    0.1   0.1   0.1   0.1   0.0`;
+
+« Le site est lent », « l'application ne répond pas » : avant de chercher un coupable, on veut savoir **par où
+passent les paquets** et **où ils s'arrêtent**. `traceroute` (`tracert` sous Windows) affiche la liste des
+routeurs traversés, saut par saut. C'est l'un des outils les plus utilisés… et l'un des plus mal interprétés.
+Ce chapitre explique comment il fonctionne, puis pourquoi il est si souvent trompeur, ou inutilisable.
+
+## Le principe : le TTL et les messages ICMP
+
+Chaque paquet IP porte un champ **TTL** (*Time To Live*, appelé *Hop Limit* en IPv6). Chaque routeur qui
+transmet le paquet le diminue de 1. S'il tombe à 0, le routeur jette le paquet et renvoie à l'expéditeur un
+message <Term id="icmp" /> **Time Exceeded** (type 11), avec sa propre adresse comme source. Le TTL est là pour
+qu'un paquet pris dans une boucle de routage finisse par disparaître.
+
+Traceroute détourne ce mécanisme :
+
+1. il envoie un paquet avec un **TTL de 1** : le premier routeur le jette et répond « Time Exceeded ». On connaît
+   le saut 1 ;
+2. puis un paquet avec un **TTL de 2** : il passe le premier routeur, meurt sur le deuxième, qui se dévoile ;
+3. et ainsi de suite, jusqu'à ce que la **destination** elle-même réponde, ou qu'on atteigne le maximum (30 sauts
+   par défaut).
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'c', label: 'Client', sub: '10.10.1.10' },
+    { id: 'r1', label: 'R1', sub: '10.10.1.254' },
+    { id: 'r2', label: 'R2', sub: '10.10.12.2' },
+    { id: 's', label: 'Serveur', sub: '10.10.2.10', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'c', to: 'r1', label: 'UDP, TTL 1', tone: 'sky' },
+    { from: 'r1', to: 'c', label: 'ICMP Time Exceeded', style: 'dashed', tone: 'amber' },
+    { from: 'c', to: 'r2', label: 'UDP, TTL 2', tone: 'sky' },
+    { from: 'r2', to: 'c', label: 'ICMP Time Exceeded', style: 'dashed', tone: 'amber' },
+    { from: 'c', to: 's', label: 'UDP, TTL 3, port 33440', tone: 'sky' },
+    { from: 's', to: 'c', label: 'ICMP Port Unreachable', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="Chaque TTL révèle un routeur de plus. La destination, elle, répond par une erreur différente : c'est ainsi que traceroute sait qu'il est arrivé."
+/>
+
+Comment traceroute sait-il qu'il est arrivé ? Cela dépend du type de sonde :
+
+| Variante | Sonde envoyée | Réponse de la destination | Commande |
+|---|---|---|---|
+| **UDP** | UDP vers un port improbable (33434 et suivants) | ICMP **Port Unreachable** : aucun service n'écoute ce port | `traceroute` sous Linux, sur Cisco et Arista |
+| **ICMP** | ICMP **Echo Request**, comme un ping | ICMP **Echo Reply** | `tracert` sous Windows, `traceroute -I` sous Linux |
+| **TCP** | TCP **SYN** vers un vrai port (443, 22…) | **SYN-ACK** si le port est ouvert, **RST** s'il est fermé | `traceroute -T -p 443`, `tcptraceroute` |
+
+Dans tous les cas, les routeurs intermédiaires répondent de la même façon : **Time Exceeded**. Par défaut,
+traceroute envoie **trois sondes** par saut, d'où les trois temps affichés.
+
+## Lire une trace
+
+Toutes les sorties de ce chapitre viennent d'un petit réseau de conteneurs Linux : un client, deux routeurs et un
+serveur, montés pour l'occasion.
+
+<Topology
+  width={760}
+  height={200}
+  nodes={[
+    { id: 'c', type: 'host', x: 80, y: 100, label: 'client', sub: '10.10.1.10' },
+    { id: 'r1', type: 'router', x: 290, y: 100, label: 'R1', sub: '10.10.1.254 · 10.10.12.11' },
+    { id: 'r2', type: 'router', x: 490, y: 100, label: 'R2', sub: '10.10.12.2 · 10.10.2.254' },
+    { id: 's', type: 'server', x: 690, y: 100, label: 'serveur', sub: '10.10.2.10', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 'c', to: 'r1', label: '10.10.1.0/24' },
+    { from: 'r1', to: 'r2', label: '10.10.12.0/24' },
+    { from: 'r2', to: 's', label: '10.10.2.0/24' },
+  ]}
+  caption="Le réseau des exemples : deux routeurs entre le client et le serveur."
+/>
+
+```text title="client:~# traceroute -n 10.10.2.10"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  1.665 ms  1.499 ms  1.463 ms
+ 2  10.10.12.2  1.404 ms  1.258 ms  1.182 ms
+ 3  10.10.2.10  1.114 ms  0.968 ms  0.885 ms
+```
+
+- Chaque ligne est un **saut**, avec l'adresse qui a répondu et le temps aller-retour de chacune des trois sondes.
+- L'adresse affichée est en général celle de l'**interface d'entrée** du routeur, celle par laquelle la sonde est
+  arrivée : R1 apparaît en `10.10.1.254`, R2 en `10.10.12.2`. Pas son adresse de loopback, ni celle de sortie.
+- `-n` évite la résolution inverse de chaque adresse. Sans lui, traceroute affiche les noms (les
+  [enregistrements PTR](/formations/fundamentals/dns#ptr--dune-adresse-vers-un-nom)), souvent très parlants sur
+  Internet, mais chaque recherche ralentit la trace.
+- Une étoile `*` signifie : **pas de réponse dans le délai** (5 secondes par défaut). Pas forcément une perte de
+  paquets, on va le voir.
+
+## Pourquoi traceroute ment, ou ne marche pas
+
+Traceroute repose sur des messages d'erreur que personne n'est obligé d'envoyer, ni de laisser passer. Il ne voit
+que les équipements qui **décrémentent le TTL et acceptent de répondre**, et seulement sur le chemin **aller**.
+Voici les cas que vous rencontrerez.
+
+### 1. Un routeur ne répond pas, mais transmet très bien
+
+R2 est configuré pour ne pas envoyer de messages « Time Exceeded », une pratique très courante pour se rendre
+moins visible :
+
+```text title="R2 ne renvoie plus de Time Exceeded"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  0.109 ms  0.021 ms  0.018 ms
+ 2  * * *
+ 3  10.10.2.10  0.095 ms  0.076 ms  0.069 ms
+```
+
+Le saut 2 est muet, mais le saut 3 répond : **le trafic passe**. Des étoiles au milieu d'une trace qui continue ne
+sont **jamais** un problème en soi.
+
+### 2. La destination ne répond pas aux sondes
+
+Cette fois, le serveur filtre l'UDP entrant, comme beaucoup de serveurs et de firewalls :
+
+```text title="Le serveur filtre l'UDP (traceroute -n -m 6)"
+traceroute to 10.10.2.10 (10.10.2.10), 6 hops max, 60 byte packets
+ 1  10.10.1.254  0.847 ms  0.789 ms  0.766 ms
+ 2  10.10.12.2  0.745 ms  0.672 ms  0.639 ms
+ 3  * * *
+ 4  * * *
+ 5  * * *
+ 6  * * *
+```
+
+On dirait que le chemin s'arrête après R2. En réalité, le serveur reçoit bien les sondes : il ne répond simplement
+pas. Changez de type de sonde, et la trace aboutit :
+
+```text title="Même réseau, sondes ICMP (traceroute -n -I) ou TCP (traceroute -n -T -p 443)"
+traceroute to 10.10.2.10 (10.10.2.10), 30 hops max, 60 byte packets
+ 1  10.10.1.254  0.076 ms  0.023 ms  0.013 ms
+ 2  10.10.12.2  0.032 ms  0.018 ms  0.019 ms
+ 3  10.10.2.10  0.033 ms  0.023 ms  0.048 ms
+```
+
+<Callout type="field">
+Pour tester le chemin d'une application, faites une trace **TCP vers le port de l'application** (`traceroute -T -p
+443`, ou `tcptraceroute`) : elle traverse les mêmes firewalls et suit les mêmes règles que le trafic réel. Une trace
+UDP ou ICMP peut être bloquée là où l'application passe, ou l'inverse.
+</Callout>
+
+### 3. Les réponses ICMP sont limitées
+
+Un routeur transmet les paquets avec ses puces matérielles, mais **fabrique** les messages ICMP avec son processeur,
+lentement et avec une priorité basse. Pour se protéger, il en **limite le nombre** (sur Cisco et Arista, c'est le
+rôle du *Control Plane Policing*, CoPP). Linux le fait aussi par défaut. `mtr`, qui répète traceroute en continu,
+le montre bien :
+
+<CliOutput
+  title="client:~# mtr -n -r -c 20 10.10.2.10"
+  output={mtrOut}
+  notes={[
+    { line: 3, text: 'R1 ne répond qu\'à une sonde sur deux : la limite ICMP par défaut de Linux, sans aucune règle ajoutée.', match: '55.0%', tone: 'amber' },
+    { line: 4, text: 'R2 a une limite plus stricte : 90 % de « pertes ».', match: '90.0%', tone: 'amber' },
+    { line: 5, text: 'La destination : 0 % de perte. Aucun paquet n\'a réellement été perdu.', match: '0.0%', tone: 'emerald' },
+  ]}
+/>
+
+La règle de lecture : **seule compte la perte qui se prolonge jusqu'à la destination**. Une perte, ou une latence
+élevée, sur un saut intermédiaire qui disparaît aux sauts suivants vient du routeur qui **répond** lentement, pas
+d'un problème de **transmission**.
+
+### 4. Le chemin retour est invisible
+
+Traceroute montre le chemin **aller**. Les réponses reviennent par le chemin que choisissent les routeurs, qui peut
+être complètement différent : c'est le **routage asymétrique**, très fréquent sur Internet et entre sites. Les
+temps affichés sont des allers-retours, ils incluent donc ce chemin retour inconnu. Un saut « lent » peut l'être à
+cause du retour. Pour voir le retour, il faut une trace lancée **depuis l'autre extrémité**, ou un *looking glass*
+de l'opérateur.
+
+### 5. Plusieurs chemins à la fois (ECMP)
+
+Quand plusieurs chemins de même coût existent (<Term id="ecmp" />), les routeurs répartissent les flux en calculant
+une empreinte des adresses et des **ports**. Or traceroute UDP change de port de destination à chaque sonde : chaque
+sonde peut prendre un chemin différent. Résultat, une même ligne mélange plusieurs routeurs, et la trace dessine un
+chemin qui n'existe pas :
+
+```text title="Trace à travers deux chemins ECMP (illustration, adresses fictives)"
+ 3  198.51.100.1  4.1 ms  198.51.100.5  4.3 ms  198.51.100.1  4.0 ms
+ 4  198.51.100.9  5.2 ms  5.1 ms  198.51.100.13  5.4 ms
+```
+
+**Paris traceroute** et `mtr` en mode TCP ou UDP à port fixe gardent les mêmes ports pour toutes les sondes, donc
+le même chemin.
+
+### 6. Les sauts cachés : MPLS, tunnels et overlays
+
+- **MPLS** : les opérateurs peuvent ne pas recopier le TTL dans l'étiquette MPLS. Tout le cœur de réseau apparaît
+  alors comme **un seul saut**, ou disparaît. D'autres l'affichent, avec les étiquettes dans la réponse.
+- **Tunnels** (IPsec, GRE, VXLAN, SD-WAN) : le paquet d'origine est encapsulé, et son TTL ne baisse qu'aux deux
+  extrémités du tunnel. Dix routeurs entre deux sites deviennent **un seul saut**.
+- **Réseaux cloud** : les réseaux virtuels des fournisseurs ne montrent pas leurs équipements internes.
+
+### 7. Des équipements qui ne comptent pas
+
+Tout ce qui ne **route** pas est invisible : les switches de niveau 2, mais aussi les firewalls en mode
+transparent, et certains équipements qui transmettent sans décrémenter le TTL. À l'inverse, un **proxy** ou un
+**load balancer** qui termine les connexions TCP répond lui-même à une trace TCP : elle s'arrête sur lui, pas sur le
+serveur derrière.
+
+### 8. Des adresses trompeuses
+
+Le routeur répond avec l'adresse de son choix : l'interface d'entrée, parfois une autre, parfois une adresse
+**privée** (`10.x`, `172.16.x`) au milieu d'un chemin Internet, impossible à joindre ou à identifier. Les noms
+inverses sont écrits par les opérateurs, parfois périmés. Recoupez avant de conclure.
+
+## Ce que traceroute dit vraiment
+
+| Ce que vous voyez | Ce que ça veut dire |
+|---|---|
+| Des `* * *` au milieu, puis la trace continue | un routeur qui ne répond pas : **aucun problème** |
+| Des `* * *` jusqu'au bout, à partir d'un saut | le trafic s'arrête là… **ou** ne fait que ne plus répondre. Changez de sonde (`-I`, `-T`) |
+| Latence élevée sur un saut, normale après | réponse ICMP lente de ce routeur : **ignorez** |
+| Latence qui augmente à un saut et **reste** élevée ensuite | le délai est réel : lien long (océan, satellite) ou congestion à cet endroit |
+| Perte sur un saut, 0 % à la destination | limitation ICMP : **ignorez** |
+| Perte qui commence à un saut et **continue** jusqu'à la destination | vraie perte, autour de ce saut |
+| `!H`, `!N`, `!X` après un temps | le routeur renvoie « hôte injoignable », « réseau injoignable » ou « interdit » (filtrage) |
+| Une même adresse qui revient en boucle | une **boucle de routage** |
+
+<Callout type="warning">
+Une trace n'est pas une preuve. Avant d'accuser un opérateur ou une équipe, confirmez avec ce que disent les
+équipements eux-mêmes : la table de routage (`show ip route`), les compteurs d'erreurs et de pertes des interfaces,
+une capture de paquets, ou les journaux de flux du firewall.
+</Callout>
+
+## Sur les équipements réseau
+
+```text title="Arista EOS"
+traceroute 10.10.2.10
+traceroute vrf MGMT 192.0.2.53
+```
+
+```text title="Cisco IOS"
+traceroute 10.10.2.10
+traceroute 10.10.2.10 source Loopback0
+```
+
+Le choix de la **source** compte : une trace lancée depuis un routeur part par défaut de l'adresse de son interface
+de sortie, qui n'est pas forcément annoncée dans le réseau. Les réponses ne savent alors pas revenir, et la trace
+ne montre que des étoiles. Utilisez une source joignable, comme la loopback.
+
+Pour qu'un traceroute fonctionne à travers vos firewalls, ils doivent laisser revenir les messages ICMP **Time
+Exceeded** et **Destination Unreachable** associés aux sondes. Les firewalls modernes le font en les rattachant à la
+session d'origine.
+
+## mtr : traceroute en continu
+
+`mtr` (*My Traceroute*) combine ping et traceroute : il envoie des sondes en boucle et affiche, pour chaque saut, le
+taux de perte et les statistiques de latence. C'est l'outil idéal pour un problème **intermittent** :
+`mtr -n -r -c 100 destination` produit un rapport après 100 sondes, à joindre à un ticket chez un opérateur.
+`mtr -T -P 443` utilise des sondes TCP. Les règles de lecture sont les mêmes : seule compte la perte qui continue
+jusqu'à la destination.
+
+## À vous de jouer
+
+1. Une trace vers un serveur Internet affiche des `* * *` aux sauts 4 et 5, puis des réponses normales jusqu'au saut
+   12, la destination. Y a-t-il un problème ?
+2. Une trace vers un serveur de l'entreprise s'arrête après le firewall du data center, avec des étoiles jusqu'à
+   30. Pourtant, le site web du serveur fonctionne. Comment le prouver avec traceroute ?
+3. `mtr` montre 40 % de perte au saut 6, et 0 % aux sauts 7 à 10. Que répondez-vous à l'utilisateur qui vous envoie
+   cette capture ?
+4. Entre deux sites reliés par un VPN IPsec, la trace ne montre que trois sauts, alors que le chemin traverse un
+   opérateur. Pourquoi ?
+
+## À retenir
+
+- Traceroute envoie des sondes avec un **TTL croissant** ; chaque routeur où le TTL tombe à 0 répond **ICMP Time
+  Exceeded**, la destination répond **Port Unreachable** (UDP), **Echo Reply** (ICMP) ou **SYN-ACK / RST** (TCP).
+- Linux, Cisco et Arista utilisent l'**UDP** par défaut, Windows l'**ICMP** ; `-T -p <port>` suit le chemin réel
+  d'une application.
+- Il ne voit que les équipements qui **décrémentent le TTL et répondent**, et seulement le chemin **aller**.
+- **Étoiles**, **pertes** ou **latence** sur un saut intermédiaire qui ne se prolongent pas jusqu'à la destination
+  ne sont pas des problèmes : filtrage ou limitation des réponses ICMP.
+- **ECMP**, **MPLS**, **tunnels**, **cloud** et **proxies** faussent ou masquent le chemin. Recoupez toujours avec
+  les tables de routage et les compteurs.
+
+Prochain chapitre : **le chiffrement**, clés, signatures et certificats.

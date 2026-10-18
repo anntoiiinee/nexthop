@@ -1,0 +1,308 @@
+---
+title: "NTP: network time"
+description: "Why the whole network must share the same time, how NTP measures and corrects it, strata 0 to 16, a local time reference (GNSS appliance, antenna, atomic oscillator) or an external one (public servers, NTS), the recommended architecture, configuration on Arista EOS, Cisco IOS and Linux, and the classic pitfalls."
+pubDate: 2026-10-18
+level: intermediate
+tags: [ntp, nts, ptp, gnss, time, operations]
+vendor: [arista, cisco]
+order: 2
+---
+
+export const eosAssoc = `switch> show ntp associations
+     remote          refid      st t when  poll reach   delay   offset  jitter
+==============================================================================
++l.ntp.arista.co 125.157.10.11   2 u  539  1024  377  121.748   -0.345   0.893
+-3.ntp.arista.co 127.31.152.34   2 u  868  1024  377  101.671    2.434   1.529
++2.ntp.arista.co 176.131.12.185  2 u  676  1024  377  116.505     0.03   0.768
+*4.ntp.arista.co 120.181.192.192 2 u  696  1024  377   48.431   -0.416    0.15`;
+
+export const chronySources = `MS Name/IP address         Stratum Poll Reach LastRx Last sample
+===============================================================================
+^* ptbtime1.ptb.de               1   6    77    14  -4002us[+6813us] +/-   18ms
+^- ptbtime2.ptb.de               1   6    77    14  -5968us[-5968us] +/-   14ms
+^- sth1.ntp.netnod.se            1   6    77    14  -8638us[-8638us] +/-   27ms
+^- time.cloudflare.com           3   6    77    15    -12ms[ -850us] +/-   15ms`;
+
+The firewall raises an alert at `14:02:11`, the switch logs a link down at `14:03:52`, the authentication server
+reports failures at `13:58:40`. In what order did things happen? Impossible to tell if the clocks don't agree.
+<Term id="ntp" /> (*Network Time Protocol*) gives every device the **same time**, to within a few milliseconds. It
+is one of the most discreet services on the network, and one that all the others depend on.
+
+## Why time is critical
+
+| What depends on time | What happens if it is wrong |
+|---|---|
+| **Logs** (syslog, firewall, TACACS+) | impossible to reconstruct an incident across several devices |
+| **Certificates** (TLS, 802.1X, IPsec VPN) | a certificate not yet valid or already expired: connections refused |
+| **Kerberos** (Active Directory) | beyond a 5-minute skew by default, authentication fails |
+| **One-time codes** (MFA, TOTP) | codes rejected, users locked out |
+| **Monitoring and telemetry** | shifted graphs, false correlations |
+| **Databases, distributed storage** | write conflicts, failing replication |
+
+Some sectors even have regulatory accuracy requirements: finance (timestamping of stock orders), telecoms
+(synchronization of 4G and 5G antennas), broadcasting.
+
+## How NTP measures time
+
+An NTP client queries a server over <Term id="udp" /> on port **123**. The exchange holds **four timestamps**:
+
+<Sequence
+  width={640}
+  actors={[
+    { id: 'c', label: 'Client' },
+    { id: 's', label: 'NTP server', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'request, sent at T1', tone: 'sky' },
+    { note: 'the server receives it at T2 and answers at T3 (its clock)', tone: 'slate' },
+    { from: 's', to: 'c', label: 'answer with T1, T2, T3', style: 'dashed', tone: 'emerald' },
+    { note: 'the client receives it at T4 (its clock)', tone: 'slate' },
+  ]}
+  caption="Four timestamps are enough to measure both the travel time and the difference between the two clocks."
+/>
+
+The client derives:
+
+- the network round-trip **delay**: `(T4 − T1) − (T3 − T2)`, the total time minus the time spent in the server;
+- its **offset** from the server: `((T2 − T1) + (T3 − T4)) / 2`.
+
+This calculation assumes the trip out and the trip back take as long. That's NTP's limit: on a local network,
+accuracy is around a millisecond, or better; across the Internet, from a few milliseconds to a few tens. An
+**asymmetric** path skews the result by half the difference.
+
+The client doesn't trust a single exchange. It queries regularly (every 64 to 1,024 seconds), queries **several
+servers**, discards inconsistent ones, and corrects its clock **gently**: it speeds it up or slows it down slightly,
+rather than making it jump, so that logs stay in order. Only a large offset, at startup, is corrected in one step.
+
+## Strata
+
+NTP organizes time sources into levels, called **strata**:
+
+<Topology
+  width={760}
+  height={390}
+  nodes={[
+    { id: 'gnss', type: 'server', x: 150, y: 50, label: 'GNSS', sub: 'satellites\' atomic clocks', tone: 'violet' },
+    { id: 'atom', type: 'server', x: 380, y: 50, label: 'Atomic clock', sub: 'caesium, rubidium', tone: 'violet' },
+    { id: 'radio', type: 'server', x: 610, y: 50, label: 'Radio signal', sub: 'DCF77…', tone: 'violet' },
+    { id: 's1a', type: 'server', x: 260, y: 160, label: 'Stratum 1 server', sub: 'GNSS appliance', tone: 'emerald' },
+    { id: 's1b', type: 'server', x: 500, y: 160, label: 'Stratum 1 server', sub: 'national laboratory', tone: 'emerald' },
+    { id: 's2a', type: 'server', x: 260, y: 260, label: 'Stratum 2', sub: 'internal NTP servers', tone: 'sky' },
+    { id: 's2b', type: 'server', x: 500, y: 260, label: 'Stratum 2', sub: 'public servers', tone: 'sky' },
+    { id: 's3', type: 'switch', x: 380, y: 330, label: 'Stratum 3', sub: 'switches, routers, servers' },
+  ]}
+  links={[
+    { from: 'gnss', to: 's1a', style: 'dashed' }, { from: 'atom', to: 's1b', style: 'dashed' }, { from: 'radio', to: 's1b', style: 'dashed' },
+    { from: 's1a', to: 's2a' }, { from: 's1b', to: 's2b' }, { from: 's1b', to: 's2a' },
+    { from: 's2a', to: 's3' }, { from: 's2b', to: 's3' },
+  ]}
+  caption="Strata: the number counts the steps from the reference clock. Each level synchronizes to the previous one."
+/>
+
+| Stratum | What it is |
+|---|---|
+| **0** | the **reference clock** itself: GNSS receiver, atomic clock, radio signal. It isn't on the network |
+| **1** | a server **directly connected** to a stratum 0 clock |
+| **2** | a server synchronized to a stratum 1 server |
+| **3 to 15** | each level synchronizes to the previous one |
+| **16** | **unsynchronized**: the device has no valid source |
+
+The stratum measures a **distance**, not a **quality**: a stratum 2 server on your local network often gives better
+time than a stratum 1 server on the other side of the Internet, because the path's delay and asymmetry matter more
+than the rank.
+
+## A local time reference: the GNSS appliance
+
+To depend on nobody, a company installs its own **stratum 1** servers: **time appliances** (Meinberg, Microchip,
+Oscilloquartz…), connected to a **GNSS antenna** on the roof.
+
+- **The antenna** receives signals from satellite constellations (GPS, Galileo, GLONASS, BeiDou). Each satellite
+  carries **atomic clocks**, and its signal carries the time: that's what the appliance picks up. The antenna needs a
+  **clear view of the sky**, a cable of limited length, and lightning protection.
+- **The internal oscillator** keeps time when the signal disappears (failed antenna, jamming): that's **holdover**.
+  An oven-controlled crystal oscillator (OCXO) drifts by a few microseconds to a few milliseconds per day depending
+  on its quality. A **rubidium atomic oscillator**, an option on high-end appliances, only drifts by around a
+  microsecond per day.
+- **Outputs**: NTP for everyone, and often **PTP** (*Precision Time Protocol*, IEEE 1588) for sub-microsecond needs
+  (telecoms, finance, broadcasting). PTP requires switches that support it.
+
+Install **at least two**, ideally on two sites, with separate antennas.
+
+<Callout type="warning">
+The GNSS signal is very weak, and therefore easy to **jam** or, worse, to **spoof**: a nearby transmitter broadcasts
+a fake signal and shifts the time of all your devices. Choose appliances that detect these attacks, compare them
+with at least one independent source (another site, external servers), and monitor their GNSS reception status.
+</Callout>
+
+## An external time reference: public servers
+
+The alternative, much simpler, is to synchronize to servers **on the Internet**:
+
+| Source | Specifics |
+|---|---|
+| **pool.ntp.org** | thousands of volunteer servers, grouped by country (`fr.pool.ntp.org`); ideal for a workstation or a small site |
+| **National laboratories** | stratum 1 servers backed by a country's reference atomic clocks |
+| **Providers** | Cloudflare (`time.cloudflare.com`, with NTS), carriers, clouds for their machines |
+
+The benefit: nothing to install. The limits:
+
+- a **dependency on the Internet**: without access, no fresh reference (the clock holds, then drifts);
+- **UDP 123** must be allowed outbound, at least for your internal NTP servers;
+- classic NTP is **not authenticated**: a forged answer can shift the time. **NTS** (*Network Time Security*,
+  RFC 8915) adds authentication through TLS; Cloudflare, Netnod and several national laboratories offer it.
+
+<Callout type="note">
+Some providers (Google, Amazon) **smear** leap seconds: instead of adding one second at once, they slow their clock
+down over several hours (*leap smear*). Never mix, on the same client, servers that smear and servers that don't:
+during the smear, they disagree by up to half a second.
+</Callout>
+
+## The recommended architecture
+
+<Topology
+  width={760}
+  height={375}
+  groups={[{ x: 170, y: 125, w: 420, h: 115, label: 'Internal NTP servers', tone: 'sky' }]}
+  nodes={[
+    { id: 'gps1', type: 'server', x: 150, y: 50, label: 'GNSS appliance', sub: 'site A · stratum 1', tone: 'emerald' },
+    { id: 'gps2', type: 'server', x: 380, y: 50, label: 'GNSS appliance', sub: 'site B · stratum 1', tone: 'emerald' },
+    { id: 'ext', type: 'server', x: 610, y: 50, label: 'External sources', sub: 'NTS', tone: 'violet' },
+    { id: 'n1', type: 'server', x: 250, y: 175, label: 'ntp1', sub: 'stratum 2' },
+    { id: 'n2', type: 'server', x: 510, y: 175, label: 'ntp2', sub: 'stratum 2' },
+    { id: 'sw', type: 'switch', x: 150, y: 300, label: 'Switches', sub: 'routers, firewalls' },
+    { id: 'srv', type: 'server', x: 380, y: 300, label: 'Servers', sub: 'AD controllers' },
+    { id: 'vm', type: 'host', x: 610, y: 300, label: 'Workstations', sub: 'through the AD domain' },
+  ]}
+  links={[
+    { from: 'gps1', to: 'n1' }, { from: 'gps1', to: 'n2' }, { from: 'gps2', to: 'n1' }, { from: 'gps2', to: 'n2' },
+    { from: 'ext', to: 'n1', style: 'dashed' }, { from: 'ext', to: 'n2', style: 'dashed' },
+    { from: 'n1', to: 'sw' }, { from: 'n2', to: 'sw' }, { from: 'n1', to: 'srv' }, { from: 'n2', to: 'srv' },
+    { from: 'srv', to: 'vm', style: 'dashed' },
+  ]}
+  caption="A simple hierarchy: references (local and external), a few internal servers, and everything else synchronizing to them."
+/>
+
+- **A few internal NTP servers** (two to four) synchronize to the references: GNSS appliances, external sources, or
+  both. They are the only ones going out to the Internet.
+- **Every other device** synchronizes to these internal servers, never directly to the Internet.
+- Each client has **three or four sources**, not two: with two disagreeing sources, it can't tell which one is
+  wrong; with three or more, the majority wins.
+- **Everyone on UTC**, in logs as in device clocks: local time is only for display to humans. Daylight saving
+  changes disappear from the logs.
+- In an **Active Directory** domain, the controller holding the PDC emulator role synchronizes to the internal NTP
+  servers; workstations follow the domain hierarchy.
+
+## Configuration
+
+### Arista EOS
+
+```text title="Arista EOS"
+ntp server vrf MGMT 192.0.2.123 prefer iburst key 10
+ntp server vrf MGMT 192.0.2.124 iburst key 10
+ntp server vrf MGMT 192.0.2.125 iburst key 10
+ntp local-interface vrf MGMT Management1
+ntp authentication-key 10 sha1 <shared-key>
+ntp trusted-key 10
+ntp authenticate
+clock timezone Europe/Paris
+```
+
+- `vrf MGMT`: servers are reached through the [management network](/en/courses/operations/oob). On EOS, all NTP
+  servers must be in the **same VRF**.
+- `iburst`: sends a burst of requests at startup, to synchronize in a few seconds rather than a few minutes.
+- `prefer`: all else being equal, this server is chosen first.
+- `key` and `ntp authenticate`: answers must be signed with the shared key, also configured on the server. EOS
+  accepts `md5` and `sha1`, and the documentation states that the key is stored **in clear text** in the
+  configuration: protect backups accordingly.
+- `clock timezone` changes the **display**; the clock and NTP exchanges stay in UTC.
+
+<CliOutput
+  title="show ntp associations (example from the Arista documentation)"
+  output={eosAssoc}
+  notes={[
+    { line: 7, text: '`*`: the server selected for synchronization. `+`: good candidates, combined in the calculation. `-`: discarded.', match: '*4.ntp.arista.co', tone: 'emerald' },
+    { line: 4, text: '`st`: the server\'s stratum (2), so the switch will be at stratum 3.', match: ' 2 u', tone: 'violet' },
+    { line: 4, text: '`reach` in octal: 377 = the last 8 requests all got an answer.', match: '377', tone: 'sky' },
+    { line: 4, text: '`delay`, `offset` and `jitter` in milliseconds: travel time, clock offset and variability.', match: '-0.345', tone: 'amber' },
+  ]}
+/>
+
+`show ntp status` sums up the state: synchronized or not, to which server, at which stratum.
+
+### Cisco IOS
+
+```text title="Cisco IOS"
+ntp authentication-key 10 md5 <shared-key>
+ntp trusted-key 10
+ntp authenticate
+ntp source Loopback0
+ntp server 192.0.2.123 key 10 prefer
+ntp server 192.0.2.124 key 10
+ntp server 192.0.2.125 key 10
+clock timezone CET 1 0
+clock summer-time CEST recurring last Sun Mar 2:00 last Sun Oct 3:00
+```
+
+Checking: `show ntp status` and `show ntp associations`, with the same columns as on EOS.
+
+### Linux: chrony
+
+On servers, `chrony` has largely replaced the old `ntpd` daemon: it converges faster, handles virtual machines and
+intermittent connections better, and supports NTS.
+
+```text title="/etc/chrony/chrony.conf of an internal NTP server"
+server ntp-gnss1.corp.example iburst prefer   # local GNSS appliances
+server ntp-gnss2.corp.example iburst
+server time.cloudflare.com iburst nts        # authenticated external source
+server ptbtime1.ptb.de iburst
+allow 10.0.0.0/8                             # serves time to internal devices
+makestep 1.0 3                               # step allowed only on the first 3 measurements
+```
+
+What a chrony client sees, here querying two servers of the German national laboratory (PTB) directly, a Netnod
+server (Sweden) and Cloudflare:
+
+<CliOutput
+  title="chronyc sources"
+  output={chronySources}
+  notes={[
+    { line: 3, text: '`^*`: the selected source, here a PTB stratum 1 server. The client is therefore at stratum 2.', match: '^*', tone: 'emerald' },
+    { line: 4, text: '`^-`: a valid source, but not combined in the calculation. `^+` would mean a combined source, `^?` an unusable one.', match: '^-', tone: 'sky' },
+    { line: 3, text: '`Poll` 6: one request every 2⁶ = 64 seconds. `Reach` 77 in octal: the last 6 requests all got an answer.', match: '77', tone: 'violet' },
+    { line: 3, text: 'The last offset, adjusted for corrections made since; in brackets, the offset as measured; then the estimated error margin.', match: '+/-   18ms', tone: 'amber' },
+  ]}
+/>
+
+`chronyc tracking` gives the summary: the reference source, the client's stratum and its current offset.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| The device stays at stratum 16, "unsynchronised" | UDP 123 filtered, server in the wrong VRF, or a different authentication key |
+| One hour off on some devices | wrong time zone, or daylight saving handled by hand |
+| Logs from the same incident out of order | devices synchronized to different sources, or not at all |
+| A virtual machine's time keeps jumping | both the hypervisor and NTP correct the clock: keep only one |
+| Two sources, a time that oscillates | two disagreeing servers: add a third |
+| The NTP server is used for amplification attacks | an old `ntpd` exposed with monitoring queries (`monlist`): restrict allowed queries and filter access |
+| Everything shifts on the same day, everywhere | a wrong reference source (spoofed GNSS, single server) propagated to all: diversify references |
+
+## Your turn
+
+1. A switch shows `stratum 16`. List, in order, what you check.
+2. Why can a public stratum 1 server 150 ms away give worse time than an internal stratum 2 server 1 ms away?
+3. Your company has two sites and must stay autonomous if the Internet is cut. Propose an NTP architecture.
+4. A user can no longer log into Windows, and the domain controller reports a Kerberos error. What is the link with
+   this chapter?
+
+## Key takeaways
+
+- Logs, certificates, Kerberos and MFA depend on time: the whole network must be **synchronized**, on **UTC**.
+- NTP (UDP 123) measures **delay** and **offset** with four timestamps, queries **several servers** and corrects the
+  clock gently. Accuracy: a millisecond locally, a few tens across the Internet.
+- **Strata** count the steps from the reference clock: **0** for the reference (GNSS, atomic), **1** for the server
+  connected to it, **16** for "unsynchronized". They measure a distance, not a quality.
+- **Local**: GNSS appliances with an antenna and an oscillator (crystal or rubidium) for autonomy and accuracy, but
+  beware of **jamming** and **spoofing**. **External**: simple, but dependent on the Internet; prefer **NTS**.
+- Architecture: a few **internal servers**, **three or four sources** per client, authentication, and never a mix of
+  servers that smear leap seconds and servers that don't.

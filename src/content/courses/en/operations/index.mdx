@@ -1,9 +1,9 @@
 ---
 title: "Services and observability"
-description: "Serving, monitoring and keeping control of the network: DNS, DHCP and IPAM, management and out-of-band access, SNMP, syslog, NetFlow, telemetry and dashboards."
+description: "Serving, monitoring and keeping control of the network: DNS, DHCP and IPAM, time synchronization with NTP, management and out-of-band access, SNMP, syslog, NetFlow, telemetry and dashboards."
 pubDate: 2026-10-17
 level: intermediate
-tags: [operations, oob, management, monitoring, ddi, dns, dhcp, snmp, gnmi, prometheus, grafana]
+tags: [operations, oob, management, monitoring, ddi, dns, dhcp, ntp, snmp, gnmi, prometheus, grafana]
 vendor: [arista, infoblox]
 order: 0
 ---
@@ -29,12 +29,13 @@ see the degradation before users do.
 | Chapter | What you will be able to do |
 |---|---|
 | **DDI: DNS, DHCP and IPAM** | Understand the three services and why they are managed together |
+| **NTP: network time** | Understand strata, choose between a local (GNSS) and an external time reference, configure and check synchronization |
 | **Management and out-of-band access** | Separate the management network, set up real out-of-band access and secure it |
 | **SNMP, syslog and NetFlow** | Monitor device health, centralise logs and see who uses the bandwidth |
 | **Telemetry with gNMI and gNMIc** | Stream device state continuously instead of polling it |
 | **Prometheus and Grafana** | Store these metrics, build dashboards and alerts |
 
-The DDI and Management chapters can be read on their own. The three monitoring chapters build on each
+The DDI, NTP and Management chapters can be read on their own. The three monitoring chapters build on each
 other: SNMP and syslog, then the telemetry that goes beyond them, then its storage and visualisation.
 
 ## Prerequisites

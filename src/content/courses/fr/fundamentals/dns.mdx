@@ -1,0 +1,362 @@
+---
+title: "Le DNS : des noms aux adresses"
+description: "Comment un nom devient une adresse IP : l'arborescence des noms, la résolution récursive et le cache, puis les enregistrements A, AAAA, CNAME et PTR en détail, les zones inverses in-addr.arpa et ip6.arpa, la lecture d'une réponse dig et les pièges classiques."
+pubDate: 2026-10-18
+level: beginner
+tags: [dns, udp, ipv4, ipv6, troubleshooting]
+vendor: [arista, cisco]
+order: 12
+---
+
+export const digA = `; <<>> DiG 9.18.39-0ubuntu0.24.04.8-Ubuntu <<>> @192.0.2.53 srv-web01.corp.example A +nocookie
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 7812
+;; flags: qr aa rd; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+;; QUESTION SECTION:
+;srv-web01.corp.example.		IN	A
+
+;; ANSWER SECTION:
+srv-web01.corp.example.	3600	IN	A	192.0.2.80
+
+;; Query time: 0 msec
+;; SERVER: 192.0.2.53#53(192.0.2.53) (UDP)
+;; WHEN: Sun Oct 18 20:46:31 CEST 2026
+;; MSG SIZE  rcvd: 67`;
+
+export const digCname = `;; QUESTION SECTION:
+;intranet.corp.example.		IN	A
+
+;; ANSWER SECTION:
+intranet.corp.example.	3600	IN	CNAME	srv-web01.corp.example.
+srv-web01.corp.example.	3600	IN	A	192.0.2.80`;
+
+export const digPtr = `;; QUESTION SECTION:
+;80.2.0.192.in-addr.arpa.	IN	PTR
+
+;; ANSWER SECTION:
+80.2.0.192.in-addr.arpa. 3600	IN	PTR	srv-web01.corp.example.`;
+
+export const digNx = `;; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 2809
+corp.example.		300	IN	SOA	ns1.corp.example. hostmaster.corp.example. 2026101801 3600 900 1209600 300`;
+
+Sur un réseau, tout circule avec des **adresses IP**. Mais personne ne retient `192.0.2.80` ou
+`2001:db8::80` : on retient `intranet` ou `www.example.com`. Le <Term id="dns" /> (*Domain Name System*) fait
+la traduction, des milliards de fois par jour. Quand il tombe, presque tout s'arrête, alors que le réseau, lui,
+fonctionne parfaitement : c'est pourquoi « c'est toujours le DNS » est une blague récurrente chez les ingénieurs
+réseau. Ce chapitre explique comment il fonctionne, et détaille les quatre enregistrements que vous croiserez
+tous les jours : **A**, **AAAA**, **CNAME** et **PTR**.
+
+## Un annuaire en arborescence
+
+Les noms DNS forment un **arbre**, qui se lit de droite à gauche. Dans `www.example.com.`, il y a :
+
+- la **racine**, notée par le point final, souvent omis ;
+- le **domaine de premier niveau** (*TLD*) : `com`, `fr`, `net`, `org`…
+- le **domaine** : `example.com`, réservé auprès d'un registre ;
+- le **nom** lui-même : `www`.
+
+<Topology
+  width={760}
+  height={330}
+  nodes={[
+    { id: 'root', type: 'server', x: 380, y: 50, label: '.', sub: 'racine', tone: 'violet' },
+    { id: 'com', type: 'server', x: 170, y: 150, label: 'com' },
+    { id: 'fr', type: 'server', x: 380, y: 150, label: 'fr' },
+    { id: 'arpa', type: 'server', x: 590, y: 150, label: 'arpa', tone: 'amber' },
+    { id: 'ex', type: 'server', x: 170, y: 250, label: 'example.com', tone: 'emerald' },
+    { id: 'inaddr', type: 'server', x: 520, y: 250, label: 'in-addr.arpa', sub: 'inverse IPv4', tone: 'amber' },
+    { id: 'ip6', type: 'server', x: 680, y: 250, label: 'ip6.arpa', sub: 'inverse IPv6', tone: 'amber' },
+  ]}
+  links={[
+    { from: 'root', to: 'com' }, { from: 'root', to: 'fr' }, { from: 'root', to: 'arpa' },
+    { from: 'com', to: 'ex' }, { from: 'arpa', to: 'inaddr' }, { from: 'arpa', to: 'ip6' },
+  ]}
+  caption="L'arbre du DNS. Chaque niveau délègue le niveau inférieur à d'autres serveurs. La branche arpa sert à la résolution inverse, de l'adresse vers le nom."
+/>
+
+Personne ne gère l'arbre entier. Chaque niveau **délègue** le suivant : les serveurs racine savent quels
+serveurs gèrent `com`, ceux de `com` savent lesquels gèrent `example.com`, et ainsi de suite. Une portion de
+l'arbre gérée par les mêmes serveurs s'appelle une **zone**, et ces serveurs font **autorité** sur elle.
+
+Un nom complet, jusqu'à la racine, est un **FQDN** (*Fully Qualified Domain Name*). Dans les fichiers de zone,
+le point final compte, on le verra dans les pièges.
+
+## La résolution
+
+Le poste ne parcourt pas l'arbre lui-même. Il pose sa question à un **résolveur** (le serveur DNS reçu par
+<Term id="dhcp" />), qui fait tout le travail : il interroge la racine, puis les serveurs du TLD, puis ceux du
+domaine, et rapporte la réponse.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'pc', label: 'Poste' },
+    { id: 'r', label: 'Résolveur', tone: 'violet' },
+    { id: 'root', label: 'Racine', sub: '.' },
+    { id: 'tld', label: 'TLD', sub: 'com' },
+    { id: 'auth', label: 'Autorité', sub: 'example.com' },
+  ]}
+  messages={[
+    { from: 'pc', to: 'r', label: 'www.example.com A ?', tone: 'sky' },
+    { from: 'r', to: 'root', label: 'www.example.com A ?', tone: 'violet' },
+    { from: 'root', to: 'r', label: 'voir les serveurs de com', style: 'dashed' },
+    { from: 'r', to: 'tld', label: 'www.example.com A ?', tone: 'violet' },
+    { from: 'tld', to: 'r', label: 'voir les serveurs de example.com', style: 'dashed' },
+    { from: 'r', to: 'auth', label: 'www.example.com A ?', tone: 'violet' },
+    { from: 'auth', to: 'r', label: 'A 203.0.113.80, TTL 300', style: 'dashed', tone: 'emerald' },
+    { from: 'r', to: 'pc', label: 'A 203.0.113.80', style: 'dashed', tone: 'emerald' },
+  ]}
+  caption="Le poste pose une seule question ; le résolveur descend l'arbre, puis garde la réponse en cache pendant son TTL."
+/>
+
+Trois idées à retenir :
+
+- **Le cache** : chaque réponse porte une durée de vie, le **TTL** (*Time To Live*, en secondes). Le résolveur la
+  garde pendant ce temps, et le poste aussi. La question suivante est servie immédiatement, sans redescendre
+  l'arbre.
+- **Le transport** : le DNS utilise surtout <Term id="udp" /> sur le port **53**, une question et une réponse, sans
+  connexion. Il bascule en **TCP 53** pour les grosses réponses et les transferts de zone : les deux doivent passer
+  dans les firewalls. Les variantes chiffrées utilisent **DNS over TLS** (TCP 853) et **DNS over HTTPS** (443).
+- **Les réponses négatives** : « ce nom n'existe pas » (`NXDOMAIN`) est aussi mis en cache, pour une durée fixée par
+  la zone.
+
+<Callout type="note">
+Le résolveur et le serveur qui fait autorité sont deux rôles différents, même si un serveur d'entreprise fait
+souvent les deux pour les zones internes. Le chapitre [DDI : DNS, DHCP et IPAM](/formations/operations/ddi) montre
+comment les entreprises les organisent, avec le DNS interne et le split-horizon.
+</Callout>
+
+## Les enregistrements
+
+Une zone est une liste d'**enregistrements** (*resource records*). Chacun a un **nom**, un **TTL**, une **classe**
+(toujours `IN`, pour Internet), un **type** et une **valeur**. Voici la zone de l'exemple, au format de BIND, le
+serveur DNS le plus répandu :
+
+```text title="Fichier de zone corp.example"
+$TTL 3600
+@         IN SOA  ns1.corp.example. hostmaster.corp.example. ( 2026101801 3600 900 1209600 300 )
+          IN NS   ns1.corp.example.
+ns1       IN A    192.0.2.53
+srv-web01 IN A    192.0.2.80
+srv-web01 IN AAAA 2001:db8::80
+intranet  IN CNAME srv-web01
+```
+
+`@` désigne la zone elle-même. `SOA` et `NS` décrivent la zone et ses serveurs ; les quatre types suivants sont
+ceux qui nous intéressent.
+
+### A : un nom vers une adresse IPv4
+
+L'enregistrement **A** associe un nom à une adresse IPv4 (32 bits). C'est le plus courant.
+
+<CliOutput
+  title="dig @192.0.2.53 srv-web01.corp.example A"
+  output={digA}
+  notes={[
+    { line: 5, text: '`NOERROR` : la question a une réponse. `NXDOMAIN` voudrait dire que le nom n\'existe pas.', match: 'NOERROR', tone: 'emerald' },
+    { line: 6, text: '`aa` (*authoritative answer*) : la réponse vient d\'un serveur qui fait autorité, pas d\'un cache.', match: 'aa', tone: 'violet' },
+    { line: 15, text: 'La réponse : le nom, le TTL (3600 s, soit une heure de cache), la classe, le type et l\'adresse.', match: '192.0.2.80', tone: 'sky' },
+    { line: 18, text: 'Le serveur interrogé et le transport utilisé : UDP.', match: '(UDP)', tone: 'amber' },
+  ]}
+/>
+
+Un nom peut avoir **plusieurs** enregistrements A : le résolveur les renvoie tous, dans un ordre qui varie. C'est
+une forme très simple de répartition de charge, mais sans aucune vérification que les serveurs répondent.
+
+### AAAA : un nom vers une adresse IPv6
+
+**AAAA** (« quad A ») fait la même chose pour une adresse [IPv6](/formations/fundamentals/ipv6), quatre fois plus
+longue, d'où son nom. Un nom peut avoir à la fois un A et un AAAA : le poste demande souvent les deux, puis
+essaie IPv6 et IPv4 presque en même temps et garde la connexion qui répond la première (*Happy Eyeballs*).
+
+```text title="dig @192.0.2.53 srv-web01.corp.example AAAA (section réponse)"
+srv-web01.corp.example.	3600	IN	AAAA	2001:db8::80
+```
+
+<Callout type="field">
+Un AAAA publié pour un serveur qui n'est pas réellement joignable en IPv6 donne des lenteurs difficiles à
+comprendre : chaque connexion tente d'abord IPv6, échoue, puis bascule en IPv4. Ne publiez un AAAA que si le
+service fonctionne vraiment en IPv6, firewalls compris.
+</Callout>
+
+### CNAME : un alias vers un autre nom
+
+Un **CNAME** (*Canonical Name*) ne donne pas d'adresse : il dit « ce nom est un alias, demandez plutôt tel autre
+nom ». Le résolveur suit l'alias et renvoie les deux enregistrements :
+
+<CliOutput
+  title="dig @192.0.2.53 intranet.corp.example A (extrait)"
+  output={digCname}
+  notes={[
+    { line: 5, text: 'Le résolveur suit l\'alias : `intranet` renvoie vers `srv-web01`…', match: 'CNAME', tone: 'violet' },
+    { line: 6, text: '…dont il donne aussi l\'adresse, dans la même réponse.', match: '192.0.2.80', tone: 'sky' },
+  ]}
+/>
+
+L'intérêt : le jour où l'intranet déménage sur `srv-web02`, on change **un seul** enregistrement, et tous les
+alias suivent. Les services hébergés (CDN, SaaS, load balancers cloud) demandent souvent un CNAME vers leur propre
+nom, pour pouvoir changer leurs adresses sans vous prévenir.
+
+Trois règles, fixées par les RFC :
+
+1. **Un CNAME est seul** : un nom qui a un CNAME ne peut avoir **aucun autre** enregistrement (ni A, ni MX…).
+2. **Donc pas de CNAME à la racine de la zone** (`example.com` lui-même), qui a obligatoirement ses enregistrements
+   SOA et NS. Certains hébergeurs DNS contournent cette limite avec des enregistrements propriétaires (*ALIAS*,
+   *CNAME flattening*).
+3. **Pas de CNAME comme cible** d'un enregistrement MX ou NS, et évitez les chaînes d'alias : chaque étape ajoute une
+   requête.
+
+BIND refuse d'ailleurs de charger une zone qui viole la première règle :
+
+```text title="named-checkzone corp.example (intranet a un CNAME et un A)"
+dns_master_load: /z/bad.zone:8: intranet.corp.example: CNAME and other data
+zone corp.example/IN: loading from master file /z/bad.zone failed: CNAME and other data
+zone corp.example/IN: not loaded due to errors.
+```
+
+### PTR : d'une adresse vers un nom
+
+La résolution **inverse** répond à la question « quel est le nom de `192.0.2.80` ? ». Le DNS ne sait chercher que
+des noms : on transforme donc l'adresse en nom, sous la branche spéciale `arpa`.
+
+- En **IPv4**, on écrit les quatre octets **à l'envers**, suivis de `in-addr.arpa` : `192.0.2.80` devient
+  `80.2.0.192.in-addr.arpa`. À l'envers, parce que le DNS se lit de droite à gauche : le réseau `192.0.2` devient
+  une zone (`2.0.192.in-addr.arpa`), et chaque hôte un nom dedans.
+- En **IPv6**, chaque chiffre hexadécimal (*nibble*) de l'adresse complète devient un niveau, à l'envers, suivi de
+  `ip6.arpa` : 32 niveaux.
+
+L'enregistrement **PTR** (*pointer*) donne le nom :
+
+```text title="Fichier de zone 2.0.192.in-addr.arpa"
+53  IN PTR ns1.corp.example.
+80  IN PTR srv-web01.corp.example.
+```
+
+<CliOutput
+  title="dig @192.0.2.53 -x 192.0.2.80 (extrait)"
+  output={digPtr}
+  notes={[
+    { line: 2, text: '`dig -x` a fabriqué le nom inverse tout seul : les octets à l\'envers, puis `in-addr.arpa`.', match: '80.2.0.192.in-addr.arpa.', tone: 'amber' },
+    { line: 5, text: 'Le nom associé à l\'adresse.', match: 'srv-web01.corp.example.', tone: 'sky' },
+  ]}
+/>
+
+La zone inverse appartient à **celui qui gère les adresses**, pas à celui qui gère le domaine. Pour vos réseaux
+privés, c'est vous. Pour des adresses publiques, c'est l'opérateur ou l'hébergeur qui vous les a attribuées : il
+faut lui demander de créer le PTR, ou de vous déléguer la zone.
+
+Le PTR est souvent oublié, à tort. Il sert :
+
+- aux **journaux** et outils de supervision, qui affichent des noms plutôt que des adresses ;
+- à **traceroute**, qui affiche le nom de chaque routeur, souvent très parlant (ville, interface, opérateur) ;
+- aux **serveurs de messagerie**, qui rejettent souvent un courriel venant d'une adresse sans PTR, ou dont le PTR ne
+  correspond pas au nom annoncé ;
+- à certains services (SSH, bases de données), qui font une recherche inverse à chaque connexion : sans PTR, la
+  connexion attend plusieurs secondes avant d'aboutir.
+
+<Callout type="warning">
+Un PTR se déclare, il ne prouve rien : le propriétaire d'une adresse peut y écrire le nom qu'il veut, y compris
+celui d'une autre entreprise. Ne prenez pas une décision de sécurité sur un PTR seul. Les serveurs de messagerie
+vérifient donc dans les deux sens : le PTR donne un nom, et ce nom doit avoir un A ou un AAAA qui renvoie vers la
+même adresse.
+</Callout>
+
+### Les autres types en bref
+
+| Type | Rôle |
+|---|---|
+| **NS** | les serveurs qui font autorité sur la zone (et les délégations) |
+| **SOA** | les paramètres de la zone : numéro de série, temporisations, durée du cache négatif |
+| **MX** | les serveurs de messagerie du domaine |
+| **TXT** | du texte libre : vérifications de propriété, SPF, DKIM |
+| **SRV** | un service, son port et son serveur (Active Directory, VoIP) |
+
+## Le DNS sur les équipements réseau
+
+Un switch ou un routeur a lui aussi besoin d'un résolveur : pour joindre un serveur par son nom (NTP, syslog,
+TACACS+), et pour afficher des noms dans ses commandes.
+
+```text title="Arista EOS"
+ip name-server vrf MGMT 192.0.2.53
+dns domain corp.example
+```
+
+```text title="Cisco IOS"
+ip domain name corp.example
+ip name-server 192.0.2.53
+```
+
+<Callout type="field">
+Le classique sur Cisco IOS : une faute de frappe en mode exécution (`sh ip rout` tapé `shiproute`) est prise pour un
+nom d'équipement auquel se connecter. Le routeur tente de le résoudre et la console reste bloquée de longues
+secondes (`Translating "shiproute"...domain server (255.255.255.255)`). Sans serveur DNS configuré, désactivez la
+résolution avec `no ip domain lookup`.
+</Callout>
+
+## Les outils
+
+| Outil | Usage |
+|---|---|
+| `dig nom [type]` | l'outil de référence : réponse complète, TTL, drapeaux, serveur interrogé |
+| `dig @serveur nom` | interroger un serveur précis, plutôt que le résolveur du poste |
+| `dig -x adresse` | résolution inverse (PTR) |
+| `dig +short nom` | seulement la réponse, pour un script |
+| `dig +trace nom` | refaire la descente depuis la racine, étape par étape |
+| `nslookup nom [serveur]` | disponible partout, y compris sous Windows |
+| `resolvectl query nom` | Linux avec systemd : la résolution telle que la voit le système |
+
+`dig @serveur` est précieux pour dépanner : si le serveur qui fait autorité donne la bonne réponse mais pas le
+résolveur, c'est un problème de **cache** ; si les deux se trompent, c'est la **zone**.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Après un changement d'adresse, certains postes vont encore sur l'ancienne | le **TTL** : l'ancienne réponse est en cache. Baissez le TTL quelques jours **avant** une migration |
+| Un nom tout juste créé « n'existe pas » pour certains | le **cache négatif** : un `NXDOMAIN` reçu avant la création est gardé (durée fixée dans le SOA) |
+| Un enregistrement répond `srv-web01.corp.example.corp.example` | le **point final** oublié dans un fichier de zone : le nom est complété par celui de la zone |
+| La zone ne se charge plus après un ajout | un **CNAME** à côté d'autres enregistrements |
+| Connexions SSH ou applications lentes à s'établir, puis normales | **PTR manquant** : le serveur attend la réponse inverse avant d'accepter |
+| Le nom se résout avec `dig` mais pas dans l'application | le fichier **hosts** du poste, ou un cache local, passe avant le DNS |
+| Les petites réponses passent, les grandes échouent | **TCP 53** bloqué, ou des fragments UDP filtrés par un firewall |
+
+Le point final, vérifié avec BIND : `www IN CNAME srv-web01.corp.example`, sans le point, est compris comme
+`srv-web01.corp.example.corp.example.`.
+
+```text title="named-compilezone : la zone telle que BIND l'a comprise"
+www.corp.example.			      3600 IN CNAME	srv-web01.corp.example.corp.example.
+```
+
+Et une question sur un nom inexistant : le statut est `NXDOMAIN`, et le SOA de la zone accompagne la réponse. Son
+dernier champ (`300`) est la durée pendant laquelle cette absence sera mise en cache.
+
+<CliOutput title="dig @192.0.2.53 nexiste-pas.corp.example (extrait)" output={digNx} />
+
+## À vous de jouer
+
+1. Quel nom faut-il interroger pour connaître le PTR de `10.20.30.40` ? Dans quelle zone se trouve-t-il ?
+2. Pourquoi ne peut-on pas mettre un CNAME sur `example.com`, alors qu'on peut le faire sur `www.example.com` ?
+3. Un service doit changer d'adresse samedi. Le TTL de son enregistrement A est de 86 400 secondes. Que faites-vous,
+   et quand ?
+4. `dig intranet.corp.example` renvoie la bonne adresse, mais `dig @192.0.2.10 intranet.corp.example` (le résolveur
+   des postes) renvoie l'ancienne. Où est le problème ?
+
+## À retenir
+
+- Le **DNS** traduit des noms en adresses. Les noms forment un **arbre** délégué par **zones** ; chaque zone a ses
+  serveurs qui font **autorité**.
+- Le poste interroge un **résolveur**, qui descend l'arbre et garde les réponses en **cache** pendant leur **TTL**.
+  Transport : **UDP 53**, et **TCP 53** pour les grosses réponses.
+- **A** : nom vers IPv4. **AAAA** : nom vers IPv6. **CNAME** : alias vers un autre nom, **seul** sur son nom, jamais à la
+  racine de la zone. **PTR** : adresse vers nom, dans `in-addr.arpa` (octets à l'envers) ou `ip6.arpa`.
+- La zone inverse appartient à **celui qui gère les adresses**.
+- Pour dépanner : `dig`, `dig @serveur`, `dig -x`, et toujours un œil sur le **TTL**.
+
+Prochain chapitre : **traceroute**, pour suivre le chemin d'un paquet, et comprendre pourquoi il ne dit pas toujours
+la vérité.

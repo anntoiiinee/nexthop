@@ -1,0 +1,319 @@
+---
+title: "NTP : l'heure du réseau"
+description: "Pourquoi tout le réseau doit avoir la même heure, comment NTP la mesure et la corrige, les strates de 0 à 16, l'heure de référence locale (boîtier GNSS, antenne, oscillateur atomique) ou externe (serveurs publics, NTS), l'architecture recommandée, la configuration sur Arista EOS, Cisco IOS et Linux, et les pièges classiques."
+pubDate: 2026-10-18
+level: intermediate
+tags: [ntp, nts, ptp, gnss, time, operations]
+vendor: [arista, cisco]
+order: 2
+---
+
+export const eosAssoc = `switch> show ntp associations
+     remote          refid      st t when  poll reach   delay   offset  jitter
+==============================================================================
++l.ntp.arista.co 125.157.10.11   2 u  539  1024  377  121.748   -0.345   0.893
+-3.ntp.arista.co 127.31.152.34   2 u  868  1024  377  101.671    2.434   1.529
++2.ntp.arista.co 176.131.12.185  2 u  676  1024  377  116.505     0.03   0.768
+*4.ntp.arista.co 120.181.192.192 2 u  696  1024  377   48.431   -0.416    0.15`;
+
+export const chronySources = `MS Name/IP address         Stratum Poll Reach LastRx Last sample
+===============================================================================
+^* ptbtime1.ptb.de               1   6    77    14  -4002us[+6813us] +/-   18ms
+^- ptbtime2.ptb.de               1   6    77    14  -5968us[-5968us] +/-   14ms
+^- sth1.ntp.netnod.se            1   6    77    14  -8638us[-8638us] +/-   27ms
+^- time.cloudflare.com           3   6    77    15    -12ms[ -850us] +/-   15ms`;
+
+Une alerte part du firewall à `14:02:11`, le switch journalise une coupure de lien à `14:03:52`, le serveur
+d'authentification signale des échecs à `13:58:40`. Dans quel ordre les choses se sont-elles passées ? Impossible à
+dire si les horloges ne sont pas d'accord. Le <Term id="ntp" /> (*Network Time Protocol*) donne à tous les
+équipements la **même heure**, à quelques millisecondes près. C'est l'un des services les plus discrets du réseau,
+et l'un de ceux dont tous les autres dépendent.
+
+## Pourquoi l'heure est critique
+
+| Ce qui dépend de l'heure | Ce qui se passe si elle est fausse |
+|---|---|
+| **Journaux** (syslog, firewall, TACACS+) | impossible de reconstituer un incident entre plusieurs équipements |
+| **Certificats** (TLS, 802.1X, VPN IPsec) | un certificat pas encore valide ou déjà expiré : connexions refusées |
+| **Kerberos** (Active Directory) | au-delà de 5 minutes d'écart par défaut, l'authentification échoue |
+| **Codes à usage unique** (MFA, TOTP) | codes refusés, utilisateurs bloqués |
+| **Supervision et télémétrie** | des courbes décalées, des corrélations fausses |
+| **Bases de données, stockage distribué** | conflits d'écriture, réplications qui échouent |
+
+Certains secteurs ont même des obligations réglementaires de précision : la finance (horodatage des ordres de
+bourse), les télécoms (synchronisation des antennes 4G et 5G), l'audiovisuel.
+
+## Comment NTP mesure l'heure
+
+Un client NTP interroge un serveur en <Term id="udp" /> sur le port **123**. L'échange contient **quatre
+horodatages** :
+
+<Sequence
+  width={640}
+  actors={[
+    { id: 'c', label: 'Client' },
+    { id: 's', label: 'Serveur NTP', tone: 'emerald' },
+  ]}
+  messages={[
+    { from: 'c', to: 's', label: 'requête, envoyée à T1', tone: 'sky' },
+    { note: 'le serveur la reçoit à T2 et répond à T3 (son horloge)', tone: 'slate' },
+    { from: 's', to: 'c', label: 'réponse avec T1, T2, T3', style: 'dashed', tone: 'emerald' },
+    { note: 'le client la reçoit à T4 (son horloge)', tone: 'slate' },
+  ]}
+  caption="Quatre horodatages suffisent pour mesurer à la fois le temps de trajet et l'écart entre les deux horloges."
+/>
+
+Le client en déduit :
+
+- le **délai** aller-retour du réseau : `(T4 − T1) − (T3 − T2)`, le temps total moins le temps passé dans le serveur ;
+- son **décalage** (*offset*) par rapport au serveur : `((T2 − T1) + (T3 − T4)) / 2`.
+
+Ce calcul suppose que l'aller et le retour durent autant. C'est la limite de NTP : sur un réseau local, la précision
+est de l'ordre de la milliseconde, voire mieux ; à travers Internet, de quelques millisecondes à quelques dizaines.
+Un chemin **asymétrique** fausse le résultat de la moitié de la différence.
+
+Le client ne fait pas confiance à un seul échange. Il interroge régulièrement (toutes les 64 à 1 024 secondes),
+interroge **plusieurs serveurs**, écarte ceux qui sont incohérents, et corrige son horloge **en douceur** : il
+l'accélère ou la ralentit légèrement, plutôt que de la faire sauter, pour que les journaux restent dans l'ordre.
+Seul un écart important, au démarrage, est corrigé d'un coup.
+
+## Les strates
+
+NTP organise les sources de temps en niveaux, les **strates** (*stratum*) :
+
+<Topology
+  width={760}
+  height={390}
+  nodes={[
+    { id: 'gnss', type: 'server', x: 150, y: 50, label: 'GNSS', sub: 'horloges atomiques des satellites', tone: 'violet' },
+    { id: 'atom', type: 'server', x: 380, y: 50, label: 'Horloge atomique', sub: 'césium, rubidium', tone: 'violet' },
+    { id: 'radio', type: 'server', x: 610, y: 50, label: 'Signal radio', sub: 'DCF77…', tone: 'violet' },
+    { id: 's1a', type: 'server', x: 260, y: 160, label: 'Serveur strate 1', sub: 'boîtier GNSS', tone: 'emerald' },
+    { id: 's1b', type: 'server', x: 500, y: 160, label: 'Serveur strate 1', sub: 'laboratoire national', tone: 'emerald' },
+    { id: 's2a', type: 'server', x: 260, y: 260, label: 'Strate 2', sub: 'serveurs NTP internes', tone: 'sky' },
+    { id: 's2b', type: 'server', x: 500, y: 260, label: 'Strate 2', sub: 'serveurs publics' , tone: 'sky' },
+    { id: 's3', type: 'switch', x: 380, y: 330, label: 'Strate 3', sub: 'switches, routeurs, serveurs' },
+  ]}
+  links={[
+    { from: 'gnss', to: 's1a', style: 'dashed' }, { from: 'atom', to: 's1b', style: 'dashed' }, { from: 'radio', to: 's1b', style: 'dashed' },
+    { from: 's1a', to: 's2a' }, { from: 's1b', to: 's2b' }, { from: 's1b', to: 's2a' },
+    { from: 's2a', to: 's3' }, { from: 's2b', to: 's3' },
+  ]}
+  caption="Les strates : le chiffre compte les étapes depuis l'horloge de référence. Chaque niveau se synchronise sur le précédent."
+/>
+
+| Strate | Ce que c'est |
+|---|---|
+| **0** | l'**horloge de référence** elle-même : récepteur GNSS, horloge atomique, signal radio. Elle n'est pas sur le réseau |
+| **1** | un serveur **directement relié** à une horloge de strate 0 |
+| **2** | un serveur synchronisé sur un serveur de strate 1 |
+| **3 à 15** | chaque niveau se synchronise sur le précédent |
+| **16** | **non synchronisé** : l'équipement n'a aucune source valide |
+
+La strate mesure une **distance**, pas une **qualité** : un serveur de strate 2 sur votre réseau local donne
+souvent une meilleure heure qu'un serveur de strate 1 à l'autre bout d'Internet, parce que le délai et l'asymétrie
+du chemin comptent plus que le rang.
+
+## L'heure de référence locale : le boîtier GNSS
+
+Pour ne dépendre de personne, une entreprise installe ses propres serveurs de **strate 1** : des **boîtiers de
+temps** (Meinberg, Microchip, Oscilloquartz…), reliés à une **antenne GNSS** sur le toit.
+
+- **L'antenne** reçoit les signaux des constellations de satellites (GPS, Galileo, GLONASS, BeiDou). Chaque
+  satellite embarque des **horloges atomiques**, et son signal porte l'heure : c'est elle que le boîtier récupère.
+  L'antenne a besoin d'une **vue dégagée du ciel**, d'un câble de longueur limitée, et d'une protection contre la
+  foudre.
+- **L'oscillateur interne** garde l'heure quand le signal disparaît (antenne en panne, brouillage) : c'est le
+  **maintien** (*holdover*). Un oscillateur à quartz thermostaté (OCXO) dérive de quelques microsecondes à quelques
+  millisecondes par jour selon sa qualité. Un **oscillateur atomique au rubidium**, en option sur les boîtiers haut
+  de gamme, ne dérive que de l'ordre de la microseconde par jour.
+- **Les sorties** : NTP pour tout le monde, et souvent **PTP** (*Precision Time Protocol*, IEEE 1588) pour les
+  besoins de précision inférieure à la microseconde (télécoms, finance, audiovisuel). PTP demande des switches qui le
+  prennent en charge.
+
+On en installe **au moins deux**, idéalement sur deux sites, avec des antennes séparées.
+
+<Callout type="warning">
+Le signal GNSS est très faible, et donc facile à **brouiller** (*jamming*) ou, pire, à **leurrer** (*spoofing*) : un
+émetteur proche diffuse un faux signal et décale l'heure de tous vos équipements. Choisissez des boîtiers qui
+détectent ces attaques, comparez-les à au moins une source indépendante (un autre site, des serveurs externes), et
+surveillez l'état de leur réception GNSS.
+</Callout>
+
+## L'heure de référence externe : les serveurs publics
+
+L'alternative, bien plus simple, est de se synchroniser sur des serveurs **sur Internet** :
+
+| Source | Particularité |
+|---|---|
+| **pool.ntp.org** | des milliers de serveurs de bénévoles, regroupés par pays (`fr.pool.ntp.org`) ; idéal pour un poste ou un petit site |
+| **Laboratoires nationaux** | des serveurs de strate 1 adossés aux horloges atomiques de référence d'un pays |
+| **Fournisseurs** | Cloudflare (`time.cloudflare.com`, avec NTS), les opérateurs, les clouds pour leurs machines |
+
+L'avantage : rien à installer. Les limites :
+
+- une **dépendance à Internet** : sans accès, plus de nouvelle référence (l'horloge tient, puis dérive) ;
+- **UDP 123** doit être autorisé en sortie, au moins pour vos serveurs NTP internes ;
+- NTP classique n'est **pas authentifié** : une réponse falsifiée peut décaler l'heure. **NTS** (*Network Time
+  Security*, RFC 8915) ajoute une authentification par TLS ; Cloudflare, Netnod et plusieurs laboratoires
+  nationaux le proposent.
+
+<Callout type="note">
+Certains fournisseurs (Google, Amazon) **lissent** les secondes intercalaires : au lieu d'ajouter une seconde d'un
+coup, ils ralentissent leur horloge pendant plusieurs heures (*leap smear*). Ne mélangez jamais, sur un même client,
+des serveurs qui lissent et des serveurs qui ne lissent pas : pendant le lissage, ils sont en désaccord de jusqu'à
+une demi-seconde.
+</Callout>
+
+## L'architecture recommandée
+
+<Topology
+  width={760}
+  height={375}
+  groups={[{ x: 170, y: 125, w: 420, h: 115, label: 'Serveurs NTP internes', tone: 'sky' }]}
+  nodes={[
+    { id: 'gps1', type: 'server', x: 150, y: 50, label: 'Boîtier GNSS', sub: 'site A · strate 1', tone: 'emerald' },
+    { id: 'gps2', type: 'server', x: 380, y: 50, label: 'Boîtier GNSS', sub: 'site B · strate 1', tone: 'emerald' },
+    { id: 'ext', type: 'server', x: 610, y: 50, label: 'Sources externes', sub: 'NTS', tone: 'violet' },
+    { id: 'n1', type: 'server', x: 250, y: 175, label: 'ntp1', sub: 'strate 2' },
+    { id: 'n2', type: 'server', x: 510, y: 175, label: 'ntp2', sub: 'strate 2' },
+    { id: 'sw', type: 'switch', x: 150, y: 300, label: 'Switches', sub: 'routeurs, firewalls' },
+    { id: 'srv', type: 'server', x: 380, y: 300, label: 'Serveurs', sub: 'contrôleurs AD' },
+    { id: 'vm', type: 'host', x: 610, y: 300, label: 'Postes', sub: 'via le domaine AD' },
+  ]}
+  links={[
+    { from: 'gps1', to: 'n1' }, { from: 'gps1', to: 'n2' }, { from: 'gps2', to: 'n1' }, { from: 'gps2', to: 'n2' },
+    { from: 'ext', to: 'n1', style: 'dashed' }, { from: 'ext', to: 'n2', style: 'dashed' },
+    { from: 'n1', to: 'sw' }, { from: 'n2', to: 'sw' }, { from: 'n1', to: 'srv' }, { from: 'n2', to: 'srv' },
+    { from: 'srv', to: 'vm', style: 'dashed' },
+  ]}
+  caption="Une hiérarchie simple : des références (locales et externes), quelques serveurs internes, et tout le reste qui se synchronise sur eux."
+/>
+
+- **Quelques serveurs NTP internes** (deux à quatre) se synchronisent sur les références : boîtiers GNSS,
+  sources externes, ou les deux. Ce sont les seuls à sortir vers Internet.
+- **Tous les autres équipements** se synchronisent sur ces serveurs internes, jamais directement sur Internet.
+- Chaque client a **trois ou quatre sources**, pas deux : avec deux sources en désaccord, il ne peut pas savoir
+  laquelle se trompe ; avec trois ou plus, la majorité l'emporte.
+- **Tout le monde en UTC**, dans les journaux comme dans les horloges des équipements : on affiche l'heure locale
+  seulement pour les humains. Les changements d'heure d'été disparaissent des journaux.
+- Dans un domaine **Active Directory**, le contrôleur qui porte le rôle d'émulateur PDC se synchronise sur les
+  serveurs NTP internes ; les postes suivent la hiérarchie du domaine.
+
+## La configuration
+
+### Arista EOS
+
+```text title="Arista EOS"
+ntp server vrf MGMT 192.0.2.123 prefer iburst key 10
+ntp server vrf MGMT 192.0.2.124 iburst key 10
+ntp server vrf MGMT 192.0.2.125 iburst key 10
+ntp local-interface vrf MGMT Management1
+ntp authentication-key 10 sha1 <clé-partagée>
+ntp trusted-key 10
+ntp authenticate
+clock timezone Europe/Paris
+```
+
+- `vrf MGMT` : les serveurs sont joints par le [réseau de management](/formations/operations/oob). Sur EOS, tous les
+  serveurs NTP doivent être dans la **même VRF**.
+- `iburst` : envoie une rafale de requêtes au démarrage, pour se synchroniser en quelques secondes plutôt qu'en
+  quelques minutes.
+- `prefer` : à qualité égale, ce serveur est choisi en priorité.
+- `key` et `ntp authenticate` : les réponses doivent être signées avec la clé partagée, configurée aussi sur le
+  serveur. EOS accepte `md5` et `sha1`, et la documentation précise que la clé est stockée **en clair** dans la
+  configuration : protégez les sauvegardes en conséquence.
+- `clock timezone` change l'**affichage** ; l'horloge et les échanges NTP restent en UTC.
+
+<CliOutput
+  title="show ntp associations (exemple de la documentation Arista)"
+  output={eosAssoc}
+  notes={[
+    { line: 7, text: '`*` : le serveur retenu pour se synchroniser. `+` : bons candidats, combinés au calcul. `-` : écarté.', match: '*4.ntp.arista.co', tone: 'emerald' },
+    { line: 4, text: '`st` : la strate du serveur (2), donc le switch sera en strate 3.', match: ' 2 u', tone: 'violet' },
+    { line: 4, text: '`reach` en octal : 377 = les 8 dernières requêtes ont toutes reçu une réponse.', match: '377', tone: 'sky' },
+    { line: 4, text: '`delay`, `offset` et `jitter` en millisecondes : trajet, écart d\'horloge et variabilité.', match: '-0.345', tone: 'amber' },
+  ]}
+/>
+
+`show ntp status` résume l'état : synchronisé ou non, sur quel serveur, à quelle strate.
+
+### Cisco IOS
+
+```text title="Cisco IOS"
+ntp authentication-key 10 md5 <clé-partagée>
+ntp trusted-key 10
+ntp authenticate
+ntp source Loopback0
+ntp server 192.0.2.123 key 10 prefer
+ntp server 192.0.2.124 key 10
+ntp server 192.0.2.125 key 10
+clock timezone CET 1 0
+clock summer-time CEST recurring last Sun Mar 2:00 last Sun Oct 3:00
+```
+
+Vérification : `show ntp status` et `show ntp associations`, avec les mêmes colonnes que sur EOS.
+
+### Linux : chrony
+
+Sur les serveurs, `chrony` a largement remplacé l'ancien démon `ntpd` : il converge plus vite, gère mieux les
+machines virtuelles et les connexions intermittentes, et prend en charge NTS.
+
+```text title="/etc/chrony/chrony.conf d'un serveur NTP interne"
+server ntp-gnss1.corp.example iburst prefer   # boîtiers GNSS locaux
+server ntp-gnss2.corp.example iburst
+server time.cloudflare.com iburst nts        # source externe authentifiée
+server ptbtime1.ptb.de iburst
+allow 10.0.0.0/8                             # sert l'heure aux équipements internes
+makestep 1.0 3                               # saut autorisé seulement aux 3 premières mesures
+```
+
+Ce qu'un client chrony voit, interrogeant ici directement deux serveurs du laboratoire national allemand (PTB), un
+serveur de Netnod (Suède) et Cloudflare :
+
+<CliOutput
+  title="chronyc sources"
+  output={chronySources}
+  notes={[
+    { line: 3, text: '`^*` : la source retenue, ici un serveur de strate 1 de la PTB. Le client passe donc en strate 2.', match: '^*', tone: 'emerald' },
+    { line: 4, text: '`^-` : source valide, mais pas combinée au calcul. `^+` signalerait une source combinée, `^?` une source inutilisable.', match: '^-', tone: 'sky' },
+    { line: 3, text: '`Poll` 6 : une requête toutes les 2⁶ = 64 secondes. `Reach` 77 en octal : les 6 dernières requêtes ont toutes eu une réponse.', match: '77', tone: 'violet' },
+    { line: 3, text: 'Le dernier décalage, ajusté des corrections faites depuis ; entre crochets, le décalage tel que mesuré ; puis la marge d\'erreur estimée.', match: '+/-   18ms', tone: 'amber' },
+  ]}
+/>
+
+`chronyc tracking` donne la synthèse : la source de référence, la strate du client et son décalage courant.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| L'équipement reste en strate 16, « unsynchronised » | UDP 123 filtré, serveur dans la mauvaise VRF, ou clé d'authentification différente |
+| Une heure d'écart sur certains équipements | fuseau horaire mal configuré, ou heure d'été gérée à la main |
+| Des journaux d'un même incident dans le désordre | équipements synchronisés sur des sources différentes, ou pas du tout |
+| L'heure d'une machine virtuelle saute régulièrement | l'hyperviseur et NTP corrigent tous les deux l'horloge : n'en garder qu'un |
+| Deux sources, une heure qui oscille | deux serveurs en désaccord : ajoutez-en un troisième |
+| Le serveur NTP sert à des attaques par amplification | ancien `ntpd` exposé avec les requêtes de supervision (`monlist`) : restreignez les requêtes autorisées et filtrez l'accès |
+| Tout se décale le même jour, partout | une source de référence fausse (GNSS leurré, serveur unique) propagée à tous : diversifiez les références |
+
+## À vous de jouer
+
+1. Un switch affiche `stratum 16`. Listez, dans l'ordre, ce que vous vérifiez.
+2. Pourquoi un serveur public de strate 1 à 150 ms peut-il donner une moins bonne heure qu'un serveur interne de
+   strate 2 à 1 ms ?
+3. Votre entreprise a deux sites et une exigence d'autonomie en cas de coupure Internet. Proposez une architecture
+   NTP.
+4. Un utilisateur ne peut plus ouvrir de session Windows, et le contrôleur de domaine signale une erreur Kerberos.
+   Quel est le lien avec ce chapitre ?
+
+## À retenir
+
+- Journaux, certificats, Kerberos et MFA dépendent de l'heure : tout le réseau doit être **synchronisé**, en **UTC**.
+- NTP (UDP 123) mesure **délai** et **décalage** avec quatre horodatages, interroge **plusieurs serveurs** et corrige
+  l'horloge en douceur. Précision : la milliseconde en local, quelques dizaines à travers Internet.
+- Les **strates** comptent les étapes depuis l'horloge de référence : **0** pour la référence (GNSS, atomique), **1**
+  pour le serveur qui y est relié, **16** pour « non synchronisé ». Elles mesurent une distance, pas une qualité.
+- **Local** : boîtiers GNSS avec antenne et oscillateur (quartz ou rubidium) pour l'autonomie et la précision, mais
+  attention au **brouillage** et au **leurrage**. **Externe** : simple, mais dépendant d'Internet ; préférez **NTS**.
+- Architecture : quelques **serveurs internes**, **trois ou quatre sources** par client, authentification, et jamais de
+  mélange entre serveurs qui lissent les secondes intercalaires et serveurs qui ne lissent pas.

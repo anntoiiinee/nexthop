@@ -1,0 +1,322 @@
+---
+title: "Secrets with HashiCorp Vault"
+description: "Storing automation secrets in a central vault: why Ansible Vault is no longer enough, how HashiCorp Vault works (sealing, auth methods, policies, secrets engines, audit), the KV v2 engine and its versions, access from Python, Ansible and a pipeline, and keeping the vault available during a network outage."
+pubDate: 2026-10-18
+level: intermediate
+tags: [vault, secrets, security, automation, python, ansible, cicd]
+vendor: [arista]
+order: 4
+---
+
+export const kvGet = `=========== Secret Path ===========
+secret/data/netops/breakglass/leaf1
+
+======= Metadata =======
+Key                Value
+---                -----
+created_time       2026-10-18T18:36:29.899944496Z
+custom_metadata    <nil>
+deletion_time      n/a
+destroyed          false
+version            8
+
+====== Data ======
+Key         Value
+---         -----
+password    ChmVKOr3N4XB14MPI2H=vEyAOhv=Mo21
+status      active
+username    nh-breakglass`;
+
+export const auditLine = `{
+  "time": "2026-10-18T18:36:43.069962182Z",
+  "type": "response",
+  "auth": {
+    "display_name": "userpass-alice",
+    "policies": ["default", "netops-breakglass-read"]
+  },
+  "request": {
+    "operation": "read",
+    "path": "secret/data/netops/breakglass/leaf1",
+    "remote_address": "127.0.0.1"
+  },
+  "response": {
+    "data": {
+      "data": {
+        "password": "hmac-sha256:58d5d7d6eab0b7f7526f323e8302041ff077403565a13ce85b018a39e33df9dc",
+        …
+      }
+    }
+  }
+}`;
+
+Automation handles secrets all the time: the scripts' service account password, <Term id="tacacs" /> keys,
+SNMPv3 credentials, <Term id="api" /> tokens for NetBox or GitLab, break-glass account passwords. In the
+[Ansible](/en/courses/automation/ansible) chapter, we stored them in a file encrypted with **Ansible Vault**. It is a
+good start, but it quickly shows its limits as the team and the number of scripts grow. This chapter introduces
+**HashiCorp Vault**, the most widespread secrets vault, and prepares the next chapter, which uses it for
+break-glass account rotation.
+
+## The limits of an encrypted file
+
+Ansible Vault encrypts a file with **a single password**. Everything else follows from that:
+
+- **All or nothing**: whoever knows the file's password reads **all** the secrets in it. You can't give the
+  backup script the service account without also giving it the break-glass passwords.
+- **No record of reads**: Git shows who **changed** the file, but nobody knows who **read** it.
+- **A departure is costly**: the file's password is shared. When a colleague leaves, it must be changed
+  (`ansible-vault rekey`), then handed out again to everyone and to every pipeline.
+- **Frozen secrets**: a password stays valid until someone remembers to change it.
+
+## What a secrets vault does
+
+**HashiCorp Vault** is a server that keeps secrets and only hands them to those entitled to them, when they need
+them. You query it through its HTTPS API, its `vault` command line or its web interface.
+
+<Topology
+  width={760}
+  height={330}
+  groups={[{ x: 300, y: 30, w: 220, h: 280, label: 'Vault', tone: 'amber' }]}
+  nodes={[
+    { id: 'eng', type: 'host', x: 100, y: 80, label: 'Engineer', sub: 'SSO + MFA' },
+    { id: 'ci', type: 'server', x: 100, y: 170, label: 'Pipeline', sub: 'AppRole or JWT' },
+    { id: 'script', type: 'host', x: 100, y: 270, label: 'Script', sub: 'short-lived token' },
+    { id: 'auth', type: 'server', x: 410, y: 170, label: 'Authentication', sub: 'who are you?', tone: 'sky' },
+    { id: 'pol', type: 'server', x: 410, y: 75, label: 'Policies', sub: 'what may you read?', tone: 'violet' },
+    { id: 'kv', type: 'server', x: 410, y: 265, label: 'Secrets engines', sub: 'KV, PKI, SSH…', tone: 'emerald' },
+    { id: 'audit', type: 'server', x: 650, y: 170, label: 'Audit log', sub: 'every request', tone: 'rose' },
+  ]}
+  links={[
+    { from: 'eng', to: 'auth' }, { from: 'ci', to: 'auth' }, { from: 'script', to: 'auth' },
+    { from: 'auth', to: 'pol' }, { from: 'auth', to: 'kv' },
+    { from: 'auth', to: 'audit', style: 'dashed', tone: 'rose' },
+  ]}
+  caption="Each client proves its identity, receives a token limited by policies, and every request is logged."
+/>
+
+A request always follows the same path:
+
+1. The client **authenticates** with a method suited to what it is: a human through the company directory, a
+   pipeline through its job identity, a server through its role.
+2. Vault gives it a short-lived **token**, with **policies** attached.
+3. With that token, the client reads or writes secrets, within the limits of its policies.
+4. Every request, accepted or denied, is written to the **audit log**.
+
+| | Ansible Vault | HashiCorp Vault |
+|---|---|---|
+| Form | an encrypted file, in the Git repository | a server, queried through an API |
+| Access | one shared password, all or nothing | one identity per person or script, permissions per path |
+| Traceability | none for reads | every read and every write logged |
+| A colleague leaves | change and redistribute the file's password | disable their directory account |
+| History | Git's | the versions of each secret |
+| Secrets generated on demand | no | yes: certificates, temporary credentials |
+| Operations | nothing to install | a critical service to keep available and back up |
+
+<Callout type="note">
+Ansible Vault still has its place: for a lab, a small team, or the few secrets needed to **bootstrap** (access to
+the vault itself), it is simple and good enough. HashiCorp Vault becomes worthwhile once several teams, several
+pipelines and audit requirements come into play.
+</Callout>
+
+## Key concepts
+
+### Sealed and unsealed
+
+Vault encrypts everything it writes to disk. When it starts, it is **sealed**: it doesn't know the key that
+decrypts its data, and refuses every request. To **unseal** it, you must provide a minimum number of **unseal
+keys**, handed to different people at initialization (by default, 3 shares out of 5, using Shamir's secret
+sharing). Nobody holds the vault's key alone.
+
+In production, **auto-unseal** is common: the key is protected by an external key service (a cloud KMS, an HSM),
+and Vault restarts without human intervention.
+
+### Auth methods
+
+| Who | Method | Why |
+|---|---|---|
+| An engineer | **OIDC** (company SSO) or **LDAP** | a named account, with <Term id="mfa" />, disabled automatically when they leave |
+| A GitLab pipeline | **JWT** | the job presents a token signed by GitLab: no secret to store in the pipeline |
+| A script on a server | **AppRole** | a `role_id` (the identifier) and a `secret_id` (the password), revocable |
+| A Kubernetes container | **Kubernetes** | the pod's service account |
+
+The token obtained has a **lifetime** (`ttl`): a few minutes for a script, a few hours for a human. A stolen token
+quickly becomes useless.
+
+### Policies
+
+A policy lists **paths** and what you may do there. Anything not allowed is **denied by default**. Here is the
+rotation script's policy, used in the next chapter:
+
+<CodeFile lab="netops" file="vault/netops-rotation.hcl" />
+
+Engineers get a **read-only** policy on the same paths: they can retrieve a break-glass password when needed,
+not change it.
+
+### Secrets engines
+
+Vault keeps secrets in **secrets engines**, mounted on paths:
+
+| Engine | What it does | Network use |
+|---|---|---|
+| **KV v2** | stores key-value pairs, **with a version history** | passwords, TACACS+ keys, API tokens |
+| **PKI** | a certificate authority issuing certificates on demand | certificates for devices' eAPI, gNMI, RESTCONF APIs |
+| **SSH** | signs SSH keys with a short validity | SSH access to servers without permanent keys |
+| **Databases**, **AWS**… | creates temporary credentials on each request, then deletes them | monitoring tool accounts, cloud access |
+
+The last two are **dynamic secrets**: the secret only exists for as long as it is used, so there is nothing left
+to rotate. Network devices can't ask Vault for a password, so they usually stay on **static** secrets in KV v2,
+changed regularly by a script.
+
+### The audit log
+
+Every request is logged, with the caller's identity, the path and the operation. Sensitive values are replaced by
+their **hash** (HMAC): the log tells you that Alice read leaf1's password, without containing that password.
+
+<CliOutput
+  title="Lab audit log: Alice reads leaf1's break-glass password (excerpt)"
+  output={auditLine}
+/>
+
+## The KV v2 engine in practice
+
+In the lab, each device has its secret under `secret/netops/breakglass/<device>`:
+
+```bash
+vault kv put secret/netops/breakglass/leaf1 username=nh-breakglass password='…' status=active
+vault kv get secret/netops/breakglass/leaf1                 # the latest version
+vault kv get -field=password secret/netops/breakglass/leaf1 # a single value, for a script
+vault kv get -version=7 secret/netops/breakglass/leaf1      # a previous version
+vault kv metadata get secret/netops/breakglass/leaf1        # the history: who, when
+```
+
+<CliOutput title="vault kv get secret/netops/breakglass/leaf1 (lab)" output={kvGet} />
+
+Each write creates a **new version**, and Vault keeps the previous ones (10 by default in the lab). This is
+valuable for a rotation: if it fails halfway, the old password is still there.
+
+## Using Vault from automation
+
+In **Python**, the `hvac` library talks to Vault's API. Rather than repeating the connection and the calls in
+every script, the lab groups them in a small class, `VaultClient`: login with a token, a username or an AppRole,
+reading and writing KV v2 secrets, and creating a secret if it doesn't exist yet. Its messages are in French,
+like the other lab scripts.
+
+<CodeFile lab="netops" file="python/vault_client.py" />
+
+A script just imports it:
+
+```python
+import secrets
+
+from vault_client import VaultClient
+
+vault = VaultClient.from_env()       # VAULT_ADDR, then VAULT_TOKEN or VAULT_ROLE_ID / VAULT_SECRET_ID
+password = vault.get("netops/service-account")["password"]
+snmp_key = vault.get_or_create("netops/snmp", "auth_key", generate=lambda: secrets.token_urlsafe(24))
+```
+
+A few choices worth carrying into your own scripts:
+
+- **TLS verification stays on** (`verify=True`, or the internal CA certificate through `VAULT_CACERT`). Turning it
+  off means accepting that a fake server could collect the token and the secrets.
+- **No secret value in the logs**: log a path, never a content.
+- **`put` replaces the whole secret**, `patch` only changes the given keys. `patch` first reads the secret, then
+  writes with *check-and-set* (`cas`): if someone changed it in the meantime, Vault refuses instead of
+  overwriting.
+- **Authentication is checked once**, at login, not before every operation: each check is one more request to
+  the vault.
+- **No code runs on import**: importing the module must neither log in nor read a secret.
+
+In **Ansible**, the `community.hashi_vault` collection provides lookups and modules. The service account
+password no longer comes from an environment variable, but from the vault:
+
+```yaml title="group_vars/eos.yml (Vault variant)"
+ansible_password: "{{ lookup('community.hashi_vault.vault_kv2_get', 'netops/service-account').secret.password }}"
+```
+
+The vault address and the token are read from the environment (`ANSIBLE_HASHI_VAULT_ADDR` or `VAULT_ADDR`, and
+`VAULT_TOKEN`).
+
+In a **GitLab pipeline**, the best option is to store **no** secret in the project's variables. The job requests
+an identity token signed by GitLab (`id_tokens`) and exchanges it for a Vault token, with the JWT method. Vault
+checks the signature, the project and the branch before granting the policy:
+
+```yaml title=".gitlab-ci.yml (excerpt)"
+rotate-breakglass:
+  image: python:3.12-slim
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: https://vault.example.com
+  script:
+    - pip install -q -r requirements.txt
+    - export VAULT_TOKEN=$(python3 -c "import hvac, os; c = hvac.Client(url=os.environ['VAULT_ADDR']); print(c.auth.jwt.jwt_login(role='netops-rotation', jwt=os.environ['VAULT_ID_TOKEN'])['auth']['client_token'])")
+    - python3 python/rotate_breakglass.py
+```
+
+Otherwise, AppRole works everywhere: the `role_id` and `secret_id` are then masked, protected pipeline
+variables.
+
+## The network trap: the vault during an outage
+
+<Callout type="warning">
+The break-glass account is used **when the network is in trouble**. If its password is only in Vault, and Vault
+can only be reached **through** the broken network, the emergency exit is locked exactly when you need it. Before
+storing break-glass passwords there:
+
+- make the vault reachable through the [out-of-band network](/en/courses/operations/oob), not only through the
+  production network;
+- deploy it as a **cluster** (3 or 5 nodes, integrated Raft storage), ideally replicated to a second site;
+- test the scenario: "the network core is down, I need to log into a switch on the console". Where is the
+  password?
+- for the few most critical devices, keep a sealed offline copy (envelope in a physical safe, offline password
+  vault), renewed at every rotation.
+</Callout>
+
+Vault becomes a **critical** service: it must be monitored, backed up (Raft snapshots), and its restore tested,
+just like DNS or authentication.
+
+## License and alternatives
+
+Since 2023, Vault has been released under the **Business Source License** (BSL): it remains free for internal
+use, but is no longer open source in the strict sense. **OpenBao**, a copy of Vault maintained under the Linux
+Foundation, stayed under an open source license (MPL 2.0) and keeps largely the same API and command line.
+HashiCorp also offers a hosted version (HCP Vault). This chapter's principles apply to both, and to most
+enterprise vaults (CyberArk, Delinea, the clouds' secrets managers).
+
+## In the lab
+
+The `netops` lab includes a `vault` container in **dev mode**: in memory, already unsealed, with a known root
+token (`netops-root`). It is meant for learning, never for production. At startup, a script configures it: audit
+log, policies, the rotation script's AppRole, and a read-only `alice` account.
+
+<CodeFile lab="netops" file="vault/setup.sh" />
+
+1. Deploy the lab, then open the web interface at `http://172.20.30.70:8200/ui` with the `netops-root` token.
+2. Without installing the command line, use the container's:
+   `alias vault='docker exec -i -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN clab-netops-vault vault'`,
+   then `export VAULT_TOKEN=netops-root`.
+3. Store the scripts' service account:
+   `vault kv put secret/netops/service-account username=admin password=admin`, then read it back.
+4. Take Alice's identity:
+   `export VAULT_TOKEN=$(vault login -method=userpass -field=token username=alice password=alice-lab)`.
+   Can you read `secret/netops/service-account`? Why? Can you change it?
+   Then switch back to the root token: `export VAULT_TOKEN=netops-root`.
+5. Change the secret three times (with the root token), then show version 1 and the history.
+6. Read the last line of the audit log: `docker exec clab-netops-vault tail -n 1 /vault/logs/audit.log`.
+7. Get the rotation script's AppRole identity, needed in the next chapter:
+   `vault read auth/approle/role/netops-rotation/role-id` and `vault write -f auth/approle/role/netops-rotation/secret-id`.
+
+<Lab name="netops" lang="en" />
+
+## Key takeaways
+
+- An encrypted file (Ansible Vault) is **all or nothing**, with no record of reads, and costly at every departure.
+- **HashiCorp Vault**: each client **authenticates** (OIDC, LDAP, AppRole, JWT), receives a **short-lived token**
+  limited by **policies**, and every request is **logged**.
+- At startup, Vault is **sealed**: shared unseal keys, or auto-unseal through a KMS or HSM.
+- **KV v2** keeps a **version history** of each secret; **PKI**, **SSH** and **dynamic** secrets issue short-lived
+  secrets.
+- From a pipeline, prefer **JWT** authentication: no secret stored in GitLab.
+- A vault holding break-glass passwords must stay **reachable during a network outage**: out of band, clustered,
+  with an offline copy for critical devices.
+
+Next chapter: **break-glass account rotation**, with its passwords stored in Vault.

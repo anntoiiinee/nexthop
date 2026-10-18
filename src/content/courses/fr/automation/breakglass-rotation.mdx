@@ -1,11 +1,12 @@
 ---
 title: "Rotation du compte de secours"
-description: "Supprimer le compte admin par défaut, créer un compte local de secours unique par équipement, et faire tourner son mot de passe automatiquement tous les 4 mois ou au départ d'un membre de l'équipe, en Python ou en Ansible."
+description: "Supprimer le compte admin par défaut, créer un compte local de secours unique par équipement, et faire tourner son mot de passe automatiquement tous les 4 mois ou au départ d'un membre de l'équipe, en Python ou en Ansible, avec les mots de passe rangés dans HashiCorp Vault."
 pubDate: 2026-10-17
+updatedDate: 2026-10-18
 level: intermediate
-tags: [security, aaa, tacacs, ansible-vault, python, ansible]
+tags: [security, aaa, tacacs, vault, python, ansible]
 vendor: [arista]
-order: 4
+order: 5
 ---
 
 Sur beaucoup de réseaux, on se connecte encore aux équipements avec **le même compte local pour
@@ -87,7 +88,7 @@ de secours unique et de sa rotation.
 2. **Un mot de passe long et aléatoire** (32 caractères), **différent sur chaque équipement** :
    un mot de passe compromis n'ouvre qu'une seule porte.
 3. **Personne ne le connaît par cœur** : il est généré par un script et stocké dans un **coffre**,
-   dont chaque consultation est journalisée.
+   [HashiCorp Vault](/formations/automation/vault), dont chaque consultation est journalisée.
 4. **Une rotation régulière** : **tous les 4 mois**.
 5. **Une rotation immédiate** :
    - au **départ d'un membre de l'équipe** qui avait accès au coffre ;
@@ -104,74 +105,93 @@ pas. L'**ordre des opérations** est donc essentiel, et nos scripts le respecten
   rows={[
     { fields: [
       { label: '1. Générer', sub: 'un mot de passe par équipement', span: 2, tone: 'violet' },
-      { label: '2. Mettre au coffre', sub: 'chiffré, « en attente »', span: 2, tone: 'amber' },
+      { label: '2. Mettre au coffre', sub: 'Vault, statut pending', span: 2, tone: 'amber' },
       { label: '3. Appliquer', sub: 'compte de secours', span: 2, tone: 'sky' },
       { label: '4. Vérifier', sub: 'nouvelle connexion', span: 2, tone: 'emerald' },
       { label: '5. Supprimer admin', sub: 'seulement si 4 a réussi', span: 2, tone: 'rose' },
       { label: '6. Enregistrer', sub: 'write memory', span: 2, tone: 'sky' },
-      { label: '7. Valider le coffre', sub: 'si tout a réussi', span: 2, tone: 'amber' },
+      { label: '7. Valider au coffre', sub: 'statut active', span: 2, tone: 'amber' },
     ] },
   ]}
   minWidth="46rem"
-  caption="Les étapes 3 à 6 se déroulent équipement par équipement. Au premier problème, tout s'arrête."
+  caption="Les sept étapes se déroulent équipement par équipement. Au premier problème, tout s'arrête."
 />
 
 Trois précautions rendent l'opération sûre :
 
 - **Le mot de passe est mis au coffre avant d'être appliqué** (étape 2). Si le script plante juste
-  après avoir changé un équipement, le nouveau mot de passe n'est pas perdu : il est dans
-  `vault/breakglass.pending.yml`.
+  après avoir changé un équipement, le nouveau mot de passe n'est pas perdu : c'est la dernière version
+  du secret dans Vault, au statut `pending`. Et si l'équipement n'a pas été modifié, l'ancien mot de passe
+  est la version précédente.
 - **La vérification utilise une connexion indépendante**, avec le nouveau mot de passe. On ne se
   contente pas de constater que la commande est passée.
 - **Un équipement à la fois** : si quelque chose cloche sur le premier, les autres ne sont pas touchés.
 
-## Le coffre : Ansible Vault
+## Le coffre : HashiCorp Vault
 
-Les mots de passe sont stockés dans un fichier **chiffré avec Ansible Vault**, lisible par les deux
-versions du script et par les playbooks :
+Les mots de passe sont rangés dans [HashiCorp Vault](/formations/automation/vault), moteur KV v2, avec **un
+secret par équipement** : `secret/netops/breakglass/<équipement>`. Chaque secret contient le nom du compte,
+le mot de passe et un **statut** :
 
-```text title="ansible-vault view vault/breakglass.yml"
-breakglass_user: nh-breakglass
-breakglass_passwords:
-  spine1: q8Zr-3vK…
-  leaf1: Tn.4wP+e…
-  leaf2: 7hXc=Lm2…
+| Statut | Signification |
+|---|---|
+| `pending` | écrit juste avant de modifier l'équipement : il est peut-être appliqué, peut-être pas |
+| `active` | appliqué, vérifié par une nouvelle connexion, configuration enregistrée |
+
+Chaque rotation crée donc deux versions par équipement, et Vault garde les précédentes : l'historique montre
+quand chaque mot de passe a changé, et par qui.
+
+```bash
+vault kv get -field=password secret/netops/breakglass/leaf1   # le mot de passe en cours
+vault kv metadata get secret/netops/breakglass/leaf1          # les versions, leurs dates et leurs auteurs
+vault kv get -version=5 secret/netops/breakglass/leaf1        # un mot de passe précédent
 ```
 
-Le fichier chiffré peut être commité dans un dépôt privé : sans le mot de passe du coffre, il est
-illisible. Les scripts ne l'écrivent **jamais en clair** sur le disque : le chiffrement se fait en
-mémoire.
+Le script s'authentifie avec l'**AppRole** `netops-rotation`, dont la politique n'autorise qu'à écrire et lire
+sous `secret/netops/breakglass/`. Les ingénieurs n'ont qu'un droit de lecture, et chacune de leurs lectures est
+journalisée : on sait qui a vu le mot de passe, donc quand il faut le changer.
 
-<Callout type="field">
-En production, un vrai gestionnaire de secrets (HashiCorp Vault, CyberArk, Bitwarden…) apporte ce
-qu'Ansible Vault n'a pas : un accès nominatif au secret, un journal de chaque consultation, et
-parfois la rotation automatique après usage. Le principe des scripts reste le même ; seule l'étape
-« mettre au coffre » change, avec le module ou l'API du gestionnaire choisi.
+<Callout type="warning">
+Le compte de secours sert quand le réseau est en panne : le coffre doit rester joignable à ce moment-là. Rendez
+Vault accessible par le réseau hors bande, en cluster, et gardez une copie hors ligne pour les équipements les plus
+critiques (voir [le piège réseau](/formations/automation/vault#le-piège-réseau--le-coffre-pendant-la-panne)).
 </Callout>
 
 ## La version Python
 
+Le script passe par la classe `VaultClient` présentée au [chapitre précédent](/formations/automation/vault).
+
 <CodeFile lab="netops" file="python/rotate_breakglass.py" />
 
 ```text title="python3 python/rotate_breakglass.py --remove-default-admin"
-Nouveaux mots de passe enregistrés (chiffrés) dans vault/breakglass.pending.yml
-OK    spine1
-OK    leaf1
-OK    leaf2
-Rotation terminée : vault/breakglass.yml est à jour.
+OK    spine1  (version 2)
+OK    leaf1  (version 2)
+OK    leaf2  (version 2)
+Rotation terminée : les mots de passe sont dans Vault, sous secret/netops/breakglass/.
+```
+
+En cas d'échec, le script s'arrête et indique quelle version du secret correspond à quel mot de passe :
+
+```text title="Rotation interrompue sur leaf2"
+ÉCHEC leaf2 : Authentication failed
+Rotation interrompue sur leaf2. Son nouveau mot de passe est la version 3 de secret/netops/breakglass/leaf2 (statut pending) : il a peut-être été appliqué. Sinon, l'équipement a gardé l'ancien (version 2). Les équipements suivants n'ont pas été modifiés.
 ```
 
 ## La version Ansible
 
-Le playbook suit les mêmes étapes, réparties en trois *plays* : préparation du coffre pour tous les
-équipements, application et vérification un par un (`serial: 1`, `any_errors_fatal: true`), puis
-validation du coffre.
+Le playbook suit les mêmes étapes, un équipement à la fois (`serial: 1`) et en s'arrêtant à la première
+erreur (`any_errors_fatal: true`). Il écrit dans Vault avec le module `vault_kv2_write` de la collection
+`community.hashi_vault`.
 
 <CodeFile lab="netops" file="ansible/rotate_breakglass.yml" />
 
 Quelques détails importants :
 
 - `no_log: true` empêche Ansible d'afficher les mots de passe dans sa sortie et ses journaux ;
+- `module_defaults` donne à tous les modules Vault la même connexion : le jeton `VAULT_TOKEN`, ou l'AppRole si
+  `VAULT_ROLE_ID` est défini ;
+- les tâches Vault et la vérification eAPI tournent sur la machine d'Ansible (`delegate_to: localhost`), pas
+  sur l'équipement ;
 - le mot de passe ne contient ni espace ni `?` (qui déclenche l'aide de la CLI) ;
 - la vérification passe par **eAPI** (`uri`) : c'est une connexion HTTPS totalement indépendante de
   la session SSH qui vient de modifier la configuration.
@@ -199,30 +219,23 @@ rotate-breakglass:
     - if: $CI_PIPELINE_SOURCE == "schedule" && $JOB == "rotate-breakglass"
     - if: $CI_PIPELINE_SOURCE == "web"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq git > /dev/null
     - pip install -q -r requirements.txt
   script:
     - python3 python/rotate_breakglass.py --remove-default-admin
-    - git config user.name "netops-rotation" && git config user.email "netops-rotation@example.com"
-    - git add vault/breakglass.yml
-    - git commit -m "rotation du compte de secours $(date -u +%F)"
-    - git push "https://oauth2:${ROTATION_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_REF_NAME}"
-  artifacts:
-    when: on_failure          # en cas d'échec, garder le coffre « en attente » (chiffré)
-    paths: [vault/breakglass.pending.yml]
-    expire_in: 7 days
 ```
 
-Variables à créer (masquées, protégées) : `NET_USER`, `NET_PASSWORD`, `ROTATION_PUSH_TOKEN`, et
-`ANSIBLE_VAULT_PASSWORD_FILE` en type **File** (GitLab écrit son contenu dans un fichier et met le
-chemin dans la variable). La planification définit `JOB=rotate-breakglass`, pour ne pas lancer la
-rotation en même temps que la sauvegarde nocturne.
+Le job ne modifie plus le dépôt : les mots de passe vivent dans Vault, pas dans Git. Variables à créer (masquées,
+protégées) : `NET_USER`, `NET_PASSWORD`, `VAULT_ADDR`, `VAULT_ROLE_ID` et `VAULT_SECRET_ID`. Mieux encore,
+l'authentification JWT décrite au [chapitre précédent](/formations/automation/vault#utiliser-vault-depuis-lautomatisation)
+supprime les deux dernières. La planification définit `JOB=rotate-breakglass`, pour ne pas lancer la rotation en
+même temps que la sauvegarde nocturne.
 
 ### La check-list de départ d'un membre de l'équipe
 
 1. Désactiver son compte nominatif dans l'annuaire et sur le serveur TACACS+.
 2. **Lancer le pipeline de rotation** du compte de secours.
-3. S'il connaissait le mot de passe du coffre : `ansible-vault rekey`, et mettre à jour la variable du pipeline.
+3. Ses accès à Vault suivent son compte de l'annuaire (OIDC ou LDAP) : ils tombent avec lui. S'il connaissait un
+   `secret_id` d'AppRole ou un jeton, les révoquer et en générer de nouveaux pour les pipelines.
 4. Révoquer ses clés SSH, ses jetons d'API et ses accès GitLab.
 5. Relire la comptabilité TACACS+ de ses dernières semaines d'activité.
 
@@ -230,14 +243,17 @@ rotation en même temps que la sauvegarde nocturne.
 
 1. Déployez le lab et vérifiez que le compte par défaut fonctionne : `ssh admin@172.20.30.12`
    (mot de passe `admin`). C'est exactement le problème.
-2. Créez le mot de passe du coffre : `openssl rand -base64 32 > ~/.vault_pass && chmod 600 ~/.vault_pass`,
-   puis `export ANSIBLE_VAULT_PASSWORD_FILE=$HOME/.vault_pass`.
+2. Pointez les scripts vers le Vault du lab : `export VAULT_ADDR=http://172.20.30.70:8200`, puis soit
+   `export VAULT_TOKEN=netops-root`, soit, plus réaliste, l'AppRole du chapitre précédent
+   (`export VAULT_ROLE_ID=… VAULT_SECRET_ID=…`).
 3. Lancez la rotation (Python ou Ansible) avec la suppression du compte admin.
 4. Vérifiez : `ssh admin@172.20.30.12` est refusé ; `ssh nh-breakglass@172.20.30.12` fonctionne avec
-   le mot de passe lu par `ansible-vault view vault/breakglass.yml`.
-5. Relancez la rotation : les mots de passe changent, l'ancien ne fonctionne plus.
-6. Bonus : arrêtez leaf2 (`docker stop clab-netops-leaf2`) et relancez. Le script s'arrête sur leaf2 :
-   où sont les mots de passe de spine1 et leaf1 ?
+   le mot de passe lu par `vault kv get -field=password secret/netops/breakglass/leaf1`.
+5. Relancez la rotation : les mots de passe changent, l'ancien ne fonctionne plus. Affichez l'historique
+   avec `vault kv metadata get secret/netops/breakglass/leaf1`.
+6. Lisez le journal d'audit : quelles lectures et quelles écritures la rotation a-t-elle faites ?
+7. Bonus : arrêtez leaf2 (`docker stop clab-netops-leaf2`) et relancez. Le script s'arrête sur leaf2 :
+   quel est le statut de son secret, et quel mot de passe a-t-il réellement ?
 
 <Lab name="netops" lang="fr" />
 
@@ -245,10 +261,12 @@ rotation en même temps que la sauvegarde nocturne.
 
 - Le compte `admin` partagé est **connu, partagé, intraçable** et **survit aux départs** : supprimez-le.
 - Au quotidien : des **comptes nominatifs** via TACACS+ ; en dernier recours : **un compte local de
-  secours**, au nom non devinable, avec un mot de passe **unique par équipement**, rangé dans un **coffre**.
+  secours**, au nom non devinable, avec un mot de passe **unique par équipement**, rangé dans **Vault**.
 - Rotation **tous les 4 mois**, et **immédiatement** au départ d'un collègue ou après chaque usage.
 - L'ordre est vital : **créer et vérifier le compte de secours avant de supprimer admin**, et mettre le
-  nouveau mot de passe au coffre **avant** de l'appliquer.
+  nouveau mot de passe au coffre **avant** de l'appliquer (`pending`), puis le valider (`active`).
+- Les **versions** de Vault gardent l'ancien mot de passe en cas d'échec, et son **journal d'audit** dit qui a lu
+  quoi.
 - Un pipeline planifié et déclenchable à la main rend la rotation **systématique**, pas héroïque.
 
 Prochain chapitre : les **conventions de nommage et le plan d'adressage**, les règles à fixer avant de

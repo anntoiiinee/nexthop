@@ -90,15 +90,17 @@ const jsonLd = [
 
     {toc.length > 0 && (
       <aside class="hidden lg:block" data-pagefind-ignore>
-        <nav class="sticky top-24 text-sm">
+        <nav class="sticky top-24 flex max-h-[calc(100vh-8rem)] flex-col text-sm">
           <p class="mb-3 font-semibold text-slate-900 dark:text-white">{t(lang, 'article.toc')}</p>
-          <ul class="space-y-2 border-l border-slate-200 dark:border-slate-800">
+          <ul class="min-h-0 space-y-2 overflow-y-auto overscroll-contain border-l border-slate-200 pb-2 [scrollbar-width:thin] dark:border-slate-800" data-toc>
             {toc.map((h) => (
               <li>
                 <a
                   href={`#${h.slug}`}
+                  data-toc-link={h.slug}
                   class:list={[
                     '-ml-px block border-l border-transparent text-slate-500 transition hover:border-sky-500 hover:text-sky-600 dark:hover:text-sky-400',
+                    'aria-[current=location]:border-sky-500 aria-[current=location]:font-medium aria-[current=location]:text-sky-700 dark:aria-[current=location]:text-sky-300',
                     h.depth === 3 ? 'pl-8' : 'pl-4',
                   ]}
                 >
@@ -112,3 +114,44 @@ const jsonLd = [
     )}
   </div>
 </BaseLayout>
+
+<script>
+  // Sommaire « Sur cette page » : surligne la section en cours de lecture, et fait défiler la liste du
+  // sommaire (si elle est plus haute que l'écran) pour garder cette entrée visible.
+  const nav = document.querySelector<HTMLElement>('[data-toc]');
+  if (nav) {
+    const links = [...nav.querySelectorAll<HTMLAnchorElement>('[data-toc-link]')];
+    const headings = links
+      .map((a) => document.getElementById(a.dataset.tocLink ?? ''))
+      .filter((h): h is HTMLElement => h !== null);
+    let current: HTMLAnchorElement | undefined;
+    let ticking = false;
+
+    const update = () => {
+      ticking = false;
+      // Le dernier titre passé sous le haut de l'écran ; en bas de page, le dernier titre
+      const atBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+      let active = atBottom ? headings[headings.length - 1] : undefined;
+      // Une section devient active quand son titre passe le premier tiers de l'écran
+      const threshold = Math.max(120, innerHeight / 3);
+      if (!active) for (const h of headings) if (h.getBoundingClientRect().top <= threshold) active = h;
+      const link = links.find((a) => a.dataset.tocLink === active?.id);
+      if (link === current) return;
+      current?.removeAttribute('aria-current');
+      current = link;
+      if (!link) return;
+      link.setAttribute('aria-current', 'location');
+      // Faire défiler le sommaire seulement, jamais la page
+      const top = link.getBoundingClientRect().top - nav.getBoundingClientRect().top + nav.scrollTop;
+      if (top < nav.scrollTop + 40 || top > nav.scrollTop + nav.clientHeight - 60) {
+        nav.scrollTo({ top: top - nav.clientHeight / 3, behavior: 'smooth' });
+      }
+    };
+    const onScroll = () => {
+      if (!ticking) { ticking = true; requestAnimationFrame(update); }
+    };
+    addEventListener('scroll', onScroll, { passive: true });
+    addEventListener('resize', onScroll, { passive: true });
+    update();
+  }
+</script>

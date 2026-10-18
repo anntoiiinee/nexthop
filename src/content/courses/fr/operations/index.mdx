@@ -1,9 +1,9 @@
 ---
 title: "Services et observabilité"
-description: "Servir, superviser et garder la main sur le réseau : DNS, DHCP et IPAM, management et accès hors bande, SNMP, syslog, NetFlow, télémétrie et tableaux de bord."
+description: "Servir, superviser et garder la main sur le réseau : DNS, DHCP et IPAM, synchronisation de l'heure avec NTP, management et accès hors bande, SNMP, syslog, NetFlow, télémétrie et tableaux de bord."
 pubDate: 2026-10-17
 level: intermediate
-tags: [operations, oob, management, monitoring, ddi, dns, dhcp, snmp, gnmi, prometheus, grafana]
+tags: [operations, oob, management, monitoring, ddi, dns, dhcp, ntp, snmp, gnmi, prometheus, grafana]
 vendor: [arista, infoblox]
 order: 0
 ---
@@ -30,12 +30,13 @@ voir la dégradation avant les utilisateurs.
 | Chapitre | Ce que vous saurez faire |
 |---|---|
 | **DDI : DNS, DHCP et IPAM** | Comprendre les trois services et pourquoi on les pilote ensemble |
+| **NTP : l'heure du réseau** | Comprendre les strates, choisir entre heure de référence locale (GNSS) et externe, configurer et vérifier la synchronisation |
 | **Management et accès hors bande** | Séparer le réseau de management, installer un vrai accès hors bande et le sécuriser |
 | **SNMP, syslog et NetFlow** | Superviser l'état, centraliser les journaux et savoir qui consomme la bande passante |
 | **Télémétrie avec gNMI et gNMIc** | Recevoir l'état des équipements en flux continu plutôt qu'en interrogation |
 | **Prometheus et Grafana** | Stocker ces mesures, construire des tableaux de bord et des alertes |
 
-Les chapitres DDI et Management se lisent indépendamment. Les trois chapitres de supervision se suivent :
+Les chapitres DDI, NTP et Management se lisent indépendamment. Les trois chapitres de supervision se suivent :
 SNMP et syslog, puis la télémétrie qui les dépasse, puis son stockage et sa visualisation.
 
 ## Prérequis
