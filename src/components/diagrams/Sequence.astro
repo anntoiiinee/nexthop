@@ -90,10 +90,13 @@ const mono = 'JetBrains Mono Variable, ui-monospace, monospace';
           const t = svgTone[m.tone ?? 'slate'];
           const [x1, x2] = m.over ? [x(m.over[0]), x(m.over[1])].sort((a, b) => a - b) : [margin, width - margin];
           const pad = Math.min(40, margin - 4);
+          // Le bandeau s'élargit pour contenir le texte (≈ 6,3 px par caractère), sans sortir du schéma
+          const w = Math.min(Math.max(x2 - x1 + 2 * pad, m.note.length * 6.3 + 24), width - 8);
+          const cx = Math.min(Math.max((x1 + x2) / 2, 4 + w / 2), width - 4 - w / 2);
           return (
             <g>
-              <rect x={x1 - pad} y={y + 4} width={x2 - x1 + 2 * pad} height={h - 10} rx="6" class:list={[t.soft, t.stroke]} stroke-width="1" />
-              <text x={(x1 + x2) / 2} y={y + h / 2 + 3} text-anchor="middle" font-size="11.5" font-weight="600" class={t.text}>{m.note}</text>
+              <rect x={cx - w / 2} y={y + 4} width={w} height={h - 10} rx="6" class:list={[t.soft, t.stroke]} stroke-width="1" />
+              <text x={cx} y={y + h / 2 + 3} text-anchor="middle" font-size="11.5" font-weight="600" class={t.text}>{m.note}</text>
             </g>
           );
         }

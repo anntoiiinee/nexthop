@@ -27,6 +27,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'arp', title: { fr: 'ARP', en: 'ARP' } },
       { slug: 'static-routing', title: { fr: 'Le routage statique', en: 'Static routing' } },
       { slug: 'tcp-udp', title: { fr: 'TCP et UDP', en: 'TCP and UDP' } },
+      { slug: 'cryptography', title: { fr: 'Le chiffrement et les clés', en: 'Encryption and keys' } },
     ],
   },
   {

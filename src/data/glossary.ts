@@ -24,6 +24,14 @@ export const glossary = {
       en: "List of rules permitting or denying packets by address, protocol and port, without remembering connections.",
     },
   },
+  aes: {
+    term: 'AES',
+    expansion: 'Advanced Encryption Standard',
+    definition: {
+      fr: "L'algorithme de chiffrement symétrique de référence (une seule clé, de 128 ou 256 bits, pour chiffrer et déchiffrer). Très rapide, il chiffre les données de TLS, IPsec, SSH et du Wi-Fi.",
+      en: 'The reference symmetric encryption algorithm (a single 128- or 256-bit key both encrypts and decrypts). Very fast, it encrypts TLS, IPsec, SSH and Wi-Fi data.',
+    },
+  },
   api: {
     term: 'API',
     expansion: 'Application Programming Interface',
@@ -220,6 +228,13 @@ export const glossary = {
     definition: {
       fr: "Répartition de charge entre plusieurs sites, le plus souvent par le DNS : la réponse renvoie l'adresse du data center disponible ou le plus proche.",
       en: "Load balancing across several sites, usually through DNS: the answer returns the address of the available or nearest data center.",
+    },
+  },
+  hash: {
+    term: 'hachage',
+    definition: {
+      fr: "Fonction qui calcule une empreinte de taille fixe (256 bits pour SHA-256) à partir de n'importe quelle donnée. Le moindre changement de la donnée change toute l'empreinte, et on ne peut pas remonter de l'empreinte à la donnée.",
+      en: 'Function computing a fixed-size fingerprint (256 bits for SHA-256) from any data. The slightest change in the data changes the whole fingerprint, and the data cannot be recovered from the fingerprint.',
     },
   },
   hsts: {
@@ -528,6 +543,14 @@ export const glossary = {
     definition: {
       fr: "Zone DNS spéciale qui modifie les réponses du résolveur : un domaine malveillant listé dans la RPZ ne se résout plus, ou pointe vers une page d'avertissement.",
       en: "Special DNS zone that rewrites the resolver's answers: a malicious domain listed in the RPZ no longer resolves, or points to a warning page.",
+    },
+  },
+  rsa: {
+    term: 'RSA',
+    expansion: 'Rivest, Shamir, Adleman',
+    definition: {
+      fr: "Algorithme asymétrique (clé publique et clé privée) qui sert à chiffrer de petits messages et à signer. Les clés font 2048 bits ou plus ; les courbes elliptiques offrent la même sécurité avec des clés plus courtes.",
+      en: 'Asymmetric algorithm (public and private key) used to encrypt small messages and to sign. Keys are 2048 bits or more; elliptic curves offer the same security with shorter keys.',
     },
   },
   rt: {
