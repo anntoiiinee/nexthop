@@ -1,0 +1,317 @@
+---
+title: "Operating a fabric"
+description: "Running a fabric in production: hitless upgrades with maintenance mode, BGP drain and rolling upgrades, automatic state validation with ANTA, what to monitor, and the bridge to automation (AVD) and operations."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, operations, maintenance, bgp, anta, avd, monitoring]
+vendor: [arista, cisco]
+order: 17
+---
+
+Building a fabric takes a few weeks. Running it lasts for years: software upgrades, new leaves, optic replacements,
+new VLANs every week, and one day, a failure to understand quickly. The previous chapters drew an architecture that is
+**redundant everywhere**: several spines, servers connected to two leaves, border leaves in pairs. That redundancy is
+not only there to survive failures; above all, it lets you **work on any device without interrupting service**,
+provided you go about it in the right order.
+
+This last chapter brings together the operational routines: taking a device out of the traffic before touching it,
+upgrading a whole fabric switch by switch, checking automatically that everything came back as before, and knowing
+what to monitor day to day.
+
+## Never touch a device that carries traffic
+
+The golden rule of fabric maintenance: before rebooting a switch, **remove the traffic** going through it, **check**
+that nothing goes through anymore, and only then intervene. Rebooting a spine "hot" often works (BGP and BFD detect
+the failure, ECMP fails over), but every flow crossing it suffers an interruption, and a reboot that goes wrong leaves
+a half-alive device in the middle of the fabric.
+
+Removing the traffic is called **draining**. The idea: make the routes through the device **less attractive** than
+the others, so that its neighbors move to the other paths on their own, with no loss, before anything is shut down.
+
+### The BGP drain
+
+In an eBGP fabric, the most portable technique is **AS-path prepending**: the spine to drain adds its AS several
+times to the routes it advertises.
+
+<Topology
+  width={700}
+  height={300}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: 'drained', tone: 'amber' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', style: 'dashed', tone: 'amber' }, { from: 's2', to: 'l1', tone: 'violet' },
+    { from: 's1', to: 'l2', style: 'dashed', tone: 'amber' }, { from: 's2', to: 'l2', tone: 'violet' },
+  ]}
+  notes={[
+    { x: 20, y: 272, text: 'via spine1: 65000 65000 65000 65000 65102', tone: 'amber', anchor: 'start' },
+    { x: 680, y: 272, text: 'via spine2: 65000 65102 (best)', tone: 'violet', anchor: 'end' },
+  ]}
+  caption="spine1 lengthens the AS path of its advertisements. The leaves prefer the shortest path, through spine2: traffic leaves spine1 while all of its sessions are still established."
+/>
+
+Sessions stay established, routes stay known: if spine2 failed during the maintenance, spine1 would take the traffic
+back at once. This is a **drain**, not a shutdown.
+
+```text title="Arista EOS: draining spine1"
+route-map DRAIN permit 10
+   set as-path prepend 65000 65000 65000
+!
+router bgp 65000
+   neighbor UNDERLAY route-map DRAIN out
+```
+
+To put the spine back into service (*undrain*), remove the route-map. Other methods exist: the **GRACEFUL_SHUTDOWN**
+community (RFC 8326), which neighbors translate into a zero local preference (effective with iBGP or when neighbors
+are configured to honor it), or lowering the MED. AS-path prepending has the advantage of working everywhere, with
+nothing to configure on the neighbors.
+
+### Maintenance mode
+
+Vendors have built this drain into a single command, which can also drain other protocols and check that traffic
+has actually left the device:
+
+```text title="Arista EOS: putting the whole switch into maintenance"
+maintenance
+   unit System
+      quiesce
+```
+
+```text title="Cisco NX-OS: Graceful Insertion and Removal"
+system mode maintenance
+```
+
+`show maintenance` (Arista) and `show system mode` (Cisco) track the state: *maintenance mode entering*, then *under
+maintenance* when the drain is complete. On exit (`no quiesce`, or `no system mode maintenance`), the switch
+advertises its routes normally again. The benefit: one identical procedure for every device, harder to get wrong than
+a route-map typed by hand.
+
+### Draining a leaf
+
+A spine is drained through BGP. A leaf, however, carries servers: first, **its servers** must leave it.
+
+1. **Shut the links to dual-homed servers** (or put them in maintenance): LACP removes those links from the bonds,
+   and the servers carry on through the other leaf. With ESI-LAG, the leaf withdraws its type 1 routes, and the whole
+   fabric fails over (see [EVPN multihoming](/en/courses/datacenter/multihoming)); with MLAG, the peer takes over.
+2. **Drain the underlay** (maintenance mode): nothing transits through it anymore.
+3. **Check** the counters: no more traffic on the server ports or the uplinks.
+4. **Intervene.**
+
+Servers connected to **a single** leaf will suffer an outage, whatever you do. This is the most concrete argument for
+dual-homing: without it, every leaf upgrade becomes a maintenance window negotiation with the application teams.
+
+## The rolling upgrade
+
+Upgrading a whole fabric means chaining this cycle **one device at a time** (*rolling upgrade*), starting with the
+least risky:
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'op', label: 'Operator', sub: 'or pipeline' },
+    { id: 'sw', label: 'spine1', tone: 'amber' },
+    { id: 'anta', label: 'ANTA', tone: 'violet' },
+  ]}
+  messages={[
+    { from: 'op', to: 'anta', label: '1. pre-checks', sub: 'is the fabric healthy?', tone: 'violet' },
+    { from: 'op', to: 'sw', label: '2. maintenance (drain)', tone: 'amber' },
+    { note: '3. check: no more traffic on its interfaces', tone: 'amber' },
+    { from: 'op', to: 'sw', label: '4. new image, reboot', tone: 'sky' },
+    { from: 'op', to: 'anta', label: '5. post-checks', sub: 'sessions, routes, interfaces', tone: 'violet' },
+    { from: 'op', to: 'sw', label: '6. exit maintenance', tone: 'emerald' },
+    { note: '7. watch for a few minutes, then next device', tone: 'emerald' },
+  ]}
+  caption="The cycle of a rolling upgrade, repeated for each device. Move on to the next one only if the tests are green and traffic has come back."
+/>
+
+The usual order:
+
+1. **one spine**, then the others one by one: the fabric loses a fraction of its capacity during each intervention,
+   never connectivity;
+2. **the leaves**, one pair at a time, and within each pair one leaf then the other;
+3. **the border leaves** last, one by one, during a low-traffic window: north-south traffic goes through them.
+
+A few rules that avoid nasty surprises:
+
+- **a single target version**, validated in a lab or on a first, less critical device; read the release notes,
+  especially **known bugs** and **changes in default behavior**;
+- **never two redundant devices at once**: not two spines, not both leaves of a pair;
+- **do not stay between two versions for long**: a fabric where two versions coexist for months eventually hits a
+  case nobody tested;
+- **a way back**: the previous image stays on the switch, and you know how to put it back in `boot system`.
+
+Some platforms can restart their software while keeping the data plane running (Arista SSU, Cisco ISSU): the outage
+for single-homed servers drops below a second. It is useful, but it does not replace the drain: use it only where
+dual-homing is impossible.
+
+## Validating with ANTA
+
+After each intervention, a simple question needs an answer: **is the fabric back exactly in the expected state?**
+Checking it by hand, switch by switch, with `show` commands, takes time, and something always gets forgotten.
+<Term id="anta" /> (*Arista Network Test Automation*) automates this check: a **catalog** describes the expected
+state as tests, an **inventory** lists the devices, and ANTA runs every test on every device in a few seconds.
+
+```yaml title="catalog.yml (lab excerpt)"
+anta.tests.routing.bgp:
+  # All underlay (IPv4) and overlay (EVPN) sessions are established
+  - VerifyBGPPeersHealth:
+      address_families:
+        - afi: ipv4
+          safi: unicast
+          vrf: default
+        - afi: evpn
+
+anta.tests.routing.generic:
+  # Every device reaches the three VTEPs
+  - VerifyRoutingTableEntry:
+      vrf: default
+      routes:
+        - 10.255.1.11
+        - 10.255.1.12
+        - 10.255.1.13
+```
+
+Run the same catalog **before** the intervention (to make sure you start from a healthy state, and not get blamed for
+a pre-existing failure) and **after** (to prove you put everything back). A red test after the upgrade stops the
+procedure: you do not move on to the next device.
+
+The catalog is best **generated** rather than written: AVD knows every link, every BGP session and every VTEP of the
+fabric, and produces the matching ANTA catalog (see [Arista AVD](/en/courses/automation/avd)). The expected state then
+comes from the same source as the configuration itself.
+
+## What to monitor
+
+ANTA checks the state at a given moment, on demand. Monitoring watches all the time. In a fabric, the indicators that
+matter:
+
+| What | Why | Typical alert |
+|---|---|---|
+| **BGP sessions** (underlay and EVPN), and number of received prefixes | A dropped session means one path or neighbor fewer; a falling prefix count, a lost advertisement | Session not *Established*; received prefixes down by more than 10% |
+| **BFD sessions** | A flapping session flags an unstable link before it fails | Several state changes within an hour |
+| Interface **errors, discards and optics** | Silent failures start with CRC errors or dropping optical power | Rising errors; receive power close to the low threshold |
+| **Uplink balance** | A spine noticeably busier than the others reveals an ECMP problem or elephants | Persistent load gap between one leaf's uplinks |
+| **Hardware table usage** (MAC, ARP, routes) | A full table does not announce itself: new entries are simply ignored | Usage above 80% |
+| **MAC mobility** | A MAC constantly changing leaf signals a loop or a duplicate address | EVPN duplicate MAC detection |
+| **Buffer discards and PFC pauses** | Output drops or pause storms (see [Switch buffers](/en/courses/datacenter/buffers)) | Rising output discards; PFC watchdog triggered |
+| **NTP synchronization** | Without a common time, correlating five switches' logs during an outage is impossible | Offset above a few milliseconds |
+| **Configuration drift** | A change made by hand, outside the GitOps flow, will be overwritten by the next deployment | Running configuration differs from the intent |
+
+These metrics are best collected through **telemetry** (gNMI, continuously, every few seconds) rather than by polling
+switches every five minutes over SNMP: a BFD micro-outage or a burst of discards leaves no trace in a five-minute
+average. The [Services and observability](/en/courses/operations) course details the whole chain:
+[SNMP, syslog and NetFlow](/en/courses/operations/monitoring),
+[Telemetry with gNMI and gNMIc](/en/courses/operations/telemetry),
+[Prometheus and Grafana](/en/courses/operations/prometheus-grafana), [NTP](/en/courses/operations/ntp), and the
+[out-of-band network](/en/courses/operations/oob) that lets you reach a switch when the fabric itself is down.
+
+<Callout type="field">
+The best monitoring does not replace a **written** and rehearsed **procedure**. The longest incidents do not come from
+hardware failures, but from interventions done in the wrong order: both leaves of a pair upgraded at the same time, a
+spine rebooted without a drain while the other was already in maintenance, a border leaf left in maintenance after the
+window. Maintenance mode, ANTA before and after, and a pipeline that chains the steps make those mistakes much harder.
+</Callout>
+
+## The bridge to automation
+
+This whole chapter converges on one idea: **a fabric is operated as code**.
+
+- **The intent** (VLANs, VRFs, leaves, sessions) lives in a data model, versioned in Git;
+- **the configurations** and the **test catalog** are generated from it by AVD;
+- **every change** goes through a merge request: diff reviewed, deployment, then ANTA tests (see
+  [Arista AVD](/en/courses/automation/avd));
+- **backups** of the actual configuration detect any drift (see
+  [GitOps configuration backups](/en/courses/automation/config-backup));
+- **upgrades** follow the same logic: a pipeline that drains, upgrades, tests and puts back into service, one device
+  after another, and stops at the first red test.
+
+A fabric operated this way is not only faster to evolve: it is **predictable**, and that is what you expect from an
+infrastructure every application of the company relies on.
+
+## In the lab
+
+The `dc-fabric` lab puts the switches on a management network, `172.20.40.0/24`, with eAPI enabled: that is how ANTA
+queries them. The lab's `anta/` folder holds the inventory and the catalog.
+
+<Lab name="dc-fabric" lang="en" />
+
+**1. Pre-checks.** On your machine, in a Python virtual environment, install ANTA, then run the catalog from the lab
+folder:
+
+```bash
+pip install "anta[cli]"
+anta nrfu -u admin -p admin -i anta/inventory.yml -c anta/catalog.yml table
+```
+
+A table, one row per test and per device. Everything should be green (*success*), except perhaps
+`VerifyRunningConfigDiffs`: it fails on a switch whose configuration was changed without being saved
+(`write memory`), for example during the previous chapters.
+
+**2. Drain spine1.** Start a continuous ping from `host1` to `host3`, in another terminal:
+
+```bash
+docker exec -it clab-dc-fabric-host1 ping 10.10.20.13
+```
+
+On leaf1, note the two next hops towards leaf3's VTEP:
+
+```text
+show ip route 10.255.1.13
+```
+
+Then, on spine1, apply the drain:
+
+```text
+configure
+route-map DRAIN permit 10
+   set as-path prepend 65000 65000 65000
+router bgp 65000
+   neighbor UNDERLAY route-map DRAIN out
+```
+
+**3. Check the drain.** On leaf1, `show ip route 10.255.1.13` now shows a single next hop, through spine2.
+`show ip bgp 10.255.1.13` still shows both paths, but spine1's, longer (`65000 65000 65000 65000 65103`), is no longer
+selected. The ping lost **no** packets. On spine1, `show interfaces counters rates` shows the links to the leaves
+almost idle: only BGP and BFD packets still go through.
+
+**4. During the maintenance.** Run ANTA again: `VerifyBGPPeersHealth` stays green (sessions are still established),
+`VerifyRunningConfigDiffs` flags spine1's unsaved change, and an actual reboot of spine1 would turn the BGP tests red
+for spine1 and for every leaf. That is expected: during an intervention, compare the report with what you expect from
+the intervention.
+
+**5. Back into service.** On spine1:
+
+```text
+configure
+router bgp 65000
+   no neighbor UNDERLAY route-map DRAIN out
+   exit
+no route-map DRAIN
+```
+
+On leaf1, both next hops come back. Run ANTA again: everything is green, as before. The intervention is over, and you
+have proof that it left nothing behind.
+
+## Your turn
+
+1. Why drain a spine before rebooting it, when ECMP and BFD would fail over anyway?
+2. How does AS-path prepending remove traffic from a spine without closing its BGP sessions?
+3. In what order do you upgrade a fabric, and why never two redundant devices at once?
+4. Why run the ANTA tests **before** an intervention, and not only after?
+5. Name four indicators to monitor in a fabric, and the failure each one helps you see coming.
+
+## Key takeaways
+
+- Never touch a device that carries traffic: **drain** it (AS-path prepend, GRACEFUL_SHUTDOWN community, or
+  **maintenance mode**), **check**, then intervene.
+- A leaf is drained by first moving its **dual-homed servers** away; single-homed servers always suffer an outage.
+- **Rolling upgrade**: spines one by one, then leaves pair by pair, border leaves last; never two redundant devices at
+  once.
+- **ANTA** checks the expected state of the whole fabric in seconds: **before** and **after** every intervention; its
+  catalog is generated with AVD.
+- Monitor: BGP and BFD sessions, errors and optics, ECMP balance, hardware tables, MAC mobility, buffers, NTP and
+  configuration drift, preferably through **telemetry**.
+- A fabric is operated **as code**: intent in Git, configurations and tests generated, changes reviewed, deployed and
+  validated by a pipeline.

@@ -1,0 +1,406 @@
+---
+title: "The underlay in depth: eBGP, ECMP and BFD"
+description: "Building a fabric's underlay: eBGP, OSPF or IS-IS, the AS numbering plan, BGP unnumbered over IPv6 link-local addresses, BFD to detect a failure in under a second, ECMP, its hashing and elephant flows, with a convergence measurement in the lab."
+pubDate: 2026-10-18
+level: advanced
+tags: [datacenter, underlay, bgp, ebgp, ecmp, bfd, spine-leaf]
+vendor: [arista]
+order: 3
+---
+
+The [Spine/leaf architecture](/en/courses/datacenter/spine-leaf) chapter set up the **underlay** in a few lines:
+routed `/31` links, one eBGP session per link, one AS for the spines, one AS per leaf, and `maximum-paths` for ECMP.
+It works, and it is what the lab does. But behind each of those choices lies a question you will be asked the day you
+design a real fabric: why BGP and not OSPF? How do you number the AS when you go from three leaves to sixty? Do you
+really need an addressing plan for every link? And above all: **how long** is traffic lost when a link goes down?
+
+The underlay has a single job: let every VTEP reach every other VTEP, over all paths at once, and stop using a dead
+path **as fast as possible**. Everything that follows serves that job.
+
+## eBGP, OSPF or IS-IS
+
+All three work. The choice depends on the size of the fabric, the team, and what runs on top.
+
+| | OSPF | IS-IS | eBGP (RFC 7938) |
+|---|---|---|---|
+| **Principle** | Link state: every router knows the whole topology | Link state, like OSPF | Path vector: each router only knows what its neighbors advertise |
+| **Failure domain** | An area: a flapping link triggers a recomputation everywhere | A level, same thing | The session involved; the rest only sees routes being withdrawn |
+| **Scale** | A few hundred routers per area | More comfortable than OSPF | Thousands (the largest data centers) |
+| **Policies** | Limited (costs, filters at area borders) | Limited | Very fine-grained: route-maps, communities, AS path |
+| **EVPN overlay** | Needs iBGP **on top** for EVPN: two protocols | Same | The **same** protocol carries the underlay and EVPN |
+| **For whom** | Small fabrics, teams that know OSPF | Operators, large link-state fabrics | The standard for modern EVPN fabrics, the one AVD generates |
+
+Why does eBGP win in large fabrics? Because a link-state protocol **floods** every change to the whole domain: with
+two hundred leaves, a flapping link makes two hundred switches recompute. With eBGP, each switch only knows what its
+neighbors tell it, and a withdrawal stops where it no longer has any effect. And since EVPN is a BGP address family
+anyway, keeping a single protocol simplifies operations: one syntax, one monitoring setup, one set of troubleshooting
+commands.
+
+<Callout type="field">
+OSPF is not a mistake. A fabric of four to eight leaves, run by a team that knows OSPF inside out, works very well
+with an OSPF underlay in area 0 and iBGP for EVPN, with the spines as *route reflectors*. The mistake is choosing
+eBGP to look modern without understanding the AS plan, or OSPF out of habit in a fabric that has to grow to a hundred
+leaves.
+</Callout>
+
+## The AS numbering plan
+
+In the lab: `65000` for both spines, `65101` to `65103` for the leaves. That is no accident, and it is worth
+understanding why before extending it.
+
+### The spines share an AS
+
+If each spine had its own AS, a route could travel from leaf1 to spine1, down to leaf2, up to spine2 and back: BGP
+would eventually discard it, but only after exploring absurd paths. When a route disappears, this behavior, called
+**path hunting**, delays convergence by several seconds while each switch tries the remaining alternatives one by one.
+
+With **a single AS for all spines**, eBGP's basic rule does the cleanup: a router rejects any route that already
+contains its own AS. A route that went through spine1 (`65000`) and is sent back to spine2 (also `65000`) is refused
+outright. A leaf never acts as transit between two spines.
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: 'AS 65000' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: 'AS 65000' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', sub: 'AS 65102', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', tone: 'violet' }, { from: 's2', to: 'l1' },
+    { from: 's1', to: 'l2', tone: 'violet' }, { from: 's2', to: 'l2', tone: 'rose', style: 'dashed' },
+  ]}
+  notes={[
+    { x: 350, y: 272, text: 'spine2 receives "65102 65000 65101" from leaf2: 65000 is already there, route rejected', tone: 'rose' },
+  ]}
+  caption="leaf1's route reaches leaf2 through spine1 (in violet). leaf2 relays it to spine2, which refuses it: its own AS is in the path. No transit through a leaf, no path hunting."
+/>
+
+### One AS per leaf, or per leaf pair
+
+Each leaf has its own AS, which makes the AS path readable: `65000 65102` reads as "through a spine, from leaf2". Two
+common exceptions:
+
+- an **MLAG leaf pair** shares the same AS: seen from the rest of the fabric, it is a single entity;
+- some networks give **the same AS to every leaf** to simplify templates. A leaf must then be allowed to accept
+  routes containing its own AS (`allowas-in`), which disables exactly the protection above. It is possible, but it is
+  a choice to make knowingly.
+
+### Planning for size
+
+2-byte private AS numbers run from `64512` to `65534`: about a thousand values. That is enough for one fabric, not
+necessarily for a group of data centers where each site has its spines, leaves and border leaves. **4-byte** private
+AS numbers (`4200000000` to `4294967294`, RFC 6996) offer 95 million, and let you encode a plan:
+
+| Role | 2-byte AS (one fabric) | 4-byte AS (several sites) |
+|---|---|---|
+| Site 1 spines | `65000` | `4200100000` |
+| Leaf (or MLAG pair) no. 07, site 1 | `65107` | `4200100107` |
+| Site 2 spines | `65200` | `4200200000` |
+| Super-spines (three-tier fabric) | `64900` | `4200000000` |
+
+What matters is not the formula but that it is **written down** and **applied by the tooling** (a source of truth
+such as NetBox, then AVD), not invented by hand as devices are added. The
+[Naming conventions and IPAM](/en/courses/automation/naming-ipam) chapter applies the same idea to names and
+addresses.
+
+## BGP unnumbered
+
+Each spine-leaf link in the lab has its own `/31` subnet: `10.0.1.0/31`, `10.0.1.2/31`… With four spines and forty
+leaves, that is 160 subnets to allocate, document and configure on both ends without a mistake. And each BGP session
+designates its neighbor by an address you have to know.
+
+**BGP unnumbered** removes all of that. The principle:
+
+1. each fabric interface enables **IPv6**, which automatically gives it a **link-local** address (`fe80::…`), with
+   no configuration;
+2. the two switches discover each other through IPv6 *Router Advertisements* and open their BGP session **on the
+   interface**, towards the neighbor's link-local address;
+3. **IPv4** routes (loopbacks, VTEPs) are advertised with an **IPv6 next hop**: this is what RFC 8950 allows (it
+   replaces RFC 5549, the name under which it is still often cited).
+
+No more IPv4 addresses on the links: you configure "a BGP session on Ethernet1", not "a session to 10.0.1.0". The
+cabling can change, the configuration does not.
+
+```text title="Arista EOS: unnumbered underlay on a leaf"
+ip routing ipv6 interfaces
+!
+interface Ethernet1
+   description spine1
+   mtu 9214
+   no switchport
+   ipv6 enable
+!
+interface Ethernet2
+   description spine2
+   mtu 9214
+   no switchport
+   ipv6 enable
+!
+router bgp 65101
+   router-id 10.255.0.11
+   maximum-paths 4 ecmp 4
+   neighbor SPINES peer group
+   neighbor interface Ethernet1-2 peer-group SPINES remote-as 65000
+   address-family ipv4
+      neighbor SPINES activate
+      neighbor SPINES next-hop address-family ipv6 originate
+      network 10.255.0.11/32
+      network 10.255.1.11/32
+```
+
+`ip routing ipv6 interfaces` allows routing IPv4 towards IPv6 next hops without an IPv4 address on the interface,
+and `next-hop address-family ipv6 originate` advertises IPv4 routes with the link-local address as next hop. Under
+FRR (and therefore SONiC or Cumulus Linux), it is even shorter: `neighbor swp1 interface remote-as external`.
+
+<Callout type="note">
+The *router-id* and the source address of the EVPN sessions remain IPv4 loopbacks: only link addressing goes away.
+The trade-off: a `traceroute` across the fabric shows hops without their own IPv4 address (often the loopback's), and
+some monitoring tools still expect an address per link. AVD can generate both variants (`underlay_rfc5549: true`).
+</Callout>
+
+## BFD: detecting a failure in under a second
+
+How long does BGP take to notice that a neighbor is dead? It depends on the failure.
+
+- **Hard failure**: the cable is pulled, the optic dies, the switch on the other end powers off. The interface goes
+  *down* on both sides, the next hop disappears from the routing table, and the routes through it are withdrawn
+  **immediately**. BGP has nothing to detect.
+- **Silent failure**: the interface stays *up*, but nothing gets through anymore. A fiber cut in one direction only,
+  a transport device (a WDM multiplexer, a media converter) between the two switches, a switch whose control plane
+  is frozen. Here, BGP notices nothing until its **hold timer** expires: **180 seconds** by default on Arista (90
+  seconds elsewhere, with keepalives every 30). All that time, part of the traffic disappears into a black hole.
+
+You can lower the BGP timers (`timers 3 9`: a keepalive every 3 seconds, neighbor declared dead after 9), but BGP runs
+on the CPU, and overly frequent keepalives load the control plane. The right answer is <Term id="bfd" />
+(*Bidirectional Forwarding Detection*, RFC 5880 and 5881): a tiny protocol whose only job is to exchange very
+frequent packets between two neighbors. When several consecutive packets are missing, BFD tells BGP, which closes the
+session and withdraws the routes at once.
+
+<Sequence
+  width={700}
+  actors={[
+    { id: 'l1', label: 'leaf1', sub: 'BGP + BFD', tone: 'emerald' },
+    { id: 's1', label: 'spine1', sub: 'BGP + BFD' },
+  ]}
+  messages={[
+    { from: 'l1', to: 's1', label: 'BFD, every 300 ms', tone: 'sky' },
+    { from: 's1', to: 'l1', label: 'BFD, every 300 ms', tone: 'sky' },
+    { note: 'silent failure: the link stays up, nothing gets through', tone: 'rose' },
+    { note: '3 missed packets (900 ms): BFD declares the neighbor dead and tells BGP', tone: 'amber' },
+    { note: 'BGP closes the session and withdraws the routes: traffic goes through spine2', tone: 'violet' },
+  ]}
+  caption="With BFD at 300 ms and a multiplier of 3, a silent failure is detected in under a second, instead of up to 180 seconds with BGP's hold timer alone."
+/>
+
+BFD is configured with three values, negotiated between the two neighbors: the transmit interval, the minimum receive
+interval, and the **multiplier** (the number of missed packets before the neighbor is declared dead). Arista's
+defaults, 300 ms and 3, give detection in 900 ms. On hardware where BFD is handled by the switch ASIC rather than the
+CPU, people go down to 50 ms or 100 ms.
+
+```text title="Arista EOS: BFD on the underlay sessions"
+interface Ethernet1
+   bfd interval 300 min-rx 300 multiplier 3
+!
+router bgp 65101
+   neighbor UNDERLAY bfd
+```
+
+BFD is enabled **on both sides**: on the leaves and on the spines. `show bfd peers` lists the BFD sessions and their
+state.
+
+<Callout type="warning">
+Do not push BFD timers lower than the device can handle. A switch with a busy CPU (an upgrade, a burst of routes) can
+miss a few BFD packets: the session drops although there is no failure, BGP withdraws the routes, then everything
+comes back, and traffic goes through two convergences for nothing. In a virtual lab like ours, stay at 300 ms. On
+EVPN sessions between loopbacks, which cross several hops, BFD is rarely useful: if the underlay converges fast, the
+overlay follows, since the VTEPs remain reachable through the other spine.
+</Callout>
+
+## ECMP and hashing
+
+Between two leaves there are as many paths as spines. <Term id="ecmp" /> installs all of them in the routing table.
+It still has to decide, packet by packet, which one to take.
+
+### Per flow, never per packet
+
+Sending each packet on the next path in turn would balance the load perfectly, but packets of the same connection
+would arrive out of order (paths never have exactly the same latency) and TCP would take that reordering for loss.
+So the switch computes a **hash** over the fields that identify a flow, most often the **five** of them (the
+*5-tuple*): source and destination IP addresses, protocol, source and destination ports. The result designates a
+path. All packets of a flow take the same path and arrive in order; different flows spread over all paths.
+
+### And in a VXLAN fabric?
+
+Between two VTEPs, all encapsulated traffic has the same outer IP addresses (the two VTEPs) and the same destination
+port (4789). If only the outer header were hashed, all traffic between two leaves would take a single spine. The
+answer is in the VXLAN standard (RFC 7348): the ingress VTEP picks the **UDP source port** from a hash of the
+**inner** frame. Each server flow gets a different source port, and the spines, which only see the outer header,
+spread it correctly.
+
+### Polarization
+
+If every switch uses the same hash function with the same parameters, a flow sent to spine1 by the first switch
+always lands in the same "half" at the next switch: some paths never receive anything. This is **polarization**.
+Vendors avoid it by mixing a per-device seed into the computation; it is on by default on data center switches, but
+worth checking in three-tier fabrics.
+
+## Elephant flows
+
+ECMP spreads **flows**, not **bytes**. As long as traffic is made of thousands of small flows (web requests, API
+calls, the "mice"), the law of large numbers balances the load. But a data center also has its **elephants**: a
+backup, a database replication, a virtual machine migration, a synchronization between GPUs. A single flow, several
+tens of gigabits per second, for minutes.
+
+<Topology
+  width={700}
+  height={290}
+  nodes={[
+    { id: 's1', type: 'l3switch', x: 230, y: 55, label: 'spine1', sub: '100 Gb/s saturated', tone: 'rose' },
+    { id: 's2', type: 'l3switch', x: 470, y: 55, label: 'spine2', sub: '100 Gb/s almost empty' },
+    { id: 'l1', type: 'l3switch', x: 120, y: 200, label: 'leaf1', tone: 'emerald' },
+    { id: 'l2', type: 'l3switch', x: 580, y: 200, label: 'leaf2', tone: 'emerald' },
+  ]}
+  links={[
+    { from: 's1', to: 'l1', tone: 'rose' }, { from: 's2', to: 'l1' },
+    { from: 's1', to: 'l2', tone: 'rose' }, { from: 's2', to: 'l2' },
+  ]}
+  flows={[
+    { from: 'l1', to: 's1', label: 'backup 60 Gb/s + replication 50 Gb/s', tone: 'rose', offset: -24 },
+    { from: 'l1', to: 's2', label: 'mice: 5 Gb/s', tone: 'sky', offset: 24 },
+  ]}
+  caption="Two elephants that the hash happens to send to the same spine: 110 Gb/s for a 100 Gb/s link, while the other spine is almost empty."
+/>
+
+Two elephants hashed to the same spine saturate its link while the other stays empty: this is a **collision**. The
+switch can do nothing about it with a static hash, since it only looks at flow identity, not rate. The answers, from
+simplest to most advanced:
+
+- **more paths and faster links**: with eight spines, two elephants have a one-in-eight chance of landing together,
+  and a 400 Gb/s link absorbs a collision that a 100 Gb/s link cannot;
+- **split the elephants** at the source: several parallel flows for a backup or a replication (this is what most
+  storage tools and GPU communication libraries do);
+- **dynamic load balancing** (*flowlets*): the switch measures its links' load and can move a flow to another path
+  between two bursts, when a long enough gap guarantees no packet will be delivered out of order;
+- **packet spraying**: each packet on a different path, with NICs able to put packets back in order. This is the
+  path taken by networks for AI, covered in [Networks for AI](/en/courses/datacenter/ai-networking).
+
+<Callout type="note">
+When a path disappears (a failed spine), a naive hash redistributes **all** flows, including those going through the
+spines that are still alive: they change path, and can briefly arrive out of order. **Resilient ECMP** only moves the
+flows of the lost path. It is useful in front of stateful services (load balancers, clustered firewalls) advertised
+as anycast.
+</Callout>
+
+## In the lab
+
+We reuse the `dc-fabric` lab, with its numbered eBGP underlay. The goal: trigger both kinds of failure and
+**measure** convergence time, with and without BFD.
+
+<Lab name="dc-fabric" lang="en" />
+
+**1. The AS plan.** On spine1:
+
+```bash
+docker exec -it clab-dc-fabric-spine1 Cli
+```
+
+```text
+show ip bgp summary
+```
+
+Three neighbors, three different AS: `65101`, `65102`, `65103`. On leaf1, `show ip bgp 10.255.1.12` shows leaf2's
+VTEP loopback received twice, through spine1 and spine2, with the same path `65000 65102`. Both paths are installed
+(`show ip route 10.255.1.12`).
+
+**2. A flow's path.** Start a continuous ping from `host1` to `host2`, in a separate terminal:
+
+```bash
+docker exec -it clab-dc-fabric-host1 ping 10.10.10.12
+```
+
+On leaf1, see which uplink carries it: the outgoing packet counter that increases by about one per second points to
+the spine chosen by the hash.
+
+```text
+show interfaces Ethernet1-2 counters
+```
+
+The ping was hashed onto one spine, and will stay there as long as nothing changes: that is per-flow ECMP. Below, we
+assume it goes through `Ethernet1` (spine1); otherwise, replace `eth1` with `eth2` and spine1 with spine2.
+
+**3. A hard failure.** On leaf1, shut the link carrying the ping:
+
+```text
+configure
+interface Ethernet1
+   shutdown
+```
+
+The ping loses at most one packet: the interface went down, the route through spine1 vanished at once, and the hash
+only has one path left. Bring the link back (`no shutdown`), and wait until `show ip bgp summary` shows two
+established sessions again.
+
+**4. A silent failure, without BFD.** This time we leave the interfaces `up` but drop everything that goes through,
+in both directions, with `tc netem` (as in the [SNMP, syslog and NetFlow](/en/courses/operations/monitoring)
+chapter):
+
+```bash
+docker run --rm --privileged --net container:clab-dc-fabric-leaf1 nicolaka/netshoot tc qdisc add dev eth1 root netem loss 100%
+docker run --rm --privileged --net container:clab-dc-fabric-spine1 nicolaka/netshoot tc qdisc add dev eth1 root netem loss 100%
+```
+
+Look at the ping: it stops getting through. And it will only resume when the hold timer expires, up to **three
+minutes** later. Meanwhile, `show ip bgp summary` on leaf1 still shows the session to spine1 as *Established*. When it
+finally drops, `show logging last 5 minutes` shows the cause (*hold timer expired*). Count the lost packets: that is
+your convergence time, in seconds. Remove the failure:
+
+```bash
+docker run --rm --privileged --net container:clab-dc-fabric-leaf1 nicolaka/netshoot tc qdisc del dev eth1 root
+docker run --rm --privileged --net container:clab-dc-fabric-spine1 nicolaka/netshoot tc qdisc del dev eth1 root
+```
+
+**5. The same failure, with BFD.** Enable BFD on leaf1 and on spine1:
+
+```text
+configure
+router bgp 65101
+   neighbor UNDERLAY bfd
+```
+
+```text
+configure
+router bgp 65000
+   neighbor UNDERLAY bfd
+```
+
+Check on leaf1 that the BFD session to `10.0.1.0` is *Up* (`show bfd peers`), then restart the ping and repeat the
+silent failure from step 4. This time, the ping loses **one or two packets**: BFD declared the neighbor dead in under
+a second, BGP withdrew the routes, and traffic moved to spine2. `show bfd peers` shows the session *Down*. Remove the
+failure as in step 4.
+
+Same link, same failure: three minutes versus under a second.
+
+## Your turn
+
+1. Why do all spines of an eBGP fabric get the same AS? What would happen with one AS per spine?
+2. What does BGP unnumbered bring, and which RFC allows advertising an IPv4 route with an IPv6 next hop?
+3. Why does a hard failure not need BFD, while a silent failure does? Give two examples of a silent failure.
+4. How does a VXLAN fabric spread traffic between the same two VTEPs over several spines?
+5. Why does ECMP handle two elephant flows poorly? Name two ways to fix it.
+
+## Key takeaways
+
+- **eBGP** is the standard for large EVPN fabrics: limited failure domains, fine-grained policies, and a single
+  protocol for the underlay and the overlay. OSPF or IS-IS remain valid for small fabrics.
+- **One AS for all spines** (no transit through a leaf, no path hunting), **one AS per leaf** or per MLAG pair; a
+  written plan, applied by the tooling, on **4 bytes** for several sites.
+- **BGP unnumbered**: sessions over IPv6 link-local addresses, IPv4 routes with an IPv6 next hop (RFC 8950), no more
+  addresses on the links.
+- Hard failure: immediate convergence. Silent failure: up to **180 s** without **BFD**, under **one second** with it
+  (300 ms × 3).
+- **ECMP** hashes **per flow** (5-tuple, VXLAN UDP source port); it balances mice, not **elephants**. More paths,
+  split flows or dynamic load balancing limit collisions.
+
+Next chapter: **physical infrastructure**, where we leave protocols behind for racks, cables and optics.

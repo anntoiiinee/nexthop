@@ -155,7 +155,8 @@ Plusieurs protocoles conviennent (OSPF, IS-IS), mais le plus répandu dans les g
 
 Pourquoi BGP plutôt qu'OSPF ? Parce qu'il passe à l'échelle de milliers d'équipements, qu'il permet des
 politiques fines, et surtout que le même protocole servira à l'overlay avec EVPN : un seul protocole à
-connaître et à superviser.
+connaître et à superviser. Le chapitre suivant, [L'underlay en détail](/formations/datacenter/underlay), revient sur
+ce choix, sur le plan de numérotation des AS, sur BFD et sur le hachage ECMP.
 
 ```text title="Arista EOS : underlay de leaf1"
 interface Ethernet1
@@ -194,7 +195,8 @@ Tous les leafs ont la même forme, mais pas forcément le même rôle :
 
 - **leafs serveurs** : la majorité, un ou deux par baie ;
 - **border leafs** : la sortie de la fabric vers le reste du monde (cœur de réseau du campus, WAN,
-  Internet, autre data center), souvent derrière des firewalls ;
+  Internet, autre data center), souvent derrière des firewalls (voir
+  [Le border leaf](/formations/datacenter/border-leaf)) ;
 - **service leafs** : les équipements partagés, comme les firewalls et les load balancers, branchés sur des
   leafs dédiés plutôt qu'au milieu de la fabric.
 
@@ -261,3 +263,5 @@ Remettez l'interface en service (`no shutdown`).
 - L'**underlay** est entièrement routé (liens `/31`, MTU augmenté), le plus souvent en **eBGP** : un AS
   pour les spines, un AS par leaf, `maximum-paths` pour l'ECMP.
 - Le management de la fabric passe par un réseau **séparé**, dans une VRF dédiée.
+
+Prochain chapitre : **l'underlay en détail**, avec le plan d'AS, BGP unnumbered, BFD et le hachage ECMP.

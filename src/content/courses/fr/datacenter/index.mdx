@@ -1,9 +1,9 @@
 ---
 title: "Le data center"
-description: "Les architectures des data centers modernes : VRF, fabric spine/leaf et underlay eBGP, VXLAN, puis BGP EVPN comme plan de contrôle, avec passerelle anycast et routage entre VRF, puis PRA et PCA, interconnexion de data centers, QoS, réseau du stockage et réseaux pour l'IA. Lab Arista cEOS à deux spines et trois leafs."
+description: "Les architectures des data centers modernes : VRF, fabric spine/leaf et underlay eBGP avec BFD et ECMP, VXLAN, puis BGP EVPN comme plan de contrôle, avec passerelle anycast, multihoming ESI-LAG et border leafs, puis PRA et PCA, interconnexion de data centers, QoS, réseau du stockage, réseaux pour l'IA et exploitation de la fabric. Lab Arista cEOS à deux spines et trois leafs."
 pubDate: 2026-10-17
 level: advanced
-tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, dci, qos, storage, ai]
+tags: [datacenter, vrf, spine-leaf, vxlan, evpn, bgp, bfd, multihoming, dci, qos, storage, ai, anta]
 vendor: [arista, cisco]
 order: 0
 ---
@@ -24,23 +24,28 @@ séparer les environnements. C'est l'architecture que génère [Arista AVD](/for
 |---|---|
 | **Les VRF** | Séparer plusieurs tables de routage sur un même équipement, gérer des adresses qui se recouvrent, faire communiquer deux VRF de façon contrôlée |
 | **L'architecture spine/leaf** | Expliquer pourquoi le data center a quitté le modèle à trois niveaux, dimensionner une fabric, construire son underlay eBGP avec ECMP |
+| **L'underlay en détail** | Choisir entre eBGP, OSPF et IS-IS, bâtir un plan d'AS, passer en BGP unnumbered, détecter une panne en moins d'une seconde avec BFD, comprendre le hachage ECMP et les flux éléphants |
 | **L'infrastructure physique** | Choisir entre top of rack, top of 3 racks et end of row, choisir câbles et optiques, compter les ports d'une baie, éviter les pièges de ventilation et de fibre |
 | **La connectique** | Distinguer fibres multimode et monomode, LC et MPO, lire le nom d'une optique, choisir entre DAC, AOC et fibre, éclater un port, respecter le budget optique |
 | **Le multiplexage WDM** | Faire passer plusieurs liens sur une paire de fibres, choisir entre CWDM et DWDM, calculer le budget d'un lien entre deux data centers |
 | **Les buffers des switches** | Comprendre l'incast et les micro-rafales, choisir entre petits et gros buffers, utiliser ECN, DCTCP et PFC, repérer les pertes en sortie |
 | **VXLAN** | Transporter un VLAN à travers une fabric routée, lire un paquet VXLAN, comprendre les limites du *flood and learn* |
 | **EVPN, le control plane** | Distribuer les adresses MAC et IP par BGP, configurer la passerelle anycast et le routage symétrique entre VLAN et entre leafs |
+| **EVPN multihoming** | Raccorder un serveur à deux leafs sans peer-link (ESI-LAG), lire les routes de type 1 et 4, expliquer l'élection du DF, gérer l'installation PXE avec le LACP fallback, choisir entre ESI-LAG et MLAG |
+| **Le border leaf** | Relier la fabric au WAN, à Internet et aux firewalls, annoncer les routes externes en type 5, faire passer le trafic entre VRF par un firewall |
 | **PRA et PCA** | Fixer RTO et RPO avec les métiers, choisir une stratégie de secours, préparer le réseau du site de secours et tester la bascule |
 | **Interconnecter deux data centers (DCI)** | Choisir le lien et le mode d'interconnexion, mesurer les risques d'un VLAN étendu, déployer EVPN entre sites avec des gateways |
 | **La QoS dans le data center** | Classer et marquer le trafic, configurer files, ECN et PFC, bâtir un plan de QoS simple et cohérent |
 | **Le réseau du stockage** | Distinguer FC, iSCSI et NVMe-oF, concevoir deux chemins avec multipathing, aligner le MTU 9000 de bout en bout |
 | **Les réseaux pour l'IA** | Comprendre le trafic d'un cluster de GPU, dimensionner une fabric rail-optimized, configurer un réseau RoCE sans perte |
+| **Opérer une fabric** | Drainer un équipement et le mettre en maintenance, mettre à jour une fabric sans coupure, valider son état avec ANTA, savoir quoi superviser |
 
 Les chapitres se suivent : chacun s'appuie sur le précédent.
 
 ## Le lab
 
-Une fabric complète, en Arista cEOS : deux spines, trois leafs, quatre serveurs dans trois VLAN et deux VRF.
+Une fabric complète, en Arista cEOS : deux spines, trois leafs, cinq serveurs dans trois VLAN et deux VRF, dont un
+raccordé à deux leafs en ESI-LAG.
 
 <Topology
   width={720}
@@ -55,17 +60,19 @@ Une fabric complète, en Arista cEOS : deux spines, trois leafs, quatre serveurs
     { id: 'l1', type: 'l3switch', x: 130, y: 185, label: 'leaf1', sub: 'AS 65101', tone: 'emerald' },
     { id: 'l2', type: 'l3switch', x: 360, y: 185, label: 'leaf2', sub: 'AS 65102', tone: 'emerald' },
     { id: 'l3', type: 'l3switch', x: 590, y: 185, label: 'leaf3', sub: 'AS 65103', tone: 'emerald' },
-    { id: 'h1', type: 'server', x: 130, y: 325, label: 'host1', sub: '10.10.10.11' },
-    { id: 'h2', type: 'server', x: 320, y: 325, label: 'host2', sub: '10.10.10.12' },
-    { id: 'h3', type: 'server', x: 450, y: 325, label: 'host3', sub: '10.10.20.13' },
+    { id: 'h1', type: 'server', x: 70, y: 325, label: 'host1', sub: '10.10.10.11' },
+    { id: 'h5', type: 'server', x: 245, y: 325, label: 'host5', sub: '10.10.10.15', tone: 'violet' },
+    { id: 'h2', type: 'server', x: 360, y: 325, label: 'host2', sub: '10.10.10.12' },
+    { id: 'h3', type: 'server', x: 470, y: 325, label: 'host3', sub: '10.10.20.13' },
     { id: 'h4', type: 'server', x: 620, y: 325, label: 'host4', sub: '10.10.10.11', tone: 'amber' },
   ]}
   links={[
     { from: 's1', to: 'l1' }, { from: 's1', to: 'l2' }, { from: 's1', to: 'l3' },
     { from: 's2', to: 'l1' }, { from: 's2', to: 'l2' }, { from: 's2', to: 'l3' },
     { from: 'l1', to: 'h1' }, { from: 'l2', to: 'h2' }, { from: 'l3', to: 'h3' }, { from: 'l3', to: 'h4' },
+    { from: 'l1', to: 'h5', tone: 'violet' }, { from: 'l2', to: 'h5', tone: 'violet' },
   ]}
-  caption="Le lab dc-fabric. Chaque leaf est relié aux deux spines. host4, dans la VRF DEV, a la même adresse que host1, dans la VRF PROD, sans conflit."
+  caption="Le lab dc-fabric. Chaque leaf est relié aux deux spines. host5 est raccordé à leaf1 et leaf2 en ESI-LAG, sans peer-link. host4, dans la VRF DEV, a la même adresse que host1, dans la VRF PROD, sans conflit."
 />
 
 ## Prérequis

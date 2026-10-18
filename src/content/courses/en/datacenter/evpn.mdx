@@ -5,7 +5,7 @@ pubDate: 2026-10-17
 level: advanced
 tags: [evpn, vxlan, bgp, irb, datacenter]
 vendor: [arista, cisco]
-order: 8
+order: 9
 ---
 
 The previous chapter ended on the limits of VXLAN alone: VTEP lists to maintain by hand, MAC addresses
@@ -137,7 +137,8 @@ subnets, and a *border leaf* advertises routes to the outside of the fabric.
 A server connected to two leaves for redundancy can use [MLAG](/en/courses/fundamentals/link-aggregation),
 or EVPN directly: this is **EVPN multihoming**, or **ESI-LAG**. Both leaves share an Ethernet segment
 identifier (**ESI**) and advertise it with **type 1** and **4** routes. No more peer-link between the two
-leaves: BGP coordinates them.
+leaves: BGP coordinates them. The [EVPN multihoming](/en/courses/datacenter/multihoming) chapter details the
+mechanism and compares it with MLAG.
 
 ## A leaf's complete configuration
 
@@ -296,4 +297,4 @@ Each leaf advertises its VRFs' subnets as type 5. VRF `DEV` only holds `10.10.10
 - **Symmetric IRB**: each leaf routes once, and routed traffic travels in the VRF's **L3 VNI**.
 - An EVPN fabric is long to configure by hand, and ideal to generate with a tool such as AVD.
 
-Next chapter: **disaster recovery and business continuity**, or how to survive losing an entire data center.
+Next chapter: **EVPN multihoming**, or how to connect a server to two leaves without a peer-link.

@@ -151,7 +151,9 @@ Several protocols fit (OSPF, IS-IS), but the most widespread in large fabrics is
 />
 
 Why BGP rather than OSPF? Because it scales to thousands of devices, allows fine-grained policies, and
-above all the same protocol will serve the overlay with EVPN: a single protocol to learn and monitor.
+above all the same protocol will serve the overlay with EVPN: a single protocol to learn and monitor. The
+next chapter, [The underlay in depth](/en/courses/datacenter/underlay), comes back to this choice, to the AS
+numbering plan, to BFD and to ECMP hashing.
 
 ```text title="Arista EOS: leaf1 underlay"
 interface Ethernet1
@@ -188,7 +190,7 @@ All leaves look the same, but do not necessarily play the same role:
 
 - **server leaves**: the majority, one or two per rack;
 - **border leaves**: the fabric's exit to the rest of the world (campus core, WAN, Internet, another data
-  center), often behind firewalls;
+  center), often behind firewalls (see [The border leaf](/en/courses/datacenter/border-leaf));
 - **service leaves**: shared devices such as firewalls and load balancers, connected to dedicated leaves
   rather than in the middle of the fabric.
 
@@ -252,3 +254,5 @@ A single next hop remains, through spine2: the fabric keeps working, with half t
 - The **underlay** is fully routed (`/31` links, raised MTU), most often in **eBGP**: one AS for the spines,
   one AS per leaf, `maximum-paths` for ECMP.
 - Fabric management goes through a **separate** network, in a dedicated VRF.
+
+Next chapter: **the underlay in depth**, with the AS plan, BGP unnumbered, BFD and ECMP hashing.

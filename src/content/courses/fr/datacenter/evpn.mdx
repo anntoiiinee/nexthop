@@ -5,7 +5,7 @@ pubDate: 2026-10-17
 level: advanced
 tags: [evpn, vxlan, bgp, irb, datacenter]
 vendor: [arista, cisco]
-order: 8
+order: 9
 ---
 
 Le chapitre précédent s'est arrêté sur les limites de VXLAN seul : des listes de VTEP à maintenir à la main,
@@ -139,7 +139,8 @@ annonce ses sous-réseaux, et un *border leaf* y annonce les routes vers l'exté
 Un serveur raccordé à deux leafs pour la redondance peut l'être en [MLAG](/formations/fundamentals/link-aggregation),
 ou directement avec EVPN : on parle de **multihoming EVPN**, ou **ESI-LAG**. Les deux leafs partagent un
 identifiant de segment Ethernet (**ESI**) et l'annoncent avec les routes de **type 1** et **4**. Plus besoin
-de peer-link entre les deux leafs : c'est BGP qui les coordonne.
+de peer-link entre les deux leafs : c'est BGP qui les coordonne. Le chapitre
+[EVPN multihoming](/formations/datacenter/multihoming) détaille le mécanisme et le compare à MLAG.
 
 ## La configuration complète d'un leaf
 
@@ -303,4 +304,4 @@ travers toute la fabric.
 - **IRB symétrique** : chaque leaf route une fois, et le trafic routé voyage dans le **L3 VNI** de la VRF.
 - Une fabric EVPN est longue à configurer à la main, et idéale à générer avec un outil comme AVD.
 
-Prochain chapitre : **PRA et PCA**, ou comment survivre à la perte d'un data center entier.
+Prochain chapitre : **EVPN multihoming**, ou comment raccorder un serveur à deux leafs sans peer-link.
