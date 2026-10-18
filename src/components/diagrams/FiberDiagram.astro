@@ -1,0 +1,188 @@
+---
+// Schémas de la fibre optique, en trois vues :
+//   <FiberDiagram view="modes" />        coupe longitudinale : rebonds en multimode, trajet unique en monomode
+//   <FiberDiagram view="wavelengths" />  les longueurs d'onde utilisées en réseau, sur une échelle en nm
+//   <FiberDiagram view="wdm" />          plusieurs longueurs d'onde réunies dans une fibre par un multiplexeur
+// Les textes suivent la langue de la page (Astro.currentLocale), ou `lang`.
+import type { Lang } from '@/i18n/ui';
+import { svgTone, type Tone } from './tones';
+
+interface Props { view: 'modes' | 'wavelengths' | 'wdm'; lang?: Lang; caption?: string }
+const { view, caption } = Astro.props;
+const lang = (Astro.props.lang ?? Astro.currentLocale ?? 'fr') as Lang;
+
+const t = {
+  fr: {
+    multimode: 'Multimode (OM3, OM4)', singlemode: 'Monomode (OS2)',
+    cladding: 'gaine optique · 125 µm', core50: 'cœur · 50 µm', core9: 'cœur · 9 µm',
+    pulseIn: 'impulsion émise', pulseOutMm: 'impulsion étalée', pulseOutSm: 'impulsion intacte',
+    tir: 'réflexion totale sur la gaine', modes: 'plusieurs trajets de longueurs différentes', oneMode: 'un seul trajet',
+    axis: 'longueur d’onde (nm)',
+    mm850: 'multimode · SR', cwdm: 'grille CWDM · CWDM4, FR4', sm1310: 'monomode · LR, DR', sm1550: 'longue distance · DWDM, ER, ZR',
+    mux: 'multiplexeur', demux: 'démultiplexeur', oneFiber: 'une seule paire de fibres', siteA: 'Site A', siteB: 'Site B',
+  },
+  en: {
+    multimode: 'Multimode (OM3, OM4)', singlemode: 'Single-mode (OS2)',
+    cladding: 'cladding · 125 µm', core50: 'core · 50 µm', core9: 'core · 9 µm',
+    pulseIn: 'pulse sent', pulseOutMm: 'spread pulse', pulseOutSm: 'intact pulse',
+    tir: 'total reflection on the cladding', modes: 'several paths of different lengths', oneMode: 'a single path',
+    axis: 'wavelength (nm)',
+    mm850: 'multimode · SR', cwdm: 'CWDM grid · CWDM4, FR4', sm1310: 'single-mode · LR, DR', sm1550: 'long haul · DWDM, ER, ZR',
+    mux: 'multiplexer', demux: 'demultiplexer', oneFiber: 'a single fiber pair', siteA: 'Site A', siteB: 'Site B',
+  },
+}[lang];
+
+const W = 760;
+const H = view === 'modes' ? 360 : view === 'wavelengths' ? 230 : 225;
+
+// --- Vue « modes » : une fibre vue en coupe, la lumière qui rebondit dans le cœur ---
+const zigzag = (x0: number, x1: number, top: number, bottom: number, step: number, startTop: boolean) => {
+  let d = `M ${x0} ${(top + bottom) / 2}`;
+  let x = x0 + step / 2;
+  let up = startTop;
+  d += ` L ${x} ${up ? top : bottom}`;
+  while (x + step < x1) {
+    x += step;
+    up = !up;
+    d += ` L ${x} ${up ? top : bottom}`;
+  }
+  d += ` L ${x1} ${(top + bottom) / 2}`;
+  return d;
+};
+const fiber = (y: number, coreH: number) => {
+  const cladH = 100;
+  return { cladTop: y - cladH / 2, cladH, coreTop: y - coreH / 2, coreBottom: y + coreH / 2, coreH };
+};
+const mm = fiber(110, 40);
+const sm = fiber(275, 8);
+const X0 = 130;
+const X1 = 630;
+// Une impulsion en forme de cloche (largeur w) centrée en (cx, base)
+const pulse = (cx: number, base: number, w: number, h: number) =>
+  `M ${cx - w} ${base} C ${cx - w / 3} ${base}, ${cx - w / 4} ${base - h}, ${cx} ${base - h} C ${cx + w / 4} ${base - h}, ${cx + w / 3} ${base}, ${cx + w} ${base} Z`;
+
+// --- Vue « longueurs d'onde » : échelle de 800 à 1650 nm ---
+const nmMin = 800;
+const nmMax = 1650;
+const ax = (nm: number) => 40 + ((nm - nmMin) / (nmMax - nmMin)) * (W - 80);
+const bands: { nm: number[]; label: string; tone: Tone; row: number }[] = [
+  { nm: [850], label: t.mm850, tone: 'sky', row: 0 },
+  { nm: [1271, 1291, 1311, 1331], label: t.cwdm, tone: 'emerald', row: 1 },
+  { nm: [1310], label: t.sm1310, tone: 'violet', row: 0 },
+  { nm: [1530, 1565], label: t.sm1550, tone: 'amber', row: 0 },
+];
+
+// --- Vue « wdm » : quatre couleurs, un multiplexeur, une fibre, un démultiplexeur ---
+const lambdas: { nm: string; tone: Tone }[] = [
+  { nm: '1271 nm', tone: 'violet' },
+  { nm: '1291 nm', tone: 'sky' },
+  { nm: '1311 nm', tone: 'emerald' },
+  { nm: '1331 nm', tone: 'amber' },
+];
+const muxX = 230;
+const demuxX = 530;
+const laneY = (i: number) => 60 + i * 45;
+const trunkY = 127;
+---
+<figure class="not-prose my-10">
+  <div class="overflow-x-auto">
+    <svg viewBox={`0 0 ${W} ${H}`} class="mx-auto block h-auto w-full" style="min-width: 560px; max-width: 760px" role="img" aria-label={caption ?? view}>
+      {view === 'modes' && (
+        <g>
+          {[
+            { f: mm, title: t.multimode, core: t.core50, out: t.pulseOutMm, note: t.modes, spread: 30 },
+            { f: sm, title: t.singlemode, core: t.core9, out: t.pulseOutSm, note: t.oneMode, spread: 10 },
+          ].map(({ f, title, core, out, note, spread }, k) => (
+            <g>
+              <text x={X0} y={f.cladTop - 12} font-size="13" font-weight="700" class="fill-slate-900 dark:fill-white">{title}</text>
+              <rect x={X0} y={f.cladTop} width={X1 - X0} height={f.cladH} rx="6" class="fill-slate-100 dark:fill-slate-800/60" />
+              <rect x={X0} y={f.coreTop} width={X1 - X0} height={f.coreH} class="fill-sky-100 dark:fill-sky-500/15" />
+              <line x1={X0} y1={f.coreTop} x2={X1} y2={f.coreTop} stroke-width="1" class="stroke-sky-400 dark:stroke-sky-500" />
+              <line x1={X0} y1={f.coreBottom} x2={X1} y2={f.coreBottom} stroke-width="1" class="stroke-sky-400 dark:stroke-sky-500" />
+              <text x={X1} y={f.cladTop - 12} text-anchor="end" font-size="10" class="font-mono"><tspan class="fill-slate-500 dark:fill-slate-400">{t.cladding}</tspan><tspan class="fill-sky-700 dark:fill-sky-300">{` · ${core}`}</tspan></text>
+
+              {k === 0 ? (
+                <g fill="none" stroke-width="1.8">
+                  <path d={`M ${X0} ${(f.coreTop + f.coreBottom) / 2} H ${X1}`} class={svgTone.emerald.stroke} />
+                  <path d={zigzag(X0, X1, f.coreTop + 1, f.coreBottom - 1, 92, true)} class={svgTone.amber.stroke} />
+                  <path d={zigzag(X0, X1, f.coreTop + 1, f.coreBottom - 1, 46, false)} class={svgTone.rose.stroke} />
+                </g>
+              ) : (
+                <path d={`M ${X0} ${(f.coreTop + f.coreBottom) / 2} H ${X1}`} fill="none" stroke-width="2" class={svgTone.emerald.stroke} />
+              )}
+
+              <!-- Impulsions : à l'entrée, et à la sortie (étalée en multimode) -->
+              <path d={pulse(X0 - 55, f.cladTop + f.cladH - 8, 10, 34)} class={svgTone.emerald.fill} />
+              <text x={X0 - 55} y={f.cladTop + f.cladH + 10} text-anchor="middle" font-size="10" class="fill-slate-500 dark:fill-slate-400">{t.pulseIn}</text>
+              <path d={pulse(X1 + 65, f.cladTop + f.cladH - 8, spread, spread === 10 ? 34 : 18)} class={k === 0 ? svgTone.rose.fill : svgTone.emerald.fill} />
+              <text x={X1 + 65} y={f.cladTop + f.cladH + 10} text-anchor="middle" font-size="10" class="fill-slate-500 dark:fill-slate-400">{out}</text>
+              <text x={(X0 + X1) / 2} y={f.cladTop + f.cladH + 18} text-anchor="middle" font-size="11" font-weight="600" class={k === 0 ? 'fill-rose-600 dark:fill-rose-400' : 'fill-emerald-700 dark:fill-emerald-400'}>{note}</text>
+              {k === 0 && <text x={(X0 + X1) / 2 + 92} y={f.coreTop - 6} text-anchor="middle" font-size="10" class="fill-amber-700 dark:fill-amber-300">{t.tir}</text>}
+            </g>
+          ))}
+        </g>
+      )}
+
+      {view === 'wavelengths' && (
+        <g>
+          <line x1={ax(nmMin)} y1={150} x2={ax(nmMax)} y2={150} stroke-width="1.5" class="stroke-slate-400 dark:stroke-slate-500" />
+          {[800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600].map((nm) => (
+            <g>
+              <line x1={ax(nm)} y1={146} x2={ax(nm)} y2={154} stroke-width="1" class="stroke-slate-400 dark:stroke-slate-500" />
+              <text x={ax(nm)} y={170} text-anchor="middle" font-size="10" class="fill-slate-500 dark:fill-slate-400 font-mono">{nm}</text>
+            </g>
+          ))}
+          <text x={W / 2} y={198} text-anchor="middle" font-size="11" class="fill-slate-500 dark:fill-slate-400">{t.axis}</text>
+          {bands.map((b) => {
+            const tone = svgTone[b.tone];
+            const top = b.row === 0 ? 60 : 100;
+            const isRange = b.nm.length === 2;
+            // La grille CWDM est collée à la raie de 1310 nm : son texte se place à gauche de ses raies
+            const side = b.row === 1;
+            const tx = side ? ax(b.nm[0]) - 8 : (ax(b.nm[0]) + ax(b.nm[b.nm.length - 1])) / 2;
+            const anchor = side ? 'end' : 'middle';
+            const ty = side ? top + 34 : top;
+            return (
+              <g>
+                {isRange ? (
+                  <rect x={ax(b.nm[0])} y={top + 10} width={ax(b.nm[1]) - ax(b.nm[0])} height={150 - top - 10} class:list={[tone.soft, tone.stroke]} stroke-width="1" />
+                ) : (
+                  b.nm.map((nm) => <line x1={ax(nm)} y1={top + 10} x2={ax(nm)} y2={150} stroke-width="3" class={tone.stroke} />)
+                )}
+                <text x={tx} y={ty} text-anchor={anchor} font-size="11" font-weight="600" class={tone.text}>{b.label}</text>
+                <text x={tx} y={ty - 14} text-anchor={anchor} font-size="10" class="fill-slate-500 dark:fill-slate-400 font-mono">{isRange ? `${b.nm[0]}–${b.nm[1]} nm` : b.nm.length > 1 ? `${b.nm[0]}…${b.nm[b.nm.length - 1]} nm` : `${b.nm[0]} nm`}</text>
+              </g>
+            );
+          })}
+        </g>
+      )}
+
+      {view === 'wdm' && (
+        <g>
+          <text x={60} y={30} text-anchor="middle" font-size="12" font-weight="700" class="fill-slate-900 dark:fill-white">{t.siteA}</text>
+          <text x={W - 60} y={30} text-anchor="middle" font-size="12" font-weight="700" class="fill-slate-900 dark:fill-white">{t.siteB}</text>
+          {lambdas.map((l, i) => {
+            const tone = svgTone[l.tone];
+            return (
+              <g>
+                <rect x={20} y={laneY(i) - 12} width={80} height={24} rx="4" class:list={[tone.soft, tone.stroke]} stroke-width="1.2" />
+                <text x={60} y={laneY(i)} dy="0.35em" text-anchor="middle" font-size="10" font-weight="600" class={`${tone.text} font-mono`}>{l.nm}</text>
+                <path d={`M 100 ${laneY(i)} C 160 ${laneY(i)}, 180 ${trunkY + (i - 1.5) * 4}, ${muxX} ${trunkY + (i - 1.5) * 4}`} fill="none" stroke-width="2.5" class={tone.stroke} />
+                <line x1={muxX + 20} y1={trunkY + (i - 1.5) * 4} x2={demuxX} y2={trunkY + (i - 1.5) * 4} stroke-width="2.5" class={tone.stroke} />
+                <path d={`M ${demuxX + 20} ${trunkY + (i - 1.5) * 4} C ${demuxX + 70} ${trunkY + (i - 1.5) * 4}, ${demuxX + 90} ${laneY(i)}, ${W - 100} ${laneY(i)}`} fill="none" stroke-width="2.5" class={tone.stroke} />
+                <rect x={W - 100} y={laneY(i) - 12} width={80} height={24} rx="4" class:list={[tone.soft, tone.stroke]} stroke-width="1.2" />
+                <text x={W - 60} y={laneY(i)} dy="0.35em" text-anchor="middle" font-size="10" font-weight="600" class={`${tone.text} font-mono`}>{l.nm}</text>
+              </g>
+            );
+          })}
+          <rect x={muxX} y={trunkY - 40} width={20} height={80} rx="3" class="fill-slate-700 dark:fill-slate-300" />
+          <rect x={demuxX} y={trunkY - 40} width={20} height={80} rx="3" class="fill-slate-700 dark:fill-slate-300" />
+          <text x={muxX + 10} y={trunkY + 58} text-anchor="middle" font-size="11" font-weight="600" class="fill-slate-700 dark:fill-slate-300">{t.mux}</text>
+          <text x={demuxX + 10} y={trunkY + 58} text-anchor="middle" font-size="11" font-weight="600" class="fill-slate-700 dark:fill-slate-300">{t.demux}</text>
+          <text x={(muxX + demuxX + 20) / 2} y={trunkY - 18} text-anchor="middle" font-size="11" class="fill-slate-500 dark:fill-slate-400">{t.oneFiber}</text>
+        </g>
+      )}
+    </svg>
+  </div>
+  {caption && <figcaption class="mt-3 text-center text-sm text-slate-500">{caption}</figcaption>}
+</figure>

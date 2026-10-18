@@ -1,0 +1,321 @@
+---
+title: "L'infrastructure physique : baies, câblage et placement des switches"
+description: "La partie physique d'un data center : baies, allées chaudes et froides et sens de ventilation, placement des switches (top of rack, top of 3 racks, middle et end of row), câbles cuivre, DAC, AOC et fibre, optiques et débits, câbles d'éclatement, alimentation redondante, management et documentation."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, cabling, optics, tor, eor, physical]
+vendor: [arista, netbox]
+order: 3
+---
+
+Le chapitre [L'architecture spine/leaf](/formations/datacenter/spine-leaf) décrit une topologie : chaque leaf relié à
+chaque spine. Sur le terrain, il faut ensuite décider **où** posent physiquement ces switches, **comment** les relier
+aux serveurs et entre eux, avec quels câbles et quelles optiques, et comment les alimenter. Ces choix se font avant
+la première ligne de configuration, coûtent cher à défaire, et expliquent une bonne partie des pannes « mystérieuses »
+d'un data center. Ce chapitre fait le tour de la couche 1.
+
+## La salle et les baies
+
+Les équipements sont rangés dans des **baies** (*racks*), des armoires normalisées de 19 pouces de large côté
+équipements. Leur hauteur se compte en **unités** (U) : 1U = 44,45 mm. Une baie standard fait **42U** (environ 2 m),
+parfois 45U ou 48U. Un serveur courant occupe 1U ou 2U, un switch de baie 1U ou 2U, un châssis 7U à 16U. Les baies
+réseau sont souvent plus **larges** (800 mm au lieu de 600 mm) pour laisser passer les faisceaux de câbles sur les
+côtés.
+
+Les baies sont alignées en **rangées**, face à face, pour organiser le refroidissement :
+
+- les **allées froides** reçoivent l'air climatisé, devant les baies ;
+- les équipements aspirent l'air par l'**avant** et le rejettent chaud par l'**arrière**, dans les **allées chaudes** ;
+- le **confinement** (des portes et un toit sur l'allée froide ou chaude) empêche les deux airs de se mélanger, et
+  améliore beaucoup l'efficacité de la climatisation.
+
+<Callout type="warning">
+Le **sens de ventilation** d'un switch se choisit à la commande. Dans une baie de serveurs, les cartes réseau des
+serveurs sont presque toujours à l'**arrière**, côté allée chaude : le switch de baie est donc monté **ports vers
+l'arrière**, et doit aspirer par le côté des alimentations pour souffler côté ports (*port-side exhaust*). Un switch
+commandé avec la ventilation inverse aspire l'air chaud de l'allée chaude, chauffe, et finit par s'arrêter ou
+s'abîmer. Les constructeurs vendent chaque modèle dans les deux sens, avec des ventilateurs et des alimentations
+de couleur différente : vérifiez la référence avant la commande, et la couleur avant l'installation.
+</Callout>
+
+## Où placer les switches d'accès
+
+C'est le choix le plus structurant : il détermine la longueur et le nombre de câbles, le nombre de switches, et la
+taille d'un domaine de panne. Quatre modèles existent.
+
+### Top of Rack (ToR)
+
+Chaque baie de serveurs reçoit **sa propre paire de switches**, en haut de la baie. Les serveurs s'y raccordent par
+des câbles très courts, qui ne quittent jamais la baie ; seules les liaisons de montée vers les spines, en fibre,
+passent dans le chemin de câbles.
+
+<RackElevation
+  racks={[
+    { label: 'Baie 1', sub: 'leafs 1 et 2', items: [
+      { u: 41, h: 1, label: 'leaf1', kind: 'switch' }, { u: 40, h: 1, label: 'leaf2', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 serveurs 1U', kind: 'server' },
+    ] },
+    { label: 'Baie 2', sub: 'leafs 3 et 4', items: [
+      { u: 41, h: 1, label: 'leaf3', kind: 'switch' }, { u: 40, h: 1, label: 'leaf4', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 serveurs 1U', kind: 'server' },
+    ] },
+    { label: 'Baie 3', sub: 'leafs 5 et 6', items: [
+      { u: 41, h: 1, label: 'leaf5', kind: 'switch' }, { u: 40, h: 1, label: 'leaf6', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 serveurs 1U', kind: 'server' },
+    ] },
+  ]}
+  links={[
+    { from: [0, '20 serveurs 1U'], to: [0, 'leaf1'] },
+    { from: [1, '20 serveurs 1U'], to: [1, 'leaf3'] },
+    { from: [2, '20 serveurs 1U'], to: [2, 'leaf5'] },
+  ]}
+  caption="Top of rack : chaque baie a sa paire de leafs et son switch de management. Les câbles serveurs restent dans la baie (DAC de 1 à 3 m)."
+/>
+
+C'est le modèle naturel des fabrics spine/leaf : **une paire de leafs par baie**, chaque serveur raccordé aux deux
+(en [MLAG](/formations/fundamentals/link-aggregation) ou en multihoming EVPN). Une baie entière se pose, se câble et
+se teste comme un bloc. En contrepartie, il faut beaucoup de switches, et dans une baie peu remplie, une bonne partie
+de leurs ports reste inutilisée.
+
+### Top of 3 racks
+
+Variante du ToR : la paire de switches est installée dans la **baie du milieu** d'un groupe de trois, et dessert
+aussi les baies de **gauche** et de **droite**. Les câbles serveurs sortent de leur baie mais restent très courts,
+puisqu'ils ne vont que jusqu'à la baie voisine.
+
+<RackElevation
+  racks={[
+    { label: 'Baie 1', sub: 'serveurs', items: [
+      { u: 39, h: 2, label: 'brassage', kind: 'patch' },
+      { u: 1, h: 16, label: '16 serveurs', kind: 'server' },
+    ] },
+    { label: 'Baie 2', sub: 'leafs 1 et 2', items: [
+      { u: 41, h: 1, label: 'leaf1', kind: 'switch' }, { u: 40, h: 1, label: 'leaf2', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 16, label: '16 serveurs', kind: 'server' },
+    ] },
+    { label: 'Baie 3', sub: 'serveurs', items: [
+      { u: 39, h: 2, label: 'brassage', kind: 'patch' },
+      { u: 1, h: 16, label: '16 serveurs', kind: 'server' },
+    ] },
+  ]}
+  links={[
+    { from: [0, '16 serveurs'], to: [1, 'leaf1'], label: 'AOC / fibre' },
+    { from: [1, '16 serveurs'], to: [1, 'leaf2'] },
+    { from: [2, '16 serveurs'], to: [1, 'leaf1'] },
+  ]}
+  caption="Top of 3 racks : la baie du milieu porte les leafs, les baies voisines n'ont que des serveurs. Une paire de switches de 48 ports dessert ainsi trois baies moyennement remplies."
+/>
+
+L'intérêt est économique : quand les baies sont limitées par la puissance électrique ou le refroidissement (une
+baie de serveurs chargés en GPU n'en accueille parfois que quelques-uns), une seule paire de leafs remplit enfin ses
+ports. Les câbles qui changent de baie sont plus longs qu'en ToR pur : DAC de 3 à 5 m s'ils restent courts, sinon
+AOC ou fibre. Et le domaine de panne grandit : un incident sur la paire de leafs touche trois baies.
+
+### Middle of Row et End of Row
+
+Les switches d'accès ne sont plus dans les baies de serveurs, mais dans une **baie réseau dédiée**, au **bout** de la
+rangée (*End of Row*, EoR) ou au **milieu** (*Middle of Row*, MoR) pour raccourcir les plus longs câbles. On y trouve
+souvent des **châssis** modulaires à grand nombre de ports. Chaque baie de serveurs a un **panneau de brassage**,
+relié à la baie réseau par du **câblage structuré** posé une fois pour toutes.
+
+<RackElevation
+  racks={[
+    { label: 'Baie 1', sub: 'serveurs', items: [
+      { u: 40, h: 2, label: 'brassage', kind: 'patch' },
+      { u: 1, h: 24, label: '24 serveurs', kind: 'server' },
+    ] },
+    { label: 'Baie 2', sub: 'serveurs', items: [
+      { u: 40, h: 2, label: 'brassage', kind: 'patch' },
+      { u: 1, h: 24, label: '24 serveurs', kind: 'server' },
+    ] },
+    { label: 'Baie 3', sub: 'serveurs', items: [
+      { u: 40, h: 2, label: 'brassage', kind: 'patch' },
+      { u: 1, h: 24, label: '24 serveurs', kind: 'server' },
+    ] },
+    { label: 'Baie réseau', sub: 'bout de rangée', items: [
+      { u: 27, h: 11, label: 'châssis A', kind: 'switch' },
+      { u: 14, h: 11, label: 'châssis B', kind: 'switch' },
+      { u: 39, h: 3, label: 'brassage', kind: 'patch' },
+    ] },
+  ]}
+  links={[
+    { from: [0, 'brassage'], to: [3, 'brassage'], label: 'câblage structuré' },
+    { from: [1, 'brassage'], to: [3, 'brassage'] },
+    { from: [2, 'brassage'], to: [3, 'brassage'] },
+  ]}
+  caption="End of row : les switches sont regroupés dans une baie réseau. Chaque baie de serveurs est reliée par des faisceaux posés une fois, et tout se brasse dans la baie réseau."
+/>
+
+### Comparer les quatre modèles
+
+| | Top of Rack | Top of 3 racks | Middle / End of Row |
+|---|---|---|---|
+| Switches | une paire par baie | une paire pour trois baies | quelques gros switches ou châssis par rangée |
+| Câbles serveurs | très courts, dans la baie (DAC) | courts, vers la baie voisine (DAC long, AOC) | longs, par câblage structuré et brassage |
+| Utilisation des ports | faible si les baies sont peu remplies | bonne | très bonne |
+| Domaine de panne | une baie | trois baies | une rangée |
+| Évolution | on ajoute une baie complète, comme un bloc | on ajoute un groupe de trois baies | on ajoute des cartes au châssis |
+| Usage typique | fabrics spine/leaf, cloud, baies denses | baies limitées en puissance (GPU, stockage) | réseaux d'entreprise, salles mixtes, équipements hétérogènes |
+
+<Callout type="field">
+Dans les data centers d'entreprise, on croise souvent un mélange : du ToR pour les rangées de virtualisation récentes,
+de l'EoR hérité pour les salles plus anciennes, et des baies réseau dédiées pour les spines, les border leafs et les
+firewalls. Les **spines**, eux, sont presque toujours regroupés dans une ou deux baies réseau, d'où partent les fibres
+vers chaque leaf.
+</Callout>
+
+## Les câbles
+
+| Type | Ce que c'est | Portée typique | Usage |
+|---|---|---|---|
+| **Cuivre RJ45** (Cat6A) | le câble Ethernet classique | 100 m, jusqu'à 10 Gb/s | management, cartes d'administration des serveurs, postes |
+| **DAC** (*Direct Attach Copper*) | câble cuivre avec un module serti à chaque bout | quelques mètres (passif), un peu plus en actif | serveur vers leaf dans la même baie : le moins cher et le moins gourmand |
+| **AOC** (*Active Optical Cable*) | fibre avec un module optique serti à chaque bout | quelques dizaines de mètres | baies voisines, quand le DAC est trop court ou trop épais |
+| **Fibre multimode** (OM3, OM4, OM5) | fibre au cœur large, émetteurs bon marché | de quelques dizaines à quelques centaines de mètres selon le débit | dans la salle : leaf vers spine, câblage structuré |
+| **Fibre monomode** (OS2) | fibre au cœur fin, portée bien plus grande | de 500 m à 10 km et plus | entre salles, entre bâtiments, nouvelles salles à 400G et plus |
+
+Plus le débit monte, plus la portée sur fibre multimode baisse : à 10 Gb/s (10GBASE-SR), elle atteint 300 m sur OM3 ;
+à 25 et 100 Gb/s (25GBASE-SR, 100GBASE-SR4), environ 70 m sur OM3 et 100 m sur OM4. C'est pourquoi les nouvelles
+salles passent de plus en plus à la fibre **monomode**, même pour de courtes distances. Ce sont des ordres de
+grandeur : la portée exacte figure sur la fiche de chaque optique. Le chapitre [La connectique](/formations/datacenter/cabling)
+détaille les fibres, les connecteurs, les optiques, les DAC et l'éclatement.
+
+### Connecteurs et câblage structuré
+
+- **LC duplex** : deux fibres (émission et réception), pour les optiques à un seul canal (SR, LR).
+- **MPO** (ou MTP) : 8, 12 ou 16 fibres dans un connecteur, pour les optiques parallèles (SR4, DR4) et les
+  **troncs** de câblage structuré. Une mauvaise **polarité** (l'émission d'un côté qui arrive sur l'émission de
+  l'autre) est la panne classique du MPO : le lien ne monte pas, alors que tout semble bien branché.
+- Le **câblage structuré** relie les baies par des troncs fibre posés une fois, qui aboutissent sur des **panneaux de
+  brassage**. Les connexions se font ensuite par de courtes jarretières, sans jamais retirer un câble du faux
+  plancher ou du chemin de câbles.
+
+<Callout type="tip">
+Une fibre sale est la première cause des liens optiques instables : une poussière invisible sur un connecteur suffit
+à faire chuter la puissance reçue. Nettoyez les connecteurs **avant chaque branchement**, avec un nettoyeur adapté,
+et vérifiez-les avec une loupe ou un microscope de fibre. Laissez les bouchons de protection sur les ports et les
+optiques inutilisés.
+</Callout>
+
+## Optiques et débits
+
+Les ports des switches ne reçoivent pas directement les câbles : on y insère des **modules** enfichables, dont le
+format dépend du débit.
+
+| Format | Débits courants | Remarque |
+|---|---|---|
+| **SFP+** | 10 Gb/s | le format historique des serveurs |
+| **SFP28** | 25 Gb/s | le standard actuel côté serveur, compatible SFP+ |
+| **QSFP+** | 40 Gb/s | 4 voies de 10 Gb/s, en déclin |
+| **QSFP28** | 100 Gb/s | 4 voies de 25 Gb/s ; montées vers les spines, ports des spines |
+| **QSFP-DD** et **OSFP** | 400 et 800 Gb/s | 8 voies ; spines récents, fabrics IA |
+
+Un port à plusieurs voies peut souvent être **éclaté** (*breakout*) : un port QSFP28 à 100 Gb/s devient quatre liens
+à 25 Gb/s, avec un câble d'éclatement (un QSFP28 d'un côté, quatre SFP28 de l'autre). Un port 400 Gb/s devient
+quatre liens à 100 Gb/s. C'est une façon courante de raccorder beaucoup de serveurs à un switch à ports rapides,
+ou de relier des générations différentes. Le mode d'éclatement se configure port par port sur le switch, selon le
+modèle.
+
+```text title="Vérifier une optique (Arista EOS et Cisco IOS)"
+show interfaces transceiver
+show inventory
+```
+
+`show interfaces transceiver` affiche, pour chaque optique, la température et les **puissances émise et reçue**
+(DOM, *Digital Optical Monitoring*). Une puissance reçue trop faible signale une fibre sale, abîmée ou trop longue.
+`show inventory` liste les modules et leur référence.
+
+<Callout type="warning">
+Les optiques **tierces**, moins chères que celles du constructeur, fonctionnent souvent bien, mais certains
+constructeurs les refusent ou limitent leur support. Vérifiez la politique du constructeur avant de les généraliser,
+et ne mélangez pas les deux extrémités d'un lien au hasard : une optique SR (multimode) ne parle pas à une optique LR
+(monomode), même avec le bon câble.
+</Callout>
+
+## Compter les ports d'une baie
+
+Avant de choisir un modèle de switch, on compte. Exemple d'une baie de 20 serveurs de virtualisation :
+
+| Besoin | Calcul | Ports |
+|---|---|---|
+| Cartes de production, chaque serveur relié aux deux leafs | 20 serveurs × 2 ports 25 Gb/s | 40 ports SFP28, soit 20 par leaf |
+| Cartes d'administration (iDRAC, iLO) | 20 × 1 port cuivre | 20 ports sur le switch de management |
+| Montées vers les spines | 4 spines | 4 ports QSFP28 par leaf |
+| Lien entre les deux leafs (MLAG) | 2 liens | 2 ports par leaf |
+
+Un leaf à 48 ports SFP28 et 8 ports QSFP28 suffit largement, avec de la marge pour la croissance, ou pour desservir
+les baies voisines en *top of 3 racks*. Le rapport entre la capacité vers les serveurs et vers les spines, la
+**sursouscription**, se calcule comme expliqué au chapitre [L'architecture spine/leaf](/formations/datacenter/spine-leaf).
+
+## Alimentation et redondance
+
+- Chaque baie reçoit **deux arrivées électriques** indépendantes (voies A et B), chacune avec sa **PDU** (la
+  multiprise de la baie).
+- Chaque switch et chaque serveur a **deux alimentations**, une sur chaque voie : la perte d'une arrivée électrique ne
+  coupe rien.
+- Chaque serveur est raccordé aux **deux leafs** de sa paire ; les deux leafs ne doivent pas dépendre de la même
+  voie électrique ni du même chemin de câbles.
+- La **puissance** disponible par baie (souvent quelques kilowatts à quelques dizaines) limite souvent le nombre de
+  serveurs bien avant le nombre d'unités : c'est ce qui pousse au *top of 3 racks* pour les baies très denses.
+
+## Le réseau de management
+
+En plus de la fabric, chaque baie a un petit **switch de management** pour les ports d'administration des switches et
+les cartes d'administration des serveurs, et les équipements réseau ont un accès **console** par un serveur de
+consoles. Ce réseau est séparé de la production, pour garder la main sur les équipements quand la fabric est en
+panne : c'est l'objet du chapitre [Management et accès hors bande](/formations/operations/oob).
+
+## Documenter la couche physique
+
+Une baie bien câblée et mal documentée devient vite une baie mal câblée. Trois règles :
+
+- **chaque câble est étiqueté aux deux extrémités**, avec un identifiant unique, et le même identifiant figure dans
+  l'outil de documentation. Les fournisseurs de câblage livrent des jarretières, des DAC et des troncs **déjà étiquetés
+  en usine**, avec le texte de votre choix imprimé à chaque bout (identifiant, baie et port de chaque extrémité,
+  parfois un code-barres) : on fournit la liste des câbles avec la commande, et l'étiquetage ne dépend plus du soin
+  de chacun pendant l'installation ;
+- les **élévations de baies** et les **câbles** sont tenus dans [NetBox](/formations/automation/netbox), qui sait
+  représenter les baies, l'unité de chaque équipement, les panneaux de brassage et le chemin complet d'une connexion ;
+- les noms et les descriptions d'interfaces suivent les [conventions de nommage](/formations/automation/naming-ipam),
+  ce qui permet de comparer automatiquement le câblage prévu et celui que voit LLDP.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Switch qui chauffe, alarme de température, arrêt | ventilation commandée dans le mauvais sens pour la baie |
+| Lien optique qui ne monte pas | mauvaise polarité MPO, optiques SR et LR mélangées, fibre multimode et monomode mélangées |
+| Lien instable, erreurs CRC | connecteur sale, fibre trop courbée, DAC trop long pour le débit |
+| Optique refusée par le switch | optique tierce non acceptée, ou incompatible avec le mode du port |
+| Toute une baie perdue lors d'une maintenance électrique | les deux alimentations des leafs sur la même voie |
+| Impossible de retrouver où va un câble | étiquetage absent ou documentation pas à jour |
+
+## À vous de jouer
+
+Une rangée de six baies doit accueillir 90 serveurs, chacun avec deux ports 25 Gb/s et un port d'administration.
+La puissance permet 20 serveurs par baie au maximum. La fabric a 4 spines.
+
+1. En **top of rack**, combien de leafs faut-il, et combien de ports serveurs chacun utilise-t-il ?
+2. En **top of 3 racks**, avec des leafs à 48 ports SFP28, combien de leafs faut-il ? Les ports suffisent-ils ?
+3. Quels câbles choisiriez-vous dans chaque cas pour les serveurs, et pour les montées vers les spines si ceux-ci
+   sont dans une baie réseau à 25 m ?
+4. Dessinez les deux voies électriques et placez les deux leafs d'une paire pour qu'aucune panne unique d'alimentation
+   ne coupe une baie.
+
+## À retenir
+
+- Les équipements vivent dans des **baies** en **U**, rangées en **allées chaudes et froides** ; le **sens de
+  ventilation** d'un switch se choisit à la commande, et une erreur fait surchauffer.
+- **Top of rack** : une paire de leafs par baie, câbles courts, le modèle des fabrics. **Top of 3 racks** : une paire
+  dans la baie du milieu pour trois baies, meilleur remplissage. **Middle / End of row** : switches regroupés,
+  câblage structuré.
+- Câbles : **DAC** dans la baie, **AOC** pour les voisines, **fibre** multimode ou monomode au-delà ; la portée
+  multimode baisse quand le débit monte.
+- Optiques **SFP28** côté serveur, **QSFP28** à **OSFP** côté spines ; l'**éclatement** transforme un port rapide en
+  plusieurs liens.
+- Deux **voies électriques**, deux alimentations, deux leafs par serveur, et un **réseau de management** séparé.
+- Étiquetez chaque câble aux deux bouts, et documentez baies et câbles dans **NetBox**.

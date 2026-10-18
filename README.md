@@ -150,6 +150,8 @@ src/
   - `<AddressSpace base subnets />` : découpage d'un bloc d'adresses à l'échelle ;
   - `<OsiModel />`, `<Lab name="…" />` ;
   - `<GitGraph branches commits />` : graphe de commits Git (une ligne par branche, parents pour les fusions) ;
+  - `<RackElevation racks links />` : baies vues de face, équipements placés à leur unité (`u`, `h`), câbles par le chemin de câbles ;
+  - `<FiberDiagram view="modes|wavelengths|wdm" />` : l'intérieur d'une fibre (rebonds en multimode, trajet unique en monomode), les longueurs d'onde, le multiplexage ;
   - `<CodeFile lab="netops" file="python/backup_configs.py" />` : affiche un fichier d'un lab (le code montré est celui téléchargé) ;
   - `<CliOutput title output notes />` : sortie CLI annotée (lignes surlignées, repères numérotés et légende). Chaque note : `{ line, text, match?, tone? }`, `line` commence à 1, `match` surligne un passage, `` `code` `` est mis en forme dans `text`. MDX retire les espaces de début de ligne à l'intérieur des balises : déclarer la sortie dans un ``export const maSortie = `…`;`` en haut du fichier (après le frontmatter), puis `output={maSortie}` (voir `fundamentals/stp.mdx`).
 - **Documentation officielle** : chaque nouveau chapitre ou tutoriel ajoute ses sources dans `src/data/references.ts` (clé `courses/<formation>/<chapitre>` ou `tutorials/<slug>`), de préférence des sources primaires (RFC, normes, documentation du constructeur). Ouvrir chaque URL avant de l'ajouter : pas de lien non vérifié.
@@ -256,7 +258,11 @@ Mise en route (une seule fois) :
 - [x] Fondamentaux, chapitre 9 « IPv6 » (`ipv6`) en FR et EN, après ARP (routage statique, TCP/UDP et chiffrement décalés en 10, 11 et 12) ; sorties réelles obtenues sur un réseau Docker IPv6
 - [x] Tutoriel `ldaps-arista` rédigé en FR et EN (n'est plus en cours de rédaction) : syntaxe vérifiée dans le manuel EOS 4.36, recommandation TACACS+ / RADIUS, et `-disableaaa` sur TerminAttr avec CVP ; port 636 et import du certificat à confirmer sur un switch
 - [x] Section « Documentation officielle » en bas des 61 chapitres et tutoriels (FR et EN), données dans `src/data/references.ts` : RFC, IEEE, NIST, ITU-T et documentations des constructeurs ; les 157 liens ont été vérifiés un par un
-- [ ] Contenus à venir : Vault (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
+- [x] Data center, chapitre 3 « L'infrastructure physique » (`physical`) en FR et EN : baies, allées chaudes et froides, ventilation, top of rack, top of 3 racks, middle / end of row, câbles, optiques, éclatement, alimentation ; composant `<RackElevation>`
+- [x] Data center, chapitre 4 « La connectique » (`cabling`) en FR et EN : fibres OM et OS, UPC et APC, LC et MPO (genre, clé, polarité A, B, C), transceivers et leurs noms, DOM, DAC, AOC et FEC, éclatement, budget optique, nettoyage et tests 
+- [x] Data center, chapitre 5 « Le multiplexage en longueur d'onde (WDM) » (`wdm`) en FR et EN : mux et demux, CWDM et DWDM (grilles UIT-T), optiques colorées, accordables et cohérentes (400ZR), OADM, budget, interconnexion de data centers ; composant `<FiberDiagram view="modes|wavelengths|wdm" />`, aussi utilisé dans la connectique (VxLAN et EVPN décalés en 6 et 7)
+- [x] Tutoriel « Qu'est-ce qu'une RFC ? » (`rfc`) en FR et EN, lié depuis chaque section « Documentation officielle »
+- [ ] Contenus à venir : Vault, buffers des switches (voir la section suivante) ; Jinja2 est couvert par le tutoriel `jinja-netbox`
 
 ---
 
@@ -278,6 +284,18 @@ Le parcours compte **8 sauts** (`src/data/roadmap.ts`) : 1 Fondamentaux · 2 Rou
 - Leçon tirée du chapitre de rotation : un filtre `vault` d'Ansible 2.21 peut être redéchiffré à l'écriture ; tester que
   le fichier produit commence bien par `$ANSIBLE_VAULT`.
 
+### Formation Data center : les buffers des switches (nouveau chapitre ou section, après l'infrastructure physique)
+
+- Ce qu'est un buffer : la mémoire où un switch range les paquets quand un port de sortie est déjà occupé.
+- Pourquoi il en faut : la congestion par **incast** (plusieurs serveurs qui répondent en même temps au même client,
+  typique du stockage distribué et des clusters), les débits différents entre ports (25G vers 100G), les rafales.
+- Buffers **partagés** et **par port**, allocation dynamique ; switches à petits buffers (puces « shallow buffer »,
+  faible latence) et à gros buffers (« deep buffer », plusieurs Go, pour les border leafs, le WAN, le stockage).
+- Ce qui se passe quand le buffer est plein : pertes (*tail drop*), retransmissions TCP, latence ; ECN et le contrôle de
+  congestion (DCQCN, PFC pour RoCE et les fabrics IA), avec leurs pièges (*head-of-line blocking*, tempêtes PFC).
+- Observer : compteurs de pertes en sortie (*output discards*), compteurs de file, télémétrie de la profondeur des files.
+- Choisir : quand un switch « deep buffer » se justifie, et quand il ne sert à rien.
+
 ---
 
 ## Idées d'outils
@@ -293,6 +311,7 @@ un composant dans `src/components/` et une entrée dans `src/data/tools.ts`.
 | Haute | ~~Convertisseur binaire / hexa / décimal~~ (fait) | Conversion d'un octet ou d'une adresse, avec le poids de chaque bit | Faible |
 | Haute | ~~Visualiseur ContainerLab~~ (fait) | Coller un `topology.clab.yml` et obtenir le schéma (réutilise `ClabDiagram`) | Faible |
 | Haute | ~~Calculateur MTU / overhead~~ (fait) | Empiler les en-têtes (802.1Q, IP, UDP, VXLAN, GRE, IPsec…) et obtenir MTU utile et MSS TCP | Moyen |
+| Haute | Calculateur de sursouscription | Ports serveurs et ports de montée d'un leaf (nombre, débit, éclatement) → taux de sursouscription, bande passante par serveur en pire cas, effet de l'ajout de spines ; lien avec les chapitres spine/leaf et infrastructure physique | Faible |
 | Moyenne | Formateur d'adresse MAC | Formats Linux / Cisco / Windows, unicast/multicast, universelle/locale (option : constructeur via l'OUI) | Faible |
 | Moyenne | Résumé de routes | Plus petit agrégat d'une liste de préfixes, avec l'explication en binaire | Moyen |
 | Moyenne | Générateur de wildcard / ACL | Réseau ou plage → masque inverse et ligne d'ACL Cisco / Arista | Faible |

@@ -1,0 +1,185 @@
+---
+title: "Wavelength division multiplexing (WDM)"
+description: "Carrying several links over a single fiber pair using wavelengths: multiplexer and demultiplexer, CWDM and DWDM, colored and tunable optics, 400ZR coherent optics, optical budget, and data center interconnect."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, wdm, cwdm, dwdm, optics, dci, fiber]
+vendor: [arista, cisco]
+order: 5
+---
+
+Between two racks, you pull as many fibers as needed. Between two buildings, two data centers or two cities, it is
+another story: each fiber pair is leased at a high price from a carrier (this is called **dark fiber**, bare fiber with
+no equipment), or laid at the cost of civil works. **Wavelength Division Multiplexing** (WDM) multiplies the capacity
+of a single pair: instead of one link per fiber pair, several links go through, each on its own **color** of light.
+
+## The principle
+
+A fiber easily carries several wavelengths at the same time, just as a prism splits white light into colors that don't
+mix. Each wavelength (written **λ**, lambda) forms an independent **channel**, with its own speed and protocol.
+
+<FiberDiagram
+  view="wdm"
+  caption="Four links, each on its own wavelength, combined by a multiplexer into a single fiber pair, then separated by a demultiplexer at the far end."
+/>
+
+- The **multiplexer** (*mux*) combines the wavelengths of several optics into a single fiber.
+- The **demultiplexer** (*demux*) separates them at the far end and sends each one to its port.
+- In practice, the same unit does both, for both directions of the fiber pair. Common models are **passive**: simple
+  optical filters, with no power or configuration, which therefore don't fail like active equipment.
+
+Each optic plugged into the mux must transmit **exactly** the wavelength of the port it is plugged into: it is called a
+**colored optic**. A standard 10GBASE-LR optic, at 1310 nm, doesn't fit.
+
+<Callout type="note">
+WDM already exists **inside** some optics. A 100G-CWDM4 or 100GBASE-LR4 optic contains its own multiplexer: four lasers of
+different colors combined into a single LC fiber pair (see [Cabling and connectors](/en/courses/datacenter/cabling)).
+The WDM of this chapter does the same **outside** the optics, with a separate mux, to share a fiber pair between several
+independent links.
+</Callout>
+
+## CWDM and DWDM
+
+Two families share the market, depending on channel spacing:
+
+| | CWDM (*Coarse*) | DWDM (*Dense*) |
+|---|---|---|
+| Standard grid | ITU-T G.694.2: 18 wavelengths from 1271 to 1611 nm, **20 nm** apart | ITU-T G.694.1: a frequency grid around 193.1 THz, spaced **100 or 50 GHz** (about 0.8 or 0.4 nm) |
+| Number of channels | up to 18, often 8 or 16 in practice | 40, 80, even more than 90 |
+| Lasers | simple, not temperature-controlled, cheap | precise, temperature-stabilized, more expensive |
+| Amplification | no | yes, with optical amplifiers (EDFA) in the C band, 1530 to 1565 nm |
+| Distance | a few tens of kilometers | hundreds, even thousands of kilometers |
+| Typical use | campus, links between nearby data centers, short dark fiber | carriers, long data center interconnects, high capacity |
+
+CWDM wins on **price**: wide channels tolerate imprecise lasers that drift with temperature. DWDM wins on **capacity**
+and **distance**: tight channels let you fit many of them, and they all fall in the band where optical amplifiers work,
+which regenerates every channel at once.
+
+<Callout type="field">
+On older fibers, CWDM channels around 1383 nm are sometimes unusable: the glass of these fibers absorbs strongly at that
+wavelength (the "water peak"). Recent single-mode fibers (G.652.D) fixed this defect. Before choosing a CWDM channel plan
+on leased fiber, ask the carrier for the fiber type and a loss measurement.
+</Callout>
+
+## WDM optics
+
+- **Colored CWDM optics**: SFP, SFP+ or QSFP set at the factory to one wavelength of the CWDM grid. Their latch or label
+  often carries a **color code** specific to each wavelength, so they don't get mixed up.
+- **Fixed DWDM optics**: set to one channel of the DWDM grid, identified by its number or frequency.
+- **Tunable DWDM optics**: the channel is chosen by configuration. A single part number in stock replaces dozens of
+  colored optics.
+- **Coherent optics** (400ZR, ZR+): 400 Gb/s DWDM optics in QSFP-DD or OSFP form factor, which plug **directly** into a
+  switch or router. They use the same modulation technique as carriers' equipment, and the OIF's 400ZR standard targets
+  data center interconnects up to about 120 km with amplification. ZR+ variants (OpenZR+ agreement) go further and
+  support several speeds.
+
+With pluggable coherent optics, a data center interconnect can do without dedicated transport chassis: the switch
+transmits the DWDM wavelength directly, and the mux, often with an amplifier, does the rest. This is called **IP over
+DWDM**.
+
+## Multiplexers, add and drop
+
+- **Mux / demux**: ports are labeled by wavelength (1271, 1291…) or DWDM channel, plus a **common** (*line*) port to the
+  fiber. Some add a **1310 nm** or **1550 nm** port for a standard optic on top of the colored channels.
+- **OADM** (*Optical Add-Drop Multiplexer*): at an intermediate site, it drops and adds a few wavelengths and lets the
+  others through. A fiber ring between three sites can thus carry links between each pair of sites.
+- **ROADM** (*Reconfigurable OADM*): the remotely controllable version, used by carriers to change dropped wavelengths
+  without a site visit.
+- **Single-fiber mux**: using different wavelengths for each direction, transmit and receive go through **a single**
+  fiber, doubling a pair's capacity.
+
+## The optical budget, again
+
+A mux is passive, but it isn't free: each pass costs power, a few dB depending on the model and number of channels. A WDM
+link goes through **two** muxes, on top of the fiber and connectors:
+
+| Element | To add up |
+|---|---|
+| Single-mode fiber | length × attenuation (about 0.35 dB/km around 1310 nm, less around 1550 nm) |
+| Mux at transmit and demux at receive | each one's insertion loss, given by the manufacturer |
+| Connectors and patching | a few tenths of a dB each |
+| Aging and repair margin | 2 to 3 dB, for future splices and aging |
+
+The total must stay below the **optic's budget** (minimum transmit power minus receiver sensitivity), otherwise you need
+more powerful optics or an amplifier.
+
+<Callout type="warning">
+The opposite trap exists too: a long-reach optic (ER, ZR) on a short fiber sends **too much** light, and the receiver
+saturates. The link is unstable or won't come up, although everything looks perfect. The fix is an optical
+**attenuator**, a small part screwed onto the connector that removes a few dB. The optic's datasheet gives the maximum
+receive power to respect.
+</Callout>
+
+## A concrete case: connecting two data centers
+
+Two data centers are 25 km apart, and the company leases **two dark fiber pairs** taking different paths. The border
+leaves of both sites must be connected: two 100G links per path.
+
+<Topology
+  width={760}
+  height={300}
+  groups={[
+    { x: 16, y: 20, w: 190, h: 260, label: 'DC1', tone: 'sky' },
+    { x: 554, y: 20, w: 190, h: 260, label: 'DC2', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'b1', type: 'switch', x: 80, y: 90, label: 'border1', sub: 'DC1' },
+    { id: 'b2', type: 'switch', x: 80, y: 210, label: 'border2', sub: 'DC1' },
+    { id: 'm1', type: 'router', x: 170, y: 90, label: 'mux A1', tone: 'amber' },
+    { id: 'm2', type: 'router', x: 170, y: 210, label: 'mux B1', tone: 'amber' },
+    { id: 'm3', type: 'router', x: 590, y: 90, label: 'mux A2', tone: 'amber' },
+    { id: 'm4', type: 'router', x: 590, y: 210, label: 'mux B2', tone: 'amber' },
+    { id: 'b3', type: 'switch', x: 680, y: 90, label: 'border3', sub: 'DC2' },
+    { id: 'b4', type: 'switch', x: 680, y: 210, label: 'border4', sub: 'DC2' },
+  ]}
+  links={[
+    { from: 'b1', to: 'm1', label: '2 λ' }, { from: 'b2', to: 'm2', label: '2 λ' },
+    { from: 'm1', to: 'm3', label: 'path A · 25 km · 1 pair', tone: 'emerald' },
+    { from: 'm2', to: 'm4', label: 'path B · 27 km · 1 pair', tone: 'emerald' },
+    { from: 'm3', to: 'b3', label: '2 λ' }, { from: 'm4', to: 'b4', label: '2 λ' },
+  ]}
+  caption="Two dark fiber pairs on two different paths, each with a mux at both ends. A backhoe on one path cuts two links, not the interconnect."
+/>
+
+The choices to make:
+
+- **CWDM or DWDM?** At 25 km without amplification, with few channels, CWDM is often enough. If capacity must grow a lot,
+  DWDM and its dozens of channels avoid leasing more fiber later.
+- **The channel plan**: which wavelength for which link, documented and labeled on every mux port and every optic. Both
+  ends of a link use the **same** wavelength, on the same port number of both muxes.
+- **Diversity**: two physically separate paths (not in the same trench, not over the same bridge), otherwise a single cut
+  takes everything down. Logical redundancy (two BGP links, ECMP) only has value if the fibers are truly independent.
+- **Monitoring**: each optic's receive power (DOM), tracked in [monitoring](/en/courses/operations/monitoring), reveals
+  a fiber degrading before the cut.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| One link won't come up, the others do | optic with the wrong wavelength for that mux port, or both ends on different channels |
+| No link comes up | transmit and receive swapped on the mux's common port, or wrong fiber type |
+| Unstable link over a short distance | receiver saturated by an optic that is too powerful: an attenuator is missing |
+| Unstable link over a long distance | budget exceeded: both muxes' losses forgotten, fiber longer than planned |
+| All links cut at once | a single physical path, or two paths in the same trench |
+| An optic impossible to track down | undocumented channel plan, unlabeled colored optics |
+
+## Your turn
+
+1. Two sites 15 km apart, a single leased fiber pair, and four 10G links to create. Propose a CWDM solution: which optics,
+   which mux, which channel plan?
+2. Compute this link's budget with 0.35 dB/km, two muxes at 2.5 dB each and four connectors at 0.5 dB. Does a CWDM optic
+   with a 20 dB budget fit?
+3. The need grows to 2 × 400G between the two sites. What would you propose?
+4. Why does a ZR optic on a 2 km fiber cause a problem, and how do you fix it?
+
+## Key takeaways
+
+- **WDM** carries several links over a single fiber pair, each on its own **wavelength**: a **mux** combines them, a
+  **demux** separates them, often passive.
+- Each optic must be **colored** to its port's wavelength; both ends of a link use the same one.
+- **CWDM**: 18 channels 20 nm apart, cheap, a few tens of km. **DWDM**: dozens of tight channels, amplifiable, for high
+  capacity and long distances.
+- **Tunable** and **coherent** optics (400ZR) enable IP over DWDM straight from the switch.
+- The optical budget includes the loss of **both muxes**; conversely, an optic that is too powerful on a short fiber needs
+  an **attenuator**.
+- Redundancy relies on **truly separate fiber paths**, and a documented **channel plan**.

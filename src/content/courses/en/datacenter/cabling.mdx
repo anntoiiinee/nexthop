@@ -1,0 +1,392 @@
+---
+title: "Cabling and connectors: fibers, connectors, transceivers and DACs"
+description: "Everything that plugs in a data center: multimode and single-mode fiber, colors and UPC or APC polish, LC and MPO connectors, polarity, transceivers and their names (SR, LR, DR, FR, SR4, LR4), DAC and AOC cables, FEC, breakout cables and harnesses, optical budget, cleaning and testing."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, cabling, optics, fiber, mpo, dac, transceiver]
+vendor: [arista, cisco]
+order: 4
+---
+
+{/* Output declared in JavaScript: MDX strips leading whitespace inside tags */}
+export const dom = `                                 Bias      Optical   Optical
+          Temp       Voltage   Current   Tx Power  Rx Power
+Port      (Celsius)  (Volts)   (mA)      (dBm)     (dBm)
+--------- ---------- --------- --------- --------- ---------
+Et1         33.48      3.29      7.42     -2.31     -2.84
+Et2         33.95      3.29      7.38     -2.27     -3.12
+Et3         34.10      3.30      7.51     -2.19    -30.00
+Et4         34.02      3.29      7.44     -2.25    -11.87`;
+
+The [Physical infrastructure](/en/courses/datacenter/physical) chapter introduced the main families of cables and
+optics. This one opens the box: what sets one fiber apart from another, why an MPO connector has twelve fibers when only
+eight are used, what SR4 or LR4 means on an optic, when a DAC is enough, and how to break out a 100G port into four 25G
+links. This is the part of the job where a mistake costs hours of searching: a link that won't come up although
+"everything is properly plugged in" is almost always a cabling problem.
+
+## Optical fiber
+
+A fiber carries light in a glass **core**, surrounded by **cladding** that bounces it back towards the center. Two
+families coexist:
+
+| | Multimode (MMF) | Single-mode (SMF) |
+|---|---|---|
+| Core diameter | 50 µm | 9 µm |
+| Categories | OM3, OM4, OM5 | OS2 |
+| Common wavelength | 850 nm | 1310 nm, 1550 nm |
+| Transmitter | VCSEL laser, cheap | more precise laser, more expensive |
+| Reach | from a few tens to a few hundred meters | from 500 m to several tens of km |
+| Usual jacket color | aqua for OM3 and OM4, sometimes violet for OM4, lime green for OM5 | yellow |
+
+Light stays in the core thanks to **total internal reflection**: the core glass has a slightly higher refractive index
+than the cladding, so a ray hitting the wall at a grazing angle bounces back instead of escaping. Multimode's wide core
+accepts cheap transmitters, but light travels along several paths (*modes*): one ray going straight, others bouncing
+more or less often. The paths don't have the same length, the rays don't arrive at the same time, and the pulse
+**spreads**: that is **modal dispersion**. The higher the speed, the shorter and closer together the pulses, and the
+sooner they end up overlapping. Hence reach dropping as speed rises.
+
+<FiberDiagram
+  view="modes"
+  caption="Cross-section view. In multimode, several paths of different lengths: the pulse comes out spread. In single-mode, the core is so thin that a single path remains: the pulse comes out intact."
+/>
+
+Single-mode's thin core lets only one mode through: reach becomes almost unlimited at campus scale, at the cost of more
+expensive optics, whose price gap shrinks every year.
+
+<Callout type="warning">
+Multimode and single-mode fiber **never** mix on the same link, even if the connectors fit. A multimode (SR) optic on
+single-mode fiber, or the reverse, gives at best an unstable link, at worst nothing at all. The jacket color is the first
+clue: aqua or green for multimode, yellow for single-mode.
+</Callout>
+
+### Polish: UPC or APC
+
+A fiber's end is polished, and the shape of the polish matters:
+
+- **UPC** (*Ultra Physical Contact*): flat, slightly domed face. Usually a **blue** connector for single-mode, beige or
+  aqua for multimode.
+- **APC** (*Angled Physical Contact*): face angled at **8 degrees**, which sends reflected light out of the core. **Green**
+  connector. Found on some parallel single-mode optics (DR4) and in carrier networks.
+
+An APC connector and a UPC connector **must not be mated**: the faces don't touch properly, losses skyrocket, and both
+faces can be damaged.
+
+## Connectors
+
+### LC duplex
+
+**LC** is the standard connector for **single-lane** optics: one fiber to transmit (Tx), one to receive (Rx), joined in a
+**duplex** connector. It is small, latches with a clip, and fits the vast majority of SFP optics and some QSFPs. Its
+ancestor, the larger **SC**, still shows up on carrier fiber trays and older equipment.
+
+On a duplex link, each side's transmit must land on the far side's receive: that is **polarity**. LC patch cords are
+crossed (*A to B*) so that it works end to end. If an LC link won't come up and everything else is fine, swapping the two
+fibers on one side is the first test.
+
+### MPO and MTP
+
+**MPO** (*Multi-fiber Push On*) groups **several fibers** in a single rectangular connector: 8, 12, 16 or 24. **MTP** is a
+brand of high-precision MPO, from the manufacturer US Conec: both are compatible. It is used for **parallel optics**,
+which send several streams over several fibers, and for structured cabling **trunks** between racks.
+
+Three details matter:
+
+- **male or female**: a male MPO has two guide **pins**, a female MPO two holes. You always mate a male to a female.
+  Optics usually have pins: the patch cords plugged into them are **female**.
+- **the key**, a bump on top, which gives the connector's orientation. Adapters are "key up / key down" or "key up / key
+  up", and that changes fiber positions from end to end.
+- **polarity**: the TIA-568 standard defines three methods, **A**, **B** and **C**, which say how fibers cross inside the
+  trunk. The whole chain (trunk, cassettes, patch cords) must follow the **same** method.
+
+A 100GBASE-SR4 optic only uses **8** of an MPO-12's 12 positions: four to transmit, four to receive, the four in the
+middle stay empty.
+
+<PacketFormat
+  cols={12}
+  rows={[
+    { label: 'MPO-12', fields: [
+      { label: '1', sub: 'Tx', span: 1, tone: 'emerald' },
+      { label: '2', sub: 'Tx', span: 1, tone: 'emerald' },
+      { label: '3', sub: 'Tx', span: 1, tone: 'emerald' },
+      { label: '4', sub: 'Tx', span: 1, tone: 'emerald' },
+      { label: '5', sub: '—', span: 1, tone: 'slate' },
+      { label: '6', sub: '—', span: 1, tone: 'slate' },
+      { label: '7', sub: '—', span: 1, tone: 'slate' },
+      { label: '8', sub: '—', span: 1, tone: 'slate' },
+      { label: '9', sub: 'Rx', span: 1, tone: 'violet' },
+      { label: '10', sub: 'Rx', span: 1, tone: 'violet' },
+      { label: '11', sub: 'Rx', span: 1, tone: 'violet' },
+      { label: '12', sub: 'Rx', span: 1, tone: 'violet' },
+    ] },
+  ]}
+  minWidth="36rem"
+  caption="An MPO-12's positions on an SR4 or DR4 optic: four transmit fibers, four receive fibers. With type B polarity, position 1 on one side lands on position 12 on the other: transmit lands on receive."
+/>
+
+<Callout type="field">
+MPO is the most frequent source of failures in new installations: a trunk in polarity A with cassettes meant for
+polarity B, a "key up / key up" adapter instead of "key up / key down", and every link in a rack stays dark. Before an
+installation, settle on **one** polarity method for the whole site, write it down, and order all cabling accordingly.
+</Callout>
+
+## Transceivers
+
+A **transceiver** (or optic, or module) converts the switch's electrical signal into light, and back. It plugs into the
+port's cage. The **form factor** (SFP28, QSFP28, QSFP-DD, OSFP…) says which port it fits; the **type** says which cable
+and distance it works with.
+
+### Reading an optic's name
+
+The name follows a logic, standardized by the IEEE for most of them:
+
+- the **speed**: 10GBASE, 25GBASE, 100GBASE, 400GBASE;
+- the **reach** and medium: **SR** (*short reach*, multimode), **DR** (500 m, single-mode), **FR** (2 km, single-mode),
+  **LR** (10 km, single-mode), **ER** (40 km), **ZR** (80 km and beyond);
+- the **number of lanes** as a suffix: SR**4** uses 4 fiber pairs in parallel (MPO connector), LR**4** uses 4 different
+  **wavelengths** over a single fiber pair (LC connector), multiplexed inside the optic.
+
+| Optic | Form factor | Fiber | Connector | Indicative reach |
+|---|---|---|---|---|
+| 10GBASE-SR | SFP+ | multimode | LC duplex | 300 m (OM3), 400 m (OM4) |
+| 10GBASE-LR | SFP+ | single-mode | LC duplex | 10 km |
+| 25GBASE-SR | SFP28 | multimode | LC duplex | 70 m (OM3), 100 m (OM4) |
+| 25GBASE-LR | SFP28 | single-mode | LC duplex | 10 km |
+| 100GBASE-SR4 | QSFP28 | multimode, 4 pairs | MPO-12 | 70 m (OM3), 100 m (OM4) |
+| 100G-CWDM4 | QSFP28 | single-mode, 4 wavelengths | LC duplex | 2 km |
+| 100GBASE-LR4 | QSFP28 | single-mode, 4 wavelengths | LC duplex | 10 km |
+| 400GBASE-DR4 | QSFP-DD, OSFP | single-mode, 4 pairs | MPO-12 (APC) | 500 m |
+| 400GBASE-FR4 | QSFP-DD, OSFP | single-mode, 4 wavelengths | LC duplex | 2 km |
+| 400GBASE-SR8 | QSFP-DD, OSFP | multimode, 8 pairs | MPO-16 | 70 m (OM3), 100 m (OM4) |
+
+Each family works on its own wavelengths: 850 nm for multimode, around 1310 nm for single-mode medium distances, around
+1550 nm for long distances, where fiber attenuates the least.
+
+<FiberDiagram
+  view="wavelengths"
+  caption="Wavelengths of common optics. CWDM4 and FR4 optics use four colors of the CWDM grid, 20 nm apart, in a single fiber."
+/>
+
+Reaches are the standards'; each optic's datasheet prevails. Some optics don't come from the IEEE but from an agreement
+between manufacturers, an **MSA** (*Multi-Source Agreement*): 100G-CWDM4 is an example. To carry several independent
+links over the same fiber pair, see [WDM multiplexing](/en/courses/datacenter/wdm).
+
+<Callout type="tip">
+There are also **BiDi** (bidirectional) optics, which transmit and receive on two different wavelengths over **a single
+pair** of multimode fibers: they let you move from 10G to 40G or 100G while reusing existing LC duplex cabling, without
+laying MPO.
+</Callout>
+
+### Monitoring an optic: DOM
+
+Most optics include digital monitoring (*Digital Optical Monitoring*, DOM): temperature, voltage, laser current,
+**transmit power** and **receive power**, with alert thresholds provided by the module itself.
+
+```text title="Arista EOS and Cisco IOS"
+show interfaces transceiver
+show inventory
+```
+
+Power is expressed in **dBm** (a logarithmic scale: every 3 dB loss halves the power). Receive power close to the low
+threshold points to a dirty, bent, too long fiber or a damaged connector. Watching these values in
+[monitoring](/en/courses/operations/monitoring) lets you see a link degrade before it drops.
+
+### Pinched, broken or missing fiber: reading receive power
+
+<Callout type="warning">
+A **pinched fiber** is a real physical-layer failure, and one of the sneakiest. A cable tie pulled too tight, a rack door
+closed on a bundle, a fiber caught under a rail or an overfilled cable tray: the fiber is bent beyond its **minimum bend
+radius**, light escapes the core, and receive power drops. Nothing shows from outside, and the jacket can even hide a
+**broken** fiber. Depending on severity, the link goes down, or worse, it stays up with CRC errors and intermittent drops,
+as vibrations and the door move. Use velcro straps rather than tight ties, respect the bend radius given by the
+manufacturer, and leave no fiber in a door's path.
+</Callout>
+
+Receive power, read through DOM, is the first clue. Here is what the command could look like on a production leaf, with
+four ports going down to 25G SR servers. *Illustrative example: values are made up, and the exact layout varies by
+vendor and version.*
+
+<CliOutput
+  title="leaf1# show interfaces transceiver (illustrative example, made-up values)"
+  output={dom}
+  notes={[
+    { line: 5, match: '-2.84', text: 'Healthy port: receive power is close to transmit power, a few dBm below zero, like neighboring ports.', tone: 'emerald' },
+    { line: 7, match: '-30.00', text: 'Nothing arrives anymore: -30 dBm is in practice the optic’s measurement floor. The switch transmits fine (`-2.19`), but receives no light from the server: the server’s transmit fiber is broken or unplugged, transmit and receive are swapped, or the server’s laser is off.', tone: 'rose' },
+    { line: 8, match: '-11.87', text: 'Light arrives, but almost 9 dB weaker than on neighboring ports: pinched fiber, tight bend, dirty connector or too much patching. The link may still come up, with CRC errors.', tone: 'amber' },
+  ]}
+/>
+
+Receive power at the **floor** (-30 or -40 dBm depending on the optic) therefore means **no light** arrives: the server
+sends nothing to the switch, or what it sends doesn't arrive. The switch itself may well be transmitting normally. To
+locate the fault, compare receive power **on both sides** of the link:
+
+| Received by the switch | Received by the server | Diagnosis |
+|---|---|---|
+| normal | normal | the physical layer is healthy: look higher (VLAN, LACP, configuration) |
+| at the floor | normal | the **server to switch** direction is cut: the server's transmit fiber is broken, pinched or unplugged, or the server's interface is disabled (laser off) |
+| normal | at the floor | the **switch to server** direction is cut: the same in the other direction |
+| at the floor | at the floor | both fibers are cut, the cable is unplugged, or transmit and receive are **swapped** on a patch panel: each side transmits into the other's transmit |
+| low, several dB below neighboring ports | | pinched fiber, bend, dirty connector, or budget exceeded by too much patching |
+
+<Callout type="tip">
+To find the exact spot of a pinched fiber, a **red laser pen** plugged into one end makes the jacket glow where light
+escapes: the pinch or break point lights up in the rack. And always compare a suspicious port with its **neighbors**:
+identical optics and fibers give close power levels, a gap of several dB is abnormal. Finally, track receive power in
+[monitoring](/en/courses/operations/monitoring), with an alert: a slowly degrading fiber shows weeks before it fails.
+</Callout>
+
+### Third-party optics
+
+Each vendor sells its own optics, and switches often check the module's **coding** (a memory holding the manufacturer
+and part number). **Third-party** optics, coded for the vendor, cost much less and generally work well. But some vendors
+reject them by default, or limit support in case of failure: check before rolling them out, and test them on your
+hardware.
+
+## DAC and AOC cables
+
+### DAC: copper instead of optics
+
+A **DAC** (*Direct Attach Copper*) is a twinax copper cable whose ends are SFP or QSFP modules, crimped at the factory. No
+laser, no fiber: it is the **cheapest** and **least power-hungry** way to connect two nearby devices, typically a server
+to its leaf in the same rack.
+
+| | Passive DAC | Active DAC (ACC, AEC) | AOC |
+|---|---|---|---|
+| Construction | copper only | copper with signal reconditioning electronics | fiber with an optic crimped at each end |
+| Length | short: a few meters, less as speed rises | somewhat longer | up to a few tens of meters |
+| Power draw | almost none | low | that of two optics |
+| Bulk | thick and stiff cable | thick | thin and flexible |
+
+DACs have two drawbacks. They are **thick**: a bundle of forty DACs hampers airflow and bend radius. And their **length
+is fixed**: you must order the right one, and a DAC that is too long coils poorly in the rack.
+
+### FEC, the trap of 25G and faster links
+
+At 25 Gb/s and above, the signal over copper is so degraded that **error correction** is needed (*Forward Error
+Correction*, FEC): check data that lets the receiver correct erroneous bits. There are several modes (*Fire Code*,
+*Reed-Solomon*), and a long DAC needs a stronger one than a short DAC.
+
+<Callout type="warning">
+FEC must be **the same on both sides**. A server configured without FEC facing a switch that requires one, and the 25G
+link won't come up, with no explicit error. It is the classic failure of a first 25G server connection: check the
+switch's FEC mode and the NIC's, and align them. On the switch, the command lives in the interface configuration
+(`error-correction encoding` on Arista EOS, `fec` on other platforms); the platform documentation lists the accepted
+modes.
+</Callout>
+
+### AOC
+
+An **AOC** (*Active Optical Cable*) looks like a DAC, but it is a fiber with an optic crimped at each end. Thinner and
+longer than a DAC, it is used between neighboring racks. Like the DAC, it can't be taken apart: if one end fails, you
+replace the whole cable.
+
+## Breakout
+
+A 4-lane QSFP port can work as **four** independent ports, provided the switch supports that mode on that port. That is
+**breakout**. Three ways to cable it:
+
+| Cable | One end | Other end | Use |
+|---|---|---|---|
+| **Breakout DAC** | 1 × QSFP28 (100G) | 4 × SFP28 (25G) | one leaf 100G port to four 25G servers in the same rack |
+| **Breakout AOC** | 1 × QSFP28 | 4 × SFP28 | the same, a bit further away |
+| **Optical harness** | MPO-12 on an SR4 or DR4 optic | 4 × LC duplex | one 100G SR4 optic to four 25G SR optics, or one 400G DR4 to four 100G DR |
+
+<Topology
+  width={760}
+  height={420}
+  nodes={[
+    { id: 'leaf', type: 'switch', x: 130, y: 195, label: 'leaf1', sub: 'Ethernet49 (QSFP28, 100G)', tone: 'sky' },
+    { id: 's1', type: 'server', x: 620, y: 45, label: 'server 1', sub: '25G' },
+    { id: 's2', type: 'server', x: 620, y: 150, label: 'server 2', sub: '25G' },
+    { id: 's3', type: 'server', x: 620, y: 255, label: 'server 3', sub: '25G' },
+    { id: 's4', type: 'server', x: 620, y: 355, label: 'server 4', sub: '25G' },
+  ]}
+  links={[
+    { from: 'leaf', to: 's1', label: 'Ethernet49/1' },
+    { from: 'leaf', to: 's2', label: 'Ethernet49/2' },
+    { from: 'leaf', to: 's3', label: 'Ethernet49/3' },
+    { from: 'leaf', to: 's4', label: 'Ethernet49/4' },
+  ]}
+  caption="A QSFP28 port broken out into four 25G links. On the switch side, the port becomes four interfaces: Ethernet49/1 to 49/4 on Arista."
+/>
+
+Once broken out, the switch presents the port as **four interfaces**, each configurable separately (VLAN, description,
+speed). Naming depends on the vendor: `Ethernet49/1` to `Ethernet49/4` on Arista EOS, for example. How to enable
+breakout depends on the switch model and version: some enable it as soon as you configure a sub-interface's speed,
+others need a global command and sometimes a reboot. Check the platform documentation before planning a breakout.
+
+<Callout type="note">
+In a broken-out port, the four links share the same cage: replacing the optic or cable cuts all four at once. And not
+every port on a switch can necessarily be broken out: on some models, breaking out one port disables a neighbor. The
+datasheet lists the ports concerned.
+</Callout>
+
+## The optical budget
+
+Each optic has a **budget**: the maximum loss, in dB, the link can suffer between transmitter and receiver. Each element
+along the path consumes part of it:
+
+| Element | Loss (order of magnitude) |
+|---|---|
+| Multimode fiber at 850 nm | about 3 dB per km |
+| Single-mode fiber at 1310 nm | about 0.4 dB per km |
+| Each mated connector pair (patch cord on a panel, MPO cassette) | 0.2 to 0.75 dB depending on quality |
+
+Example: an 80 m 100G SR4 link over OM4, crossing two patch panels and a cassette, adds up the fiber's loss (about
+0.25 dB) and that of four mated connections (1 to 2 dB). Short high-speed multimode links have tight budgets, around
+2 dB: a few too many or average-quality connections are enough to exceed them. Before designing cabling with a lot of
+patching, add up the losses and compare them with the budget stated by the standard or the optic's datasheet.
+
+## Cleaning and testing
+
+- **Clean before every connection**, even a brand-new connector straight out of its bag: a one-click cleaner for ports
+  and connectors, a cleaning cassette for patch cords.
+- **Inspect** with a microscope or inspection probe: a scratch or speck of dust on the core shows immediately.
+- **Test**:
+  - a **red laser pen** (*visual fault locator*) shows a fiber's continuity and the location of a break;
+  - a **power meter and light source** measure a link's actual loss, to compare with the budget;
+  - a **reflectometer** (OTDR) precisely locates connectors, splices and defects along a fiber.
+- **Cap** unused ports and optics: dust also settles in cages.
+
+<Callout type="tip">
+Fiber patch cords, MPO trunks and DACs can be **ordered pre-labeled**: the supplier prints at each end the cable's
+identifier and both termination points (rack, panel or device, port), following your naming convention, often at the
+exact length requested. With a cabling plan pulled from NetBox, ordering, installation and documentation all rely on the
+same list, and cabling mistakes become rare.
+</Callout>
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| Link doesn't come up, no error | reversed polarity (LC or MPO), multimode and single-mode mixed, SR and LR optics facing each other |
+| 25G link dark with a DAC or between switch and server | different FEC mode on each side, or speed not forced |
+| Low receive power, CRC errors | dirty connector, tight bend, too many connections for the budget |
+| Receive power at the floor (-30 or -40 dBm), transmit normal | nothing arrives: broken or unplugged fiber, transmit and receive swapped, or far-end laser off |
+| Link drops when the rack door is opened or closed | fiber pinched by the door or a cable tie: it bends with every movement |
+| Very high loss on a single-mode link | APC connector mated to a UPC |
+| Every MPO link dark in a rack | different polarity method or MPO adapter type on part of the chain |
+| Optic rejected by the switch | unsupported third-party optic, or form factor not supported by that port |
+| Four servers cut at once | they share one broken-out port, whose optic or cable was removed |
+
+## Your turn
+
+1. A leaf has 48 SFP28 ports and 8 QSFP28 ports. A neighboring rack hosts 12 servers with two 25G ports each. Propose two
+   cabling designs: with optics and patch cords, then with breakout cables from the QSFP28 ports. How many QSFP28 ports
+   does the second one need?
+2. A room is cabled with OM4. The spines are 120 m from the leaves. Are 100GBASE-SR4 optics suitable? What would you
+   suggest?
+3. On a switch, run `show interfaces transceiver` and find an optic's transmit and receive power. Which of the two tells
+   you about the fiber's quality?
+4. A 25G link between a switch and a server stays dark. List, in order, the cabling checks to make.
+
+## Key takeaways
+
+- **Multimode** (OM3, OM4, OM5, aqua or green jacket, 850 nm, short distances) and **single-mode** (OS2, yellow jacket,
+  long distances) never mix; neither do **APC** (green) and **UPC** (blue).
+- **LC duplex** for single-lane optics, **MPO** for parallel optics and trunks: mind the gender (pins), the key and
+  **polarity** (methods A, B, C, a single one for the whole site).
+- An optic's name says it all: speed, reach (**SR**, **DR**, **FR**, **LR**) and lanes (**SR4** in parallel over MPO,
+  **LR4** as wavelengths over LC).
+- **DAC** for short distances (the cheapest), **AOC** a bit further, and the same **FEC** on both sides at 25G and above.
+- **Breakout** turns a QSFP port into four interfaces, through a DAC, AOC or MPO-to-LC harness.
+- Add up losses against the **optical budget**, **clean** before every connection, and watch **receive power** (DOM).

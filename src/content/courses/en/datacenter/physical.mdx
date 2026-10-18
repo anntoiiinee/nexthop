@@ -1,0 +1,306 @@
+---
+title: "Physical infrastructure: racks, cabling and switch placement"
+description: "The physical side of a data center: racks, hot and cold aisles and airflow direction, switch placement (top of rack, top of 3 racks, middle and end of row), copper, DAC, AOC and fiber cables, optics and speeds, breakout cables, redundant power, management and documentation."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, cabling, optics, tor, eor, physical]
+vendor: [arista, netbox]
+order: 3
+---
+
+The [Spine/leaf architecture](/en/courses/datacenter/spine-leaf) chapter describes a topology: every leaf connected to
+every spine. In the field, you then have to decide **where** those switches physically sit, **how** to connect them to
+servers and to each other, with which cables and optics, and how to power them. These choices are made before the
+first line of configuration, are expensive to undo, and explain a good share of a data center's "mysterious"
+outages. This chapter covers layer 1.
+
+## The room and the racks
+
+Equipment lives in **racks**, standardized cabinets 19 inches wide on the equipment side. Their height is counted in
+**units** (U): 1U = 44.45 mm. A standard rack is **42U** (about 2 m), sometimes 45U or 48U. A common server takes 1U
+or 2U, a rack switch 1U or 2U, a chassis 7U to 16U. Network racks are often **wider** (800 mm instead of 600 mm) to let
+cable bundles run along the sides.
+
+Racks are lined up in **rows**, facing each other, to organize cooling:
+
+- **cold aisles** receive conditioned air, in front of the racks;
+- equipment draws air in at the **front** and blows it out hot at the **back**, into the **hot aisles**;
+- **containment** (doors and a roof over the cold or hot aisle) keeps both airflows from mixing, and greatly improves
+  cooling efficiency.
+
+<Callout type="warning">
+A switch's **airflow direction** is chosen when ordering. In a server rack, servers' network cards are almost always
+at the **back**, on the hot aisle side: the rack switch is therefore mounted **ports facing the back**, and must draw
+air in on the power supply side and blow it out on the port side (*port-side exhaust*). A switch ordered with the
+opposite airflow draws in hot air from the hot aisle, heats up, and ends up shutting down or getting damaged. Vendors
+sell each model in both directions, with fans and power supplies of different colors: check the part number before
+ordering, and the color before installing.
+</Callout>
+
+## Where to place access switches
+
+This is the most structuring choice: it determines cable length and count, the number of switches, and the size of a
+failure domain. Four models exist.
+
+### Top of Rack (ToR)
+
+Each server rack gets **its own pair of switches**, at the top of the rack. Servers connect with very short cables
+that never leave the rack; only the uplinks to the spines, over fiber, run through the cable tray.
+
+<RackElevation
+  racks={[
+    { label: 'Rack 1', sub: 'leaves 1 and 2', items: [
+      { u: 41, h: 1, label: 'leaf1', kind: 'switch' }, { u: 40, h: 1, label: 'leaf2', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 1U servers', kind: 'server' },
+    ] },
+    { label: 'Rack 2', sub: 'leaves 3 and 4', items: [
+      { u: 41, h: 1, label: 'leaf3', kind: 'switch' }, { u: 40, h: 1, label: 'leaf4', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 1U servers', kind: 'server' },
+    ] },
+    { label: 'Rack 3', sub: 'leaves 5 and 6', items: [
+      { u: 41, h: 1, label: 'leaf5', kind: 'switch' }, { u: 40, h: 1, label: 'leaf6', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 20, label: '20 1U servers', kind: 'server' },
+    ] },
+  ]}
+  links={[
+    { from: [0, '20 1U servers'], to: [0, 'leaf1'] },
+    { from: [1, '20 1U servers'], to: [1, 'leaf3'] },
+    { from: [2, '20 1U servers'], to: [2, 'leaf5'] },
+  ]}
+  caption="Top of rack: each rack has its pair of leaves and its management switch. Server cables stay in the rack (1 to 3 m DACs)."
+/>
+
+It is the natural model of spine/leaf fabrics: **one pair of leaves per rack**, each server connected to both (with
+[MLAG](/en/courses/fundamentals/link-aggregation) or EVPN multihoming). A whole rack is installed, cabled and tested as
+one block. In return, you need many switches, and in a sparsely filled rack, many of their ports stay unused.
+
+### Top of 3 racks
+
+A ToR variant: the switch pair is installed in the **middle rack** of a group of three, and also serves the racks on
+the **left** and **right**. Server cables leave their rack but stay very short, since they only go to the next rack.
+
+<RackElevation
+  racks={[
+    { label: 'Rack 1', sub: 'servers', items: [
+      { u: 39, h: 2, label: 'patch panel', kind: 'patch' },
+      { u: 1, h: 16, label: '16 servers', kind: 'server' },
+    ] },
+    { label: 'Rack 2', sub: 'leaves 1 and 2', items: [
+      { u: 41, h: 1, label: 'leaf1', kind: 'switch' }, { u: 40, h: 1, label: 'leaf2', kind: 'switch' },
+      { u: 39, h: 1, label: 'mgmt', kind: 'mgmt' },
+      { u: 1, h: 16, label: '16 servers', kind: 'server' },
+    ] },
+    { label: 'Rack 3', sub: 'servers', items: [
+      { u: 39, h: 2, label: 'patch panel', kind: 'patch' },
+      { u: 1, h: 16, label: '16 servers', kind: 'server' },
+    ] },
+  ]}
+  links={[
+    { from: [0, '16 servers'], to: [1, 'leaf1'], label: 'AOC / fiber' },
+    { from: [1, '16 servers'], to: [1, 'leaf2'] },
+    { from: [2, '16 servers'], to: [1, 'leaf1'] },
+  ]}
+  caption="Top of 3 racks: the middle rack holds the leaves, neighboring racks only hold servers. One pair of 48-port switches thus serves three moderately filled racks."
+/>
+
+The benefit is economic: when racks are limited by power or cooling (a rack of GPU-loaded servers sometimes only
+holds a few of them), a single leaf pair finally fills its ports. Cables crossing racks are longer than in pure ToR:
+3 to 5 m DACs if they stay short, otherwise AOC or fiber. And the failure domain grows: an incident on the leaf pair
+affects three racks.
+
+### Middle of Row and End of Row
+
+Access switches are no longer in server racks, but in a **dedicated network rack**, at the **end** of the row (*End of
+Row*, EoR) or in the **middle** (*Middle of Row*, MoR) to shorten the longest cables. They often hold modular
+**chassis** with high port counts. Each server rack has a **patch panel**, connected to the network rack by
+**structured cabling** laid once and for all.
+
+<RackElevation
+  racks={[
+    { label: 'Rack 1', sub: 'servers', items: [
+      { u: 40, h: 2, label: 'patch panel', kind: 'patch' },
+      { u: 1, h: 24, label: '24 servers', kind: 'server' },
+    ] },
+    { label: 'Rack 2', sub: 'servers', items: [
+      { u: 40, h: 2, label: 'patch panel', kind: 'patch' },
+      { u: 1, h: 24, label: '24 servers', kind: 'server' },
+    ] },
+    { label: 'Rack 3', sub: 'servers', items: [
+      { u: 40, h: 2, label: 'patch panel', kind: 'patch' },
+      { u: 1, h: 24, label: '24 servers', kind: 'server' },
+    ] },
+    { label: 'Network rack', sub: 'end of row', items: [
+      { u: 27, h: 11, label: 'chassis A', kind: 'switch' },
+      { u: 14, h: 11, label: 'chassis B', kind: 'switch' },
+      { u: 39, h: 3, label: 'patch panel', kind: 'patch' },
+    ] },
+  ]}
+  links={[
+    { from: [0, 'patch panel'], to: [3, 'patch panel'], label: 'structured cabling' },
+    { from: [1, 'patch panel'], to: [3, 'patch panel'] },
+    { from: [2, 'patch panel'], to: [3, 'patch panel'] },
+  ]}
+  caption="End of row: switches are grouped in a network rack. Each server rack is connected by bundles laid once, and everything is patched in the network rack."
+/>
+
+### Comparing the four models
+
+| | Top of Rack | Top of 3 racks | Middle / End of Row |
+|---|---|---|---|
+| Switches | one pair per rack | one pair for three racks | a few large switches or chassis per row |
+| Server cables | very short, in the rack (DAC) | short, to the next rack (long DAC, AOC) | long, through structured cabling and patching |
+| Port utilization | low if racks are sparsely filled | good | very good |
+| Failure domain | one rack | three racks | one row |
+| Growth | add a complete rack, as a block | add a group of three racks | add line cards to the chassis |
+| Typical use | spine/leaf fabrics, cloud, dense racks | power-limited racks (GPU, storage) | enterprise networks, mixed rooms, heterogeneous equipment |
+
+<Callout type="field">
+In enterprise data centers, you often see a mix: ToR for recent virtualization rows, legacy EoR in older rooms, and
+dedicated network racks for spines, border leaves and firewalls. **Spines**, for their part, are almost always grouped
+in one or two network racks, from which fibers run to each leaf.
+</Callout>
+
+## Cables
+
+| Type | What it is | Typical reach | Use |
+|---|---|---|---|
+| **Copper RJ45** (Cat6A) | the classic Ethernet cable | 100 m, up to 10 Gb/s | management, servers' administration cards, desktops |
+| **DAC** (*Direct Attach Copper*) | copper cable with a module crimped at each end | a few meters (passive), a bit more when active | server to leaf in the same rack: the cheapest and least power-hungry |
+| **AOC** (*Active Optical Cable*) | fiber with an optical module crimped at each end | a few tens of meters | neighboring racks, when a DAC is too short or too thick |
+| **Multimode fiber** (OM3, OM4, OM5) | wide-core fiber, cheap transmitters | from a few tens to a few hundred meters depending on speed | inside the room: leaf to spine, structured cabling |
+| **Single-mode fiber** (OS2) | thin-core fiber, much longer reach | from 500 m to 10 km and beyond | between rooms, between buildings, new 400G+ rooms |
+
+The higher the speed, the shorter the multimode reach: at 10 Gb/s (10GBASE-SR), it reaches 300 m on OM3; at 25 and
+100 Gb/s (25GBASE-SR, 100GBASE-SR4), about 70 m on OM3 and 100 m on OM4. That is why new rooms increasingly move to
+**single-mode** fiber, even for short distances. These are orders of magnitude: the exact reach is on each optic's
+datasheet. The [Cabling and connectors](/en/courses/datacenter/cabling) chapter details fibers, connectors, optics, DACs
+and breakout.
+
+### Connectors and structured cabling
+
+- **LC duplex**: two fibers (transmit and receive), for single-lane optics (SR, LR).
+- **MPO** (or MTP): 8, 12 or 16 fibers in one connector, for parallel optics (SR4, DR4) and structured cabling
+  **trunks**. Wrong **polarity** (transmit on one side landing on transmit on the other) is the classic MPO failure:
+  the link doesn't come up, although everything looks properly plugged in.
+- **Structured cabling** connects racks with fiber trunks laid once, ending on **patch panels**. Connections are then
+  made with short patch cords, without ever pulling a cable out of the raised floor or the cable tray.
+
+<Callout type="tip">
+A dirty fiber is the first cause of unstable optical links: an invisible speck of dust on a connector is enough to
+drop received power. Clean connectors **before every connection**, with a suitable cleaner, and inspect them with a
+fiber scope. Keep protective caps on unused ports and optics.
+</Callout>
+
+## Optics and speeds
+
+Switch ports don't take cables directly: you insert pluggable **modules**, whose form factor depends on the speed.
+
+| Form factor | Common speeds | Note |
+|---|---|---|
+| **SFP+** | 10 Gb/s | the historical server format |
+| **SFP28** | 25 Gb/s | today's server standard, SFP+ compatible |
+| **QSFP+** | 40 Gb/s | 4 × 10 Gb/s lanes, declining |
+| **QSFP28** | 100 Gb/s | 4 × 25 Gb/s lanes; uplinks to spines, spine ports |
+| **QSFP-DD** and **OSFP** | 400 and 800 Gb/s | 8 lanes; recent spines, AI fabrics |
+
+A multi-lane port can often be **broken out**: a 100 Gb/s QSFP28 port becomes four 25 Gb/s links, with a breakout
+cable (a QSFP28 on one end, four SFP28 on the other). A 400 Gb/s port becomes four 100 Gb/s links. It is a common way
+to connect many servers to a switch with fast ports, or to connect different generations. The breakout mode is
+configured per port on the switch, depending on the model.
+
+```text title="Checking an optic (Arista EOS and Cisco IOS)"
+show interfaces transceiver
+show inventory
+```
+
+`show interfaces transceiver` shows, for each optic, the temperature and the **transmit and receive power** (DOM,
+*Digital Optical Monitoring*). Receive power that is too low points to a dirty, damaged or too long fiber.
+`show inventory` lists the modules and their part numbers.
+
+<Callout type="warning">
+**Third-party** optics, cheaper than the vendor's, often work well, but some vendors reject them or limit support.
+Check the vendor's policy before rolling them out, and don't mix both ends of a link at random: an SR (multimode)
+optic doesn't talk to an LR (single-mode) optic, even with the right cable.
+</Callout>
+
+## Counting a rack's ports
+
+Before choosing a switch model, count. Example of a rack with 20 virtualization servers:
+
+| Need | Calculation | Ports |
+|---|---|---|
+| Production NICs, each server connected to both leaves | 20 servers × 2 × 25 Gb/s ports | 40 SFP28 ports, i.e. 20 per leaf |
+| Administration cards (iDRAC, iLO) | 20 × 1 copper port | 20 ports on the management switch |
+| Uplinks to the spines | 4 spines | 4 QSFP28 ports per leaf |
+| Link between the two leaves (MLAG) | 2 links | 2 ports per leaf |
+
+A leaf with 48 SFP28 ports and 8 QSFP28 ports is more than enough, with room for growth, or to serve neighboring racks
+in *top of 3 racks*. The ratio between capacity towards servers and towards spines, **oversubscription**, is computed
+as explained in the [Spine/leaf architecture](/en/courses/datacenter/spine-leaf) chapter.
+
+## Power and redundancy
+
+- Each rack receives **two independent power feeds** (A and B), each with its own **PDU** (the rack's power strip).
+- Each switch and server has **two power supplies**, one on each feed: losing one feed cuts nothing.
+- Each server is connected to **both leaves** of its pair; the two leaves must not depend on the same power feed or the
+  same cable path.
+- The **power** available per rack (often a few kilowatts to a few tens) often limits the number of servers well
+  before the number of units: that is what pushes towards *top of 3 racks* for very dense racks.
+
+## The management network
+
+On top of the fabric, each rack has a small **management switch** for switches' management ports and servers'
+administration cards, and network devices have **console** access through a console server. This network is
+separate from production, to keep control of devices when the fabric is down: that is the topic of the
+[Management and out-of-band access](/en/courses/operations/oob) chapter.
+
+## Documenting the physical layer
+
+A well-cabled but poorly documented rack quickly becomes a poorly cabled rack. Three rules:
+
+- **every cable is labeled at both ends**, with a unique identifier, and the same identifier is in the documentation
+  tool. Cabling suppliers deliver patch cords, DACs and trunks **labeled at the factory**, with the text of your choice
+  printed at each end (identifier, rack and port of each end, sometimes a barcode): you provide the cable list with the
+  order, and labeling no longer depends on everyone's care during installation;
+- **rack elevations** and **cables** are kept in [NetBox](/en/courses/automation/netbox), which can represent racks,
+  each device's unit, patch panels and the full path of a connection;
+- interface names and descriptions follow the [naming conventions](/en/courses/automation/naming-ipam), which lets you
+  automatically compare planned cabling with what LLDP sees.
+
+## Classic pitfalls
+
+| Symptom | Likely cause |
+|---|---|
+| Switch running hot, temperature alarm, shutdown | airflow ordered in the wrong direction for the rack |
+| Optical link doesn't come up | wrong MPO polarity, SR and LR optics mixed, multimode and single-mode fiber mixed |
+| Unstable link, CRC errors | dirty connector, fiber bent too tightly, DAC too long for the speed |
+| Optic rejected by the switch | unsupported third-party optic, or incompatible with the port mode |
+| A whole rack lost during power maintenance | both leaves' power supplies on the same feed |
+| Impossible to find where a cable goes | missing labels or outdated documentation |
+
+## Your turn
+
+A row of six racks must host 90 servers, each with two 25 Gb/s ports and one administration port. Power allows at most
+20 servers per rack. The fabric has 4 spines.
+
+1. In **top of rack**, how many leaves are needed, and how many server ports does each one use?
+2. In **top of 3 racks**, with 48-port SFP28 leaves, how many leaves are needed? Are there enough ports?
+3. Which cables would you choose in each case for the servers, and for the uplinks if the spines are in a network rack
+   25 m away?
+4. Draw both power feeds and place the two leaves of a pair so that no single power failure takes down a rack.
+
+## Key takeaways
+
+- Equipment lives in **racks** measured in **U**, lined up in **hot and cold aisles**; a switch's **airflow direction**
+  is chosen when ordering, and getting it wrong causes overheating.
+- **Top of rack**: one pair of leaves per rack, short cables, the fabric model. **Top of 3 racks**: one pair in the
+  middle rack for three racks, better port use. **Middle / End of row**: switches grouped, structured cabling.
+- Cables: **DAC** in the rack, **AOC** to neighbors, **fiber** multimode or single-mode beyond; multimode reach drops
+  as speed rises.
+- **SFP28** optics on the server side, **QSFP28** to **OSFP** on the spine side; **breakout** turns a fast port into
+  several links.
+- Two **power feeds**, two power supplies, two leaves per server, and a separate **management network**.
+- Label every cable at both ends, and document racks and cables in **NetBox**.
