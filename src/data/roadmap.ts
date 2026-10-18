@@ -52,6 +52,9 @@ export const roadmap: RoadmapStep[] = [
     chapters: [
       { slug: 'vrf', title: { fr: 'Les VRF', en: 'VRFs' } },
       { slug: 'spine-leaf', title: { fr: 'L’architecture spine/leaf', en: 'Spine/leaf architecture' } },
+      { slug: 'physical', title: { fr: 'L’infrastructure physique', en: 'Physical infrastructure' } },
+      { slug: 'cabling', title: { fr: 'La connectique', en: 'Cabling and connectors' } },
+      { slug: 'wdm', title: { fr: 'Le multiplexage WDM', en: 'WDM multiplexing' } },
       { slug: 'vxlan', title: { fr: 'VxLAN', en: 'VxLAN' } },
       { slug: 'evpn', title: { fr: 'EVPN, le control plane', en: 'EVPN, the control plane' } },
     ],

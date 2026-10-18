@@ -1,0 +1,194 @@
+---
+title: "Le multiplexage en longueur d'onde (WDM)"
+description: "Faire passer plusieurs liens sur une seule paire de fibres grâce aux longueurs d'onde : multiplexeur et démultiplexeur, CWDM et DWDM, optiques colorées et accordables, optiques cohérentes 400ZR, budget optique, et interconnexion de data centers."
+pubDate: 2026-10-18
+level: intermediate
+tags: [datacenter, wdm, cwdm, dwdm, optics, dci, fiber]
+vendor: [arista, cisco]
+order: 5
+---
+
+Entre deux baies, on tire autant de fibres qu'il en faut. Entre deux bâtiments, deux data centers ou deux villes, c'est
+une autre histoire : chaque paire de fibres se loue cher à un opérateur (on parle de **fibre noire**, une fibre nue sans
+équipement), ou se pose au prix de travaux de génie civil. Le **multiplexage en longueur d'onde** (*Wavelength Division
+Multiplexing*, WDM) multiplie la capacité d'une seule paire : au lieu d'un lien par paire de fibres, on fait passer
+plusieurs liens, chacun sur sa propre **couleur** de lumière.
+
+## Le principe
+
+Une fibre transporte sans difficulté plusieurs longueurs d'onde en même temps, comme un prisme décompose la lumière
+blanche en couleurs qui ne se mélangent pas. Chaque longueur d'onde (notée **λ**, lambda) forme un **canal** indépendant,
+avec son propre débit et son propre protocole.
+
+<FiberDiagram
+  view="wdm"
+  caption="Quatre liens, chacun sur sa longueur d'onde, réunis par un multiplexeur dans une seule paire de fibres, puis séparés par un démultiplexeur à l'arrivée."
+/>
+
+- Le **multiplexeur** (*mux*) réunit les longueurs d'onde de plusieurs optiques dans une seule fibre.
+- Le **démultiplexeur** (*demux*) les sépare à l'arrivée et envoie chacune vers son port.
+- Dans la pratique, un même boîtier fait les deux, pour les deux sens de la paire de fibres. Les modèles courants sont
+  **passifs** : de simples filtres optiques, sans alimentation ni configuration, qui ne tombent donc pas en panne comme
+  un équipement actif.
+
+Chaque optique branchée sur le mux doit émettre **exactement** la longueur d'onde du port où elle est branchée : on parle
+d'**optique colorée**. Une optique 10GBASE-LR standard, à 1310 nm, ne convient pas.
+
+<Callout type="note">
+Le WDM existe déjà **à l'intérieur** de certaines optiques. Une optique 100G-CWDM4 ou 100GBASE-LR4 contient son propre
+multiplexeur : quatre lasers de couleurs différentes réunis dans une seule paire de fibres LC (voir
+[La connectique](/formations/datacenter/cabling)). Le WDM de ce chapitre fait la même chose **à l'extérieur** des
+optiques, avec un mux séparé, pour mutualiser une paire de fibres entre plusieurs liens indépendants.
+</Callout>
+
+## CWDM et DWDM
+
+Deux familles se partagent le marché, selon l'espacement entre les canaux :
+
+| | CWDM (*Coarse*, grossier) | DWDM (*Dense*) |
+|---|---|---|
+| Grille normalisée | UIT-T G.694.2 : 18 longueurs d'onde de 1271 à 1611 nm, espacées de **20 nm** | UIT-T G.694.1 : une grille de fréquences autour de 193,1 THz, espacée de **100 ou 50 GHz** (environ 0,8 ou 0,4 nm) |
+| Nombre de canaux | jusqu'à 18, souvent 8 ou 16 en pratique | 40, 80, voire plus de 90 |
+| Lasers | simples, non régulés en température, bon marché | précis, stabilisés en température, plus chers |
+| Amplification | non | oui, par des amplificateurs optiques (EDFA) dans la bande C, de 1530 à 1565 nm |
+| Distance | quelques dizaines de kilomètres | des centaines, voire des milliers de kilomètres |
+| Usage typique | campus, liaisons entre data centers proches, fibre noire courte | opérateurs, longues interconnexions de data centers, grosse capacité |
+
+Le CWDM gagne par son **prix** : des canaux larges tolèrent des lasers imprécis, qui dérivent avec la température. Le DWDM
+gagne par la **capacité** et la **distance** : des canaux serrés permettent d'en loger beaucoup, et ils tombent tous dans
+la bande où les amplificateurs optiques fonctionnent, ce qui permet de régénérer le signal de tous les canaux d'un coup.
+
+<Callout type="field">
+Sur des fibres anciennes, les canaux CWDM autour de 1383 nm sont parfois inutilisables : le verre de ces fibres absorbe
+fortement à cette longueur d'onde (le « pic de l'eau »). Les fibres monomode récentes (G.652.D) ont corrigé ce
+défaut. Avant de choisir un plan de canaux CWDM sur une fibre louée, demandez à l'opérateur le type de fibre et une
+mesure de ses pertes.
+</Callout>
+
+## Les optiques du WDM
+
+- **Optiques CWDM colorées** : des SFP, SFP+ ou QSFP réglés en usine sur une longueur d'onde de la grille CWDM. Leur
+  languette ou leur étiquette porte souvent un **code couleur** propre à chaque longueur d'onde, pour ne pas les
+  confondre.
+- **Optiques DWDM fixes** : réglées sur un canal de la grille DWDM, désigné par son numéro ou sa fréquence.
+- **Optiques DWDM accordables** (*tunable*) : on choisit le canal par configuration. Une seule référence en stock
+  remplace des dizaines d'optiques colorées.
+- **Optiques cohérentes** (400ZR, ZR+) : des optiques DWDM à 400 Gb/s au format QSFP-DD ou OSFP, qui se branchent
+  **directement** dans un switch ou un routeur. Elles utilisent la même technique de modulation que les équipements
+  des opérateurs, et la norme 400ZR de l'OIF vise les interconnexions de data centers jusqu'à environ 120 km avec
+  amplification. Les variantes ZR+ (accord OpenZR+) vont plus loin et acceptent plusieurs débits.
+
+Avec les optiques cohérentes enfichables, une interconnexion de data centers peut se passer des châssis de
+transmission dédiés : le switch émet directement la longueur d'onde DWDM, et le mux, souvent complété d'un
+amplificateur, fait le reste. On parle d'**IP sur DWDM**.
+
+## Multiplexeurs, insertion et extraction
+
+- **Mux / demux** : les ports sont étiquetés par longueur d'onde (1271, 1291…) ou par canal DWDM, plus un port **commun**
+  (*line*) vers la fibre. Certains ajoutent un port **1310 nm** ou **1550 nm** pour une optique standard en plus des
+  canaux colorés.
+- **OADM** (*Optical Add-Drop Multiplexer*) : sur un site intermédiaire, il extrait et insère quelques longueurs d'onde
+  et laisse passer les autres. Une boucle de fibre entre trois sites peut ainsi porter des liens entre chaque paire de
+  sites.
+- **ROADM** (*Reconfigurable OADM*) : la version pilotable à distance, utilisée par les opérateurs pour changer les
+  longueurs d'onde extraites sans déplacement.
+- **Mux sur une seule fibre** : en utilisant des longueurs d'onde différentes pour chaque sens, on fait passer
+  l'émission et la réception dans **une seule** fibre, et on double la capacité d'une paire.
+
+## Le budget optique, encore
+
+Un mux est passif, mais il n'est pas gratuit : chaque traversée coûte de la puissance, de l'ordre de quelques dB selon le
+modèle et le nombre de canaux. Un lien WDM traverse **deux** mux, en plus de la fibre et des connecteurs :
+
+| Élément | À additionner |
+|---|---|
+| Fibre monomode | la longueur × l'atténuation (environ 0,35 dB/km vers 1310 nm, moins vers 1550 nm) |
+| Mux à l'émission et demux à la réception | la perte d'insertion de chacun, indiquée par le fabricant |
+| Connecteurs et brassages | quelques dixièmes de dB chacun |
+| Marge de vieillissement et de réparation | 2 à 3 dB, pour les futures soudures et le vieillissement |
+
+La somme doit rester inférieure au **budget de l'optique** (puissance d'émission minimale moins sensibilité du récepteur),
+sinon il faut des optiques plus puissantes ou un amplificateur.
+
+<Callout type="warning">
+Le piège inverse existe aussi : une optique longue portée (ER, ZR) sur une fibre courte envoie **trop** de lumière, et le
+récepteur sature. Le lien est instable ou ne monte pas, alors que tout semble parfait. La solution est un **atténuateur**
+optique, un petit composant qui se visse sur le connecteur et retire quelques dB. La fiche de l'optique donne la
+puissance reçue maximale à respecter.
+</Callout>
+
+## Un cas concret : relier deux data centers
+
+Deux data centers sont à 25 km, et l'entreprise loue **deux paires de fibres noires** qui empruntent des chemins
+différents. Il faut relier les border leafs des deux sites : deux liens 100G par chemin.
+
+<Topology
+  width={760}
+  height={300}
+  groups={[
+    { x: 16, y: 20, w: 190, h: 260, label: 'DC1', tone: 'sky' },
+    { x: 554, y: 20, w: 190, h: 260, label: 'DC2', tone: 'violet' },
+  ]}
+  nodes={[
+    { id: 'b1', type: 'switch', x: 80, y: 90, label: 'border1', sub: 'DC1' },
+    { id: 'b2', type: 'switch', x: 80, y: 210, label: 'border2', sub: 'DC1' },
+    { id: 'm1', type: 'router', x: 170, y: 90, label: 'mux A1', tone: 'amber' },
+    { id: 'm2', type: 'router', x: 170, y: 210, label: 'mux B1', tone: 'amber' },
+    { id: 'm3', type: 'router', x: 590, y: 90, label: 'mux A2', tone: 'amber' },
+    { id: 'm4', type: 'router', x: 590, y: 210, label: 'mux B2', tone: 'amber' },
+    { id: 'b3', type: 'switch', x: 680, y: 90, label: 'border3', sub: 'DC2' },
+    { id: 'b4', type: 'switch', x: 680, y: 210, label: 'border4', sub: 'DC2' },
+  ]}
+  links={[
+    { from: 'b1', to: 'm1', label: '2 λ' }, { from: 'b2', to: 'm2', label: '2 λ' },
+    { from: 'm1', to: 'm3', label: 'chemin A · 25 km · 1 paire', tone: 'emerald' },
+    { from: 'm2', to: 'm4', label: 'chemin B · 27 km · 1 paire', tone: 'emerald' },
+    { from: 'm3', to: 'b3', label: '2 λ' }, { from: 'm4', to: 'b4', label: '2 λ' },
+  ]}
+  caption="Deux paires de fibres noires sur deux chemins différents, chacune avec un mux à chaque bout. Une pelleteuse sur un chemin coupe deux liens, pas l'interconnexion."
+/>
+
+Les choix à faire :
+
+- **CWDM ou DWDM ?** À 25 km sans amplification, avec peu de canaux, le CWDM suffit souvent. Si la capacité doit
+  beaucoup grandir, le DWDM et ses dizaines de canaux évitent de louer d'autres fibres plus tard.
+- **Le plan de canaux** : quelle longueur d'onde pour quel lien, documenté et étiqueté sur chaque port de mux et chaque
+  optique. Les deux extrémités d'un même lien utilisent la **même** longueur d'onde, sur le même numéro de port des deux
+  mux.
+- **La diversité** : deux chemins physiquement séparés (pas dans la même tranchée, pas par le même pont), sinon une seule
+  coupure emporte tout. La redondance logique (deux liens BGP, ECMP) n'a de valeur que si les fibres sont réellement
+  indépendantes.
+- **La supervision** : la puissance reçue de chaque optique (DOM), suivie dans la
+  [supervision](/formations/operations/monitoring), révèle une fibre qui se dégrade avant la coupure.
+
+## Les pièges classiques
+
+| Symptôme | Cause probable |
+|---|---|
+| Un lien ne monte pas, les autres oui | optique d'une mauvaise longueur d'onde pour ce port du mux, ou deux extrémités sur des canaux différents |
+| Aucun lien ne monte | émission et réception inversées sur le port commun du mux, ou mauvais type de fibre |
+| Lien instable sur une courte distance | récepteur saturé par une optique trop puissante : il manque un atténuateur |
+| Lien instable sur une longue distance | budget dépassé : pertes des deux mux oubliées, fibre plus longue que prévu |
+| Tous les liens coupés en même temps | un seul chemin physique, ou deux chemins dans la même tranchée |
+| Une optique impossible à retrouver | plan de canaux non documenté, optiques colorées non étiquetées |
+
+## À vous de jouer
+
+1. Deux sites à 15 km, une seule paire de fibres louée, et quatre liens 10G à créer. Proposez une solution CWDM : quelles
+   optiques, quel mux, quel plan de canaux ?
+2. Calculez le budget de ce lien avec 0,35 dB/km, deux mux à 2,5 dB chacun et quatre connecteurs à 0,5 dB. Une optique
+   CWDM avec un budget de 20 dB convient-elle ?
+3. Le besoin passe à 2 × 400G entre les deux sites. Que proposeriez-vous ?
+4. Pourquoi une optique ZR sur une fibre de 2 km pose-t-elle un problème, et comment le résoudre ?
+
+## À retenir
+
+- Le **WDM** fait passer plusieurs liens dans une seule paire de fibres, chacun sur sa **longueur d'onde** : un **mux**
+  les réunit, un **demux** les sépare, souvent passifs.
+- Chaque optique doit être **colorée** à la longueur d'onde de son port ; les deux bouts d'un lien utilisent la même.
+- **CWDM** : 18 canaux espacés de 20 nm, bon marché, quelques dizaines de km. **DWDM** : des dizaines de canaux serrés,
+  amplifiables, pour les grandes capacités et les longues distances.
+- Les optiques **accordables** et **cohérentes** (400ZR) permettent l'IP sur DWDM directement depuis le switch.
+- Le budget optique inclut la perte des **deux mux** ; à l'inverse, une optique trop puissante sur une fibre courte
+  demande un **atténuateur**.
+- La redondance passe par des **chemins de fibre réellement séparés**, et un **plan de canaux** documenté.

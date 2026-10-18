@@ -2,6 +2,7 @@
 // « Documentation officielle » en bas des chapitres et des tutoriels (données dans src/data/references.ts)
 import { t, type Lang } from '@/i18n/ui';
 import { referencesFor } from '@/data/references';
+import { tutorialUrl } from '@/lib/content';
 
 interface Props { refKey: string; lang: Lang }
 const { refKey, lang } = Astro.props;
@@ -10,7 +11,10 @@ const refs = referencesFor(refKey);
 {refs.length > 0 && (
   <section class="not-prose mt-12 rounded-xl border border-slate-200 p-5 dark:border-slate-800" data-pagefind-ignore>
     <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-900 dark:text-white">{t(lang, 'refs.title')}</h2>
-    <p class="mt-1 text-sm text-slate-500">{t(lang, 'refs.intro')}</p>
+    <p class="mt-1 text-sm text-slate-500">
+      {t(lang, 'refs.intro')}
+      {refKey !== 'tutorials/rfc' && <a href={tutorialUrl(lang, 'rfc')} class="ml-1 font-medium text-sky-700 hover:underline dark:text-sky-400">{t(lang, 'refs.whatIsRfc')}</a>}
+    </p>
     <ul class="mt-4 space-y-2.5">
       {refs.map((r) => (
         <li class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">

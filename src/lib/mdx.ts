@@ -11,5 +11,7 @@ import AddressSpace from '@/components/diagrams/AddressSpace.astro';
 import OsiModel from '@/components/diagrams/OsiModel.astro';
 import Sequence from '@/components/diagrams/Sequence.astro';
 import GitGraph from '@/components/diagrams/GitGraph.astro';
+import RackElevation from '@/components/diagrams/RackElevation.astro';
+import FiberDiagram from '@/components/diagrams/FiberDiagram.astro';
 
-export const mdxComponents = { Term, Callout, CliOutput, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel, Sequence, GitGraph };
+export const mdxComponents = { Term, Callout, CliOutput, Lab, CodeFile, Topology, PacketFormat, Bits, AddressSpace, OsiModel, Sequence, GitGraph, RackElevation, FiberDiagram };
