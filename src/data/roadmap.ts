@@ -25,6 +25,7 @@ export const roadmap: RoadmapStep[] = [
       { slug: 'lldp-cdp', title: { fr: 'LLDP et CDP', en: 'LLDP and CDP' } },
       { slug: 'ipv4-subnetting', title: { fr: 'Adressage IPv4 et subnetting', en: 'IPv4 addressing and subnetting' } },
       { slug: 'arp', title: { fr: 'ARP', en: 'ARP' } },
+      { slug: 'ipv6', title: { fr: 'IPv6', en: 'IPv6' } },
       { slug: 'static-routing', title: { fr: 'Le routage statique', en: 'Static routing' } },
       { slug: 'tcp-udp', title: { fr: 'TCP et UDP', en: 'TCP and UDP' } },
       { slug: 'cryptography', title: { fr: 'Le chiffrement et les clés', en: 'Encryption and keys' } },

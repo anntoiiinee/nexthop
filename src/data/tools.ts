@@ -202,6 +202,10 @@ export const tools: Tool[] = [
       ],
     },
     tags: ['ipv6', 'subnetting'],
+    learnMore: {
+      fr: chapterUrl('fr', 'fundamentals', 'ipv6'),
+      en: chapterUrl('en', 'fundamentals', 'ipv6'),
+    },
     component: Ipv6Calculator,
   },
   {

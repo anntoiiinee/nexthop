@@ -427,6 +427,14 @@ export const glossary = {
       en: 'IP address translation performed by a router or firewall. It notably lets hosts with private addresses reach the Internet behind a public address.',
     },
   },
+  ndp: {
+    term: 'NDP',
+    expansion: 'Neighbor Discovery Protocol',
+    definition: {
+      fr: "Le protocole d'IPv6 qui remplace ARP : il trouve l'adresse MAC d'un voisin, découvre les routeurs et les préfixes du lien, et détecte les adresses dupliquées, avec des messages ICMPv6.",
+      en: 'The IPv6 protocol replacing ARP: it finds a neighbor’s MAC address, discovers the link’s routers and prefixes, and detects duplicate addresses, using ICMPv6 messages.',
+    },
+  },
   netflow: {
     term: 'NetFlow',
     definition: {
@@ -559,6 +567,14 @@ export const glossary = {
     definition: {
       fr: "Communauté BGP étendue qui indique dans quelles VRF ou quels VLAN une route doit être importée.",
       en: "Extended BGP community telling which VRFs or VLANs a route must be imported into.",
+    },
+  },
+  slaac: {
+    term: 'SLAAC',
+    expansion: 'Stateless Address Autoconfiguration',
+    definition: {
+      fr: "Méthode d'IPv6 par laquelle une machine fabrique elle-même son adresse, à partir du préfixe annoncé par le routeur et de son identifiant d'interface, sans serveur DHCP.",
+      en: 'IPv6 method by which a machine builds its own address, from the prefix advertised by the router and its interface identifier, without a DHCP server.',
     },
   },
   snat: {
