@@ -1,0 +1,49 @@
+---
+// Script global de la progression du lecteur (inclus une fois par BaseLayout).
+// Il met à jour tout ce qui porte un attribut data-progress-* : boutons de chapitre, coches, barres.
+---
+<script>
+  import { readProgress, setRead, countRead, PROGRESS_EVENT, PROGRESS_KEY } from '@/lib/progress';
+
+  function apply() {
+    const progress = readProgress();
+
+    // Coches et états « lu » : <li data-progress-chapter="fundamentals/osi">
+    document.querySelectorAll<HTMLElement>('[data-progress-chapter]').forEach((el) => {
+      el.dataset.read = String(el.dataset.progressChapter! in progress);
+    });
+
+    // Boutons « Marquer comme lu » : <button data-progress-toggle="fundamentals/osi">
+    document.querySelectorAll<HTMLButtonElement>('[data-progress-toggle]').forEach((btn) => {
+      const read = btn.dataset.progressToggle! in progress;
+      btn.dataset.read = String(read);
+      btn.setAttribute('aria-pressed', String(read));
+    });
+
+    // Barres : <div data-progress-course data-chapters="a/b,a/c" data-label="{n} / {total} …">
+    document.querySelectorAll<HTMLElement>('[data-progress-course]').forEach((el) => {
+      const ids = (el.dataset.chapters ?? '').split(',').filter(Boolean);
+      const n = countRead(progress, ids);
+      const total = ids.length;
+      const label = el.querySelector<HTMLElement>('[data-progress-label]');
+      const bar = el.querySelector<HTMLElement>('[data-progress-bar]');
+      if (label) label.textContent = (el.dataset.label ?? '{n} / {total}').replace('{n}', String(n)).replace('{total}', String(total));
+      if (bar) bar.style.width = total ? `${(n / total) * 100}%` : '0%';
+      // Sur l'accueil et la liste des formations, la barre n'apparaît qu'à partir du premier chapitre lu
+      el.hidden = el.hasAttribute('data-hide-empty') && n === 0;
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    const btn = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-progress-toggle]');
+    if (!btn) return;
+    const id = btn.dataset.progressToggle!;
+    setRead(id, !(id in readProgress()));
+    document.dispatchEvent(new CustomEvent(PROGRESS_EVENT));
+  });
+
+  document.addEventListener(PROGRESS_EVENT, apply);
+  // Un autre onglet a modifié la progression
+  window.addEventListener('storage', (event) => { if (event.key === PROGRESS_KEY) apply(); });
+  apply();
+</script>

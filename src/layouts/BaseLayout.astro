@@ -5,6 +5,7 @@ import '@/styles/global.css';
 import { languages, routes, t, type Lang } from '@/i18n/ui';
 import Search from '@/components/Search.astro';
 import ThemeToggle from '@/components/ThemeToggle.astro';
+import ProgressScript from '@/components/ProgressScript.astro';
 import { coffeeUrl, coffeeIcon, issuesUrl } from '@/lib/support';
 import { absoluteUrl, ogLocale, SITE_NAME, DEFAULT_IMAGE } from '@/lib/seo';
 import { profile } from '@/data/profile';
@@ -170,6 +171,7 @@ const isActive = (href: string) => path === href || path.startsWith(`${href}/`);
             </svg>
             RSS
           </a>
+          <a href={routes.privacy[lang]} class="transition hover:text-sky-500">{t(lang, 'privacy.title')}</a>
           <a href={issuesUrl} target="_blank" rel="noopener" class="transition hover:text-sky-500">{t(lang, 'support.report')} / {t(lang, 'support.suggest').toLowerCase()} ↗</a>
           {coffeeUrl && (
             <a href={coffeeUrl} target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 font-medium text-slate-700 transition hover:text-sky-500 dark:text-slate-300">
@@ -180,5 +182,6 @@ const isActive = (href: string) => path === href || path.startsWith(`${href}/`);
         </div>
       </div>
     </footer>
+    <ProgressScript />
   </body>
 </html>

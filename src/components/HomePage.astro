@@ -1,4 +1,5 @@
 ---
+import ProgressBar from './ProgressBar.astro';
 import SectionHeader from './SectionHeader.astro';
 import BaseLayout from '@/layouts/BaseLayout.astro';
 import { Image } from 'astro:assets';
@@ -324,6 +325,15 @@ const stats = ([
                 )}
                 {courseDatesBySlug[step.course] && (
                   <ContentDates created={courseDatesBySlug[step.course].created} updated={courseDatesBySlug[step.course].updated} lang={lang} class="text-xs" />
+                )}
+                {courseReady && (
+                  <ProgressBar
+                    course={step.course}
+                    chapters={step.chapters.filter((c) => published.chapters.has(`${step.course}/${c.slug}`)).map((c) => c.slug)}
+                    lang={lang}
+                    hideEmpty
+                    class="mt-1 w-full"
+                  />
                 )}
               </div>
 

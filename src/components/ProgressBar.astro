@@ -1,0 +1,22 @@
+---
+// Barre de progression d'une formation, remplie côté navigateur par ProgressScript.
+// `hideEmpty` : masquée tant qu'aucun chapitre n'est lu (accueil, liste des formations).
+import { t, type Lang } from '@/i18n/ui';
+
+interface Props { course: string; chapters: string[]; lang: Lang; hideEmpty?: boolean; class?: string }
+const { course, chapters, lang, hideEmpty = false, class: className } = Astro.props;
+const ids = chapters.map((c) => `${course}/${c}`).join(',');
+---
+<div
+  data-progress-course={course}
+  data-chapters={ids}
+  data-label={t(lang, 'progress.count')}
+  data-hide-empty={hideEmpty ? '' : undefined}
+  hidden={hideEmpty}
+  class:list={['text-xs', className]}
+>
+  <div class="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800" aria-hidden="true">
+    <div data-progress-bar class="h-full w-0 rounded-full bg-emerald-500 transition-[width]"></div>
+  </div>
+  <p data-progress-label class="mt-1 font-mono text-slate-500">{t(lang, 'progress.count').replace('{n}', '0').replace('{total}', String(chapters.length))}</p>
+</div>
